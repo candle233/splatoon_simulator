@@ -54,8 +54,10 @@ export class HUD {
   private specialReadyBannerEl: HTMLElement | null;
   private chargeRingEl: HTMLElement | null;
   private killFeedEl: HTMLElement | null;
+  private damageVignetteEl: HTMLElement | null;
 
   constructor() {
+    this.damageVignetteEl = document.getElementById('damage-vignette');
     this.killFeedEl = document.getElementById('kill-feed');
     this.timerEl = document.getElementById('match-timer');
     this.phaseEl = document.getElementById('match-phase-label');
@@ -171,6 +173,41 @@ export class HUD {
         this.modeTagEl.className = 'mode-tag humanoid';
       }
     }
+
+    if (this.damageVignetteEl) {
+      if (hp <= 0) {
+        this.damageVignetteEl.style.opacity = '0';
+        this.damageVignetteEl.classList.remove('pulsing');
+        this.damageVignetteEl.classList.add('hidden');
+      } else if (hp <= 35) {
+        this.damageVignetteEl.classList.remove('hidden');
+        this.damageVignetteEl.style.opacity = '0.75';
+        this.damageVignetteEl.classList.add('pulsing');
+      } else if (hp < 75) {
+        this.damageVignetteEl.classList.remove('hidden');
+        const factor = (75 - hp) / 40;
+        this.damageVignetteEl.style.opacity = `${(factor * 0.45).toFixed(2)}`;
+        this.damageVignetteEl.classList.remove('pulsing');
+      } else {
+        this.damageVignetteEl.style.opacity = '0';
+        this.damageVignetteEl.classList.remove('pulsing');
+        this.damageVignetteEl.classList.add('hidden');
+      }
+    }
+  }
+
+  triggerDamageFlash(): void {
+    if (!this.damageVignetteEl) return;
+    this.damageVignetteEl.classList.remove('hidden');
+    this.damageVignetteEl.style.opacity = '0.9';
+    window.setTimeout(() => {
+      if (this.damageVignetteEl) {
+        this.damageVignetteEl.style.opacity = '';
+        if (!this.damageVignetteEl.classList.contains('pulsing')) {
+          this.damageVignetteEl.classList.add('hidden');
+        }
+      }
+    }, 180);
   }
 
   updateLoadoutAndSkills(

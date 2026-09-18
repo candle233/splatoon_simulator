@@ -22,6 +22,8 @@ export class GameRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0f1118);
@@ -35,14 +37,26 @@ export class GameRenderer {
     );
 
     // Lighting setup
-    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 0.65);
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 0.75);
     this.scene.add(this.hemiLight);
 
-    this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.2);
-    this.dirLight.position.set(40, 60, 30);
+    this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.35);
+    this.dirLight.position.set(40, 65, 30);
+    this.dirLight.castShadow = true;
+    this.dirLight.shadow.mapSize.width = 2048;
+    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.camera.near = 1;
+    this.dirLight.shadow.camera.far = 160;
+    const d = 58;
+    this.dirLight.shadow.camera.left = -d;
+    this.dirLight.shadow.camera.right = d;
+    this.dirLight.shadow.camera.top = d;
+    this.dirLight.shadow.camera.bottom = -d;
+    this.dirLight.shadow.bias = -0.0005;
+    this.dirLight.shadow.normalBias = 0.02;
     this.scene.add(this.dirLight);
 
-    const fillLight = new THREE.DirectionalLight(0x6688cc, 0.4);
+    const fillLight = new THREE.DirectionalLight(0x6688cc, 0.45);
     fillLight.position.set(-30, 40, -40);
     this.scene.add(fillLight);
 

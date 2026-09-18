@@ -31,6 +31,7 @@ export interface NetworkCallbacks {
   onLobbyState?: (payload: LobbyStatePayload) => void;
   onSubWeaponEvent?: (payload: SubWeaponEventPayload) => void;
   onSpecialEvent?: (payload: SpecialEventPayload) => void;
+  onConnect?: () => void;
   onDisconnect: () => void;
   onConnectError: (err: Error) => void;
 }
@@ -64,6 +65,10 @@ export class NetworkClient {
   }
 
   private setupListeners(): void {
+    this.socket.on('connect', () => {
+      this.callbacks.onConnect?.();
+    });
+
     this.socket.on(PROTOCOL_EVENTS.S2C_WELCOME, (payload: WelcomePayload) => {
       this.serverTimeOffset = payload.serverTime - Date.now();
       this.callbacks.onWelcome(payload);

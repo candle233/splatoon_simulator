@@ -39,7 +39,12 @@ export class CameraController {
     this.recoilPitch = Math.min(0.12, this.recoilPitch + pitchAmount);
   }
 
-  update(playerPos: Vec3, yaw: number, pitch: number, dt = 0.016): void {
+  update(playerPos: Vec3, yaw: number, pitch: number, dt = 0.016, isSubmerged = false): void {
+    const targetHeight = isSubmerged ? 1.25 : 1.8;
+    this.cameraHeight += (targetHeight - this.cameraHeight) * Math.min(1, dt * 8);
+    const targetDist = isSubmerged ? 4.3 : 5.2;
+    this.baseDistance += (targetDist - this.baseDistance) * Math.min(1, dt * 8);
+
     // Smoothly decay recoil pitch
     this.recoilPitch = Math.max(0, this.recoilPitch - dt * 0.9);
     const effectivePitch = pitch + this.recoilPitch;

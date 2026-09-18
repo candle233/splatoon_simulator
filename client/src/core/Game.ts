@@ -133,6 +133,9 @@ export class Game {
       onLobbyState: (state) => this.handleLobbyState(state),
       onSubWeaponEvent: (evt) => this.handleSubWeaponEvent(evt),
       onSpecialEvent: (evt) => this.handleSpecialEvent(evt),
+      onConnect: () => {
+        this.hud.hideSyncBanner();
+      },
       onDisconnect: () => this.handleDisconnect(),
       onConnectError: (err) => this.handleConnectError(err)
     });
@@ -349,7 +352,8 @@ export class Game {
         this.localPlayer.position,
         this.localPlayer.yaw,
         this.localPlayer.pitch,
-        dt
+        dt,
+        this.localPlayer.mode === PlayerMode.SUBMERGED
       );
 
       // HUD Update
@@ -503,6 +507,7 @@ export class Game {
         if (mySnap.hp < this.localPlayer.hp && this.localPlayer.alive && !mySnap.invulnerable) {
           this.cameraController.addShake(0.35, 0.22);
           this.soundManager.playHit();
+          this.hud.triggerDamageFlash();
         }
         const lastAckSeq = payload.lastProcessedInputSeq[this.localPlayer.id];
         this.localPlayer.applyServerState(mySnap, lastAckSeq);

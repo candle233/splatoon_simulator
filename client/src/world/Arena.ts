@@ -28,8 +28,8 @@ export class Arena {
 
     const groundMat = new THREE.MeshStandardMaterial({
       map: this.paintEngine.texture,
-      roughness: 0.8,
-      metalness: 0.1
+      roughness: 0.45,
+      metalness: 0.12
     });
 
     this.groundMesh = new THREE.Mesh(groundGeo, groundMat);

@@ -4,11 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ink Arena - 3D Multiplayer Turf War</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="game-container">
       <canvas id="webgl-canvas"></canvas>
+
+      <!-- Damage & Low HP Ink Splatter Vignette -->
+      <div id="damage-vignette" class="damage-vignette hidden"></div>
 
       <!-- Reticle / Crosshair -->
       <div id="crosshair-container">

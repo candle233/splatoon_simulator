@@ -76,8 +76,16 @@ export class InputManager {
     this.active = true;
     if (!this.pointerLocked) {
       try {
-        this.element.requestPointerLock();
-      } catch {}
+        const lockRes = this.element.requestPointerLock() as unknown as Promise<void> | undefined;
+        if (lockRes && typeof lockRes.catch === 'function') {
+          lockRes.catch(() => {
+            // Pointer lock could fail if invoked without user gesture; fallback to active mode
+            this.active = true;
+          });
+        }
+      } catch {
+        this.active = true;
+      }
     }
   }
 

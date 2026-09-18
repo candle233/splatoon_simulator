@@ -320,7 +320,30 @@ export class PlayerView {
     this.squidDomeMesh = new THREE.Mesh(domeGeo, bodyMat);
     this.squidDomeMesh.rotation.x = -Math.PI / 2;
     this.squidDomeMesh.position.set(0, 0.08, 0);
+    this.squidDomeMesh.castShadow = true;
     this.submergedGroup.add(this.squidDomeMesh);
+
+    // Squid Eyes
+    const squidEyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const squidPupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+    const squidEyeGeo = new THREE.SphereGeometry(0.065, 8, 8);
+    const squidPupilGeo = new THREE.SphereGeometry(0.035, 8, 8);
+    this.geometries.push(squidEyeGeo, squidPupilGeo);
+    this.materials.push(squidEyeMat, squidPupilMat);
+
+    const leftSquidEye = new THREE.Mesh(squidEyeGeo, squidEyeMat);
+    leftSquidEye.position.set(-0.12, 0.12, -0.05);
+    const leftPupil = new THREE.Mesh(squidPupilGeo, squidPupilMat);
+    leftPupil.position.set(0, 0.02, -0.04);
+    leftSquidEye.add(leftPupil);
+    this.submergedGroup.add(leftSquidEye);
+
+    const rightSquidEye = new THREE.Mesh(squidEyeGeo, squidEyeMat);
+    rightSquidEye.position.set(0.12, 0.12, -0.05);
+    const rightPupil = new THREE.Mesh(squidPupilGeo, squidPupilMat);
+    rightPupil.position.set(0, 0.02, -0.04);
+    rightSquidEye.add(rightPupil);
+    this.submergedGroup.add(rightSquidEye);
 
     this.submergedGroup.visible = false;
     this.group.add(this.submergedGroup);
