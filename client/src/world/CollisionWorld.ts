@@ -64,6 +64,68 @@ export class ClientCollisionWorld {
   }
 
   /**
+   * Raycast against ground and obstacles for client-side aim prediction.
+   */
+  castRay(
+    ray: Ray,
+    maxDistance: number
+  ): { hit: boolean; distance: number; point: Vec3 } {
+    let closestDist = maxDistance;
+    let hitResult = {
+      hit: false,
+      distance: maxDistance,
+      point: {
+        x: ray.origin.x + ray.direction.x * maxDistance,
+        y: ray.origin.y + ray.direction.y * maxDistance,
+        z: ray.origin.z + ray.direction.z * maxDistance
+      }
+    };
+
+    // 1. Ray vs Ground Plane (y = 0)
+    const groundHit = intersectRayGroundPlane(ray, 0, ARENA_HALF_SIZE);
+    if (groundHit && groundHit.t > 0 && groundHit.t < closestDist) {
+      closestDist = groundHit.t;
+      hitResult = {
+        hit: true,
+        distance: groundHit.t,
+        point: groundHit.point
+      };
+    }
+
+    // 2. Ray vs Obstacles
+    for (const obs of this.obstacles) {
+      const aabb = {
+        min: {
+          x: obs.position.x - obs.size.x * 0.5,
+          y: obs.position.y - obs.size.y * 0.5,
+          z: obs.position.z - obs.size.z * 0.5
+        },
+        max: {
+          x: obs.position.x + obs.size.x * 0.5,
+          y: obs.position.y + obs.size.y * 0.5,
+          z: obs.position.z + obs.size.z * 0.5
+        }
+      };
+
+      const hit = intersectRayAABB(ray, aabb);
+      if (hit && hit.t > 0 && hit.t < closestDist) {
+        closestDist = hit.t;
+        hitResult = {
+          hit: true,
+          distance: hit.t,
+          point: {
+            x: ray.origin.x + ray.direction.x * hit.t,
+            y: ray.origin.y + ray.direction.y * hit.t,
+            z: ray.origin.z + ray.direction.z * hit.t
+          }
+        };
+      }
+    }
+
+    return hitResult;
+  }
+
+  /**
    * Resolves simple AABB movement for local player prediction
    */
   resolveMovement(

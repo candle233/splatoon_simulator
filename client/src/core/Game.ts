@@ -30,6 +30,7 @@ import { PaintEngine } from '../world/PaintEngine.js';
 import { Clock } from './Clock.js';
 import { InputManager } from './InputManager.js';
 import { GameRenderer } from './Renderer.js';
+import { SoundManager } from './SoundManager.js';
 
 export class Game {
   private renderer: GameRenderer;
@@ -43,6 +44,7 @@ export class Game {
   private gameOverScreen = new GameOverScreen();
   private inputManager: InputManager;
   private cameraController: CameraController;
+  private soundManager = new SoundManager();
 
   private networkClient: NetworkClient;
   private snapshotBuffer = new SnapshotBuffer();
@@ -95,7 +97,10 @@ export class Game {
       onPlayerRespawned: (p) => this.handlePlayerRespawned(p),
       onMatchState: (state) => this.handleMatchState(state),
       onGameOver: (payload) => this.handleGameOver(payload),
-      onHitFeedback: () => this.crosshair.showHitMarker(),
+      onHitFeedback: () => {
+        this.crosshair.showHitMarker();
+        this.soundManager.playHit();
+      },
       onShotEvent: (shot) => this.handleShotEvent(shot),
       onDisconnect: () => this.handleDisconnect(),
       onConnectError: (err) => this.handleConnectError(err)
@@ -156,6 +161,7 @@ export class Game {
         if (now - this.lastLocalShotTime >= 95) {
           this.lastLocalShotTime = now;
           this.crosshair.onFire();
+          this.soundManager.playShoot();
           this.localPlayer.ink = Math.max(0, this.localPlayer.ink - 2);
 
           const cosP = Math.cos(this.localPlayer.pitch);
@@ -169,16 +175,86 @@ export class Game {
           const rgtX = cosY;
           const rgtZ = -sinY;
 
+          const headX = this.localPlayer.position.x;
+          const headY = this.localPlayer.position.y + 1.8;
+          const headZ = this.localPlayer.position.z;
+
+          const baseCamDist = 5.2;
+          const shoulderOffset = 0.65;
+
+          const aimTargetX = headX + fwdX * 30;
+          const aimTargetY = headY + fwdY * 30;
+          const aimTargetZ = headZ + fwdZ * 30;
+
+          let camX = headX - fwdX * baseCamDist + rgtX * shoulderOffset;
+          let camY = headY - fwdY * baseCamDist;
+          let camZ = headZ - fwdZ * baseCamDist + rgtZ * shoulderOffset;
+
+          const camDirX = camX - headX;
+          const camDirY = camY - headY;
+          const camDirZ = camZ - headZ;
+          const camRayLen = Math.sqrt(camDirX * camDirX + camDirY * camDirY + camDirZ * camDirZ);
+
+          if (camRayLen > 1e-4) {
+            const hitCamDist = this.collisionWorld.castCameraRay(
+              {
+                origin: { x: headX, y: headY, z: headZ },
+                direction: { x: camDirX / camRayLen, y: camDirY / camRayLen, z: camDirZ / camRayLen }
+              },
+              camRayLen
+            );
+            if (hitCamDist !== null && hitCamDist < camRayLen) {
+              const safeDist = Math.max(0.6, hitCamDist - 0.25);
+              camX = headX + (camDirX / camRayLen) * safeDist;
+              camY = headY + (camDirY / camRayLen) * safeDist;
+              camZ = headZ + (camDirZ / camRayLen) * safeDist;
+            }
+          }
+
+          const toCrosshairX = aimTargetX - camX;
+          const toCrosshairY = aimTargetY - camY;
+          const toCrosshairZ = aimTargetZ - camZ;
+          const crosshairLen = Math.sqrt(toCrosshairX * toCrosshairX + toCrosshairY * toCrosshairY + toCrosshairZ * toCrosshairZ);
+          const crosshairDir = {
+            x: toCrosshairX / (crosshairLen || 1),
+            y: toCrosshairY / (crosshairLen || 1),
+            z: toCrosshairZ / (crosshairLen || 1)
+          };
+
+          // Stage 1: Camera Raycast to get exact 3D aim point
+          const cameraHit = this.collisionWorld.castRay(
+            { origin: { x: camX, y: camY, z: camZ }, direction: crosshairDir },
+            35 + baseCamDist
+          );
+          const aimPoint = cameraHit.hit ? cameraHit.point : {
+            x: camX + crosshairDir.x * 35,
+            y: camY + crosshairDir.y * 35,
+            z: camZ + crosshairDir.z * 35
+          };
+
+          // Stage 2: Muzzle Raycast towards aimPoint
           const muzzle = {
             x: this.localPlayer.position.x + rgtX * 0.35 + fwdX * 0.4,
             y: this.localPlayer.position.y + 0.85 + fwdY * 0.4,
             z: this.localPlayer.position.z + rgtZ * 0.35 + fwdZ * 0.4
           };
-          const target = {
-            x: muzzle.x + fwdX * 35,
-            y: muzzle.y + fwdY * 35,
-            z: muzzle.z + fwdZ * 35
+
+          let dirX = aimPoint.x - muzzle.x;
+          let dirY = aimPoint.y - muzzle.y;
+          let dirZ = aimPoint.z - muzzle.z;
+          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+          const muzzleDir = {
+            x: dirX / (dirLen || 1),
+            y: dirY / (dirLen || 1),
+            z: dirZ / (dirLen || 1)
           };
+
+          const muzzleHit = this.collisionWorld.castRay(
+            { origin: muzzle, direction: muzzleDir },
+            dirLen || 35
+          );
+
+          const target = muzzleHit.hit ? muzzleHit.point : aimPoint;
           this.weaponVisual.spawnTracer(muzzle, target, this.localPlayer.team);
         }
       }
@@ -382,11 +458,13 @@ export class Game {
       this.localPlayer.alive = false;
       this.localPlayer.mode = PlayerMode.DEAD;
       this.respawnEndsAt = data.respawnAt;
+      this.soundManager.playSplat();
     }
 
     // If I got the kill, show hit marker feedback!
     if (this.localPlayer && data.killerId === this.localPlayer.id) {
       this.crosshair.showHitMarker();
+      this.soundManager.playHit();
     }
   }
 
@@ -406,6 +484,14 @@ export class Game {
     this.pinkScore = state.pinkScore;
     this.cyanScore = state.cyanScore;
 
+    if (prevPhase !== state.phase) {
+      if (state.phase === MatchPhase.COUNTDOWN) {
+        this.soundManager.playCountdown(false);
+      } else if (state.phase === MatchPhase.PLAYING) {
+        this.soundManager.playCountdown(true);
+      }
+    }
+
     // If restarted
     if (prevPhase === MatchPhase.GAME_OVER && state.phase === MatchPhase.COUNTDOWN) {
       this.gameOverScreen.hide();
@@ -420,6 +506,7 @@ export class Game {
   private handleGameOver(payload: GameOverPayload): void {
     this.gameOverEndsAt = Date.now() + payload.restartCountdown * 1000;
     this.gameOverScreen.show(payload);
+    this.soundManager.playGameOver();
   }
 
   private handleDisconnect(): void {

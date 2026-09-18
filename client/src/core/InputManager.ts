@@ -3,6 +3,7 @@ import { PlayerInput, clamp } from '@ink/shared';
 export class InputManager {
   private element: HTMLElement;
   private pointerLocked = false;
+  private active = false;
 
   private keys: Record<string, boolean> = {
     KeyW: false,
@@ -47,19 +48,22 @@ export class InputManager {
   }
 
   requestPointerLock(): void {
+    this.active = true;
     if (!this.pointerLocked) {
-      this.element.requestPointerLock();
+      try {
+        this.element.requestPointerLock();
+      } catch {}
     }
   }
 
   isLocked(): boolean {
-    return this.pointerLocked;
+    return this.pointerLocked || this.active;
   }
 
   private onPointerLockChange = (): void => {
     this.pointerLocked = document.pointerLockElement === this.element;
-    if (!this.pointerLocked) {
-      this.resetInputs();
+    if (this.pointerLocked) {
+      this.active = true;
     }
   };
 
@@ -82,7 +86,7 @@ export class InputManager {
   };
 
   private onMouseDown = (e: MouseEvent): void => {
-    if (e.button === 0 && this.pointerLocked) {
+    if (e.button === 0 && (this.pointerLocked || this.active)) {
       this.mouseLeftDown = true;
     }
   };
@@ -94,7 +98,7 @@ export class InputManager {
   };
 
   private onMouseMove = (e: MouseEvent): void => {
-    if (!this.pointerLocked) return;
+    if (!this.pointerLocked && !this.active) return;
 
     this.yaw -= e.movementX * this.mouseSensitivity;
     this.pitch -= e.movementY * this.mouseSensitivity;
@@ -129,7 +133,7 @@ export class InputManager {
 
     const jump = Boolean(this.keys.Space);
     const squid = Boolean(this.keys.ShiftLeft || this.keys.ShiftRight);
-    const fire = this.mouseLeftDown && this.pointerLocked;
+    const fire = this.mouseLeftDown && (this.pointerLocked || this.active);
 
     return {
       seq,
