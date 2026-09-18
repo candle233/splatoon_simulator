@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ink Arena - 3D Multiplayer Turf War</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="game-container">
+      <canvas id="webgl-canvas"></canvas>
+
+      <!-- Reticle / Crosshair -->
+      <div id="crosshair-container">
+        <div id="crosshair">
+          <div class="ch-dot"></div>
+          <div class="ch-ring"></div>
+        </div>
+        <div id="hit-marker" class="hidden"></div>
+      </div>
+
+      <!-- Main HUD -->
+      <div id="hud">
+        <!-- Top Bar: Match Timer & Ink Coverage -->
+        <div id="top-bar">
+          <div id="team-pink-badge" class="team-badge pink">
+            <span class="team-label">PINK</span>
+            <span id="pink-score-text">0.0%</span>
+          </div>
+
+          <div id="timer-container">
+            <span id="match-timer">3:00</span>
+            <span id="match-phase-label">COUNTDOWN</span>
+          </div>
+
+          <div id="team-cyan-badge" class="team-badge cyan">
+            <span class="team-label">CYAN</span>
+            <span id="cyan-score-text">0.0%</span>
+          </div>
+        </div>
+
+        <div id="turf-bar-wrapper">
+          <div id="turf-bar-pink" class="turf-bar-fill"></div>
+          <div id="turf-bar-cyan" class="turf-bar-fill"></div>
+        </div>
+
+        <!-- Bottom Left: Health & Status -->
+        <div id="bottom-left">
+          <div class="status-card">
+            <div class="label-row">
+              <span class="stat-title">HP</span>
+              <span id="hp-value">100</span>
+            </div>
+            <div class="meter-bar">
+              <div id="hp-bar-fill"></div>
+            </div>
+            <div id="player-mode-tag" class="mode-tag humanoid">HUMANOID</div>
+          </div>
+        </div>
+
+        <!-- Bottom Right: Ink Tank -->
+        <div id="bottom-right">
+          <div class="status-card">
+            <div class="label-row">
+              <span class="stat-title">INK TANK</span>
+              <span id="ink-value">100%</span>
+            </div>
+            <div class="meter-bar ink-meter">
+              <div id="ink-bar-fill"></div>
+            </div>
+            <div id="ink-hint">HOLD SHIFT TO SWIM IN OWN INK</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Death / Respawn Overlay -->
+      <div id="death-screen" class="screen-overlay hidden">
+        <div class="death-content">
+          <h2 class="splatted-title">SPLATTED!</h2>
+          <p class="respawn-msg">Respawning in <span id="respawn-countdown">4</span>s...</p>
+        </div>
+      </div>
+
+      <!-- Match Countdown Splash (e.g. 3, 2, 1, GO!) -->
+      <div id="countdown-splash" class="screen-overlay hidden">
+        <div id="countdown-number">3</div>
+      </div>
+
+      <!-- Game Over Banner & Summary -->
+      <div id="game-over-screen" class="screen-overlay hidden">
+        <div class="game-over-card">
+          <h1 id="winner-banner">MATCH OVER</h1>
+          <div class="final-scores">
+            <div class="final-score-column pink">
+              <span class="score-team">TEAM PINK</span>
+              <span id="final-pink-pct" class="score-pct">0.0%</span>
+            </div>
+            <div class="score-vs">VS</div>
+            <div class="final-score-column cyan">
+              <span class="score-team">TEAM CYAN</span>
+              <span id="final-cyan-pct" class="score-pct">0.0%</span>
+            </div>
+          </div>
+          <p id="next-match-timer">Next match in 8s...</p>
+        </div>
+      </div>
+
+      <!-- Connection / Sync Banner -->
+      <div id="sync-banner" class="sync-overlay hidden">
+        <div class="sync-spinner"></div>
+        <p id="sync-text">Synchronizing arena...</p>
+      </div>
+
+      <!-- Pointer Lock Starter Prompt -->
+      <div id="pointer-lock-prompt" class="screen-overlay">
+        <div class="prompt-box">
+          <h2>INK ARENA</h2>
+          <p class="subtitle">3D Real-time Turf-war Multiplayer</p>
+          <div class="controls-guide">
+            <div class="ctrl-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span>Move</span></div>
+            <div class="ctrl-row"><kbd>Mouse</kbd> <span>Aim</span></div>
+            <div class="ctrl-row"><kbd>LMB</kbd> <span>Shoot & Paint</span></div>
+            <div class="ctrl-row"><kbd>Shift</kbd> <span>Swim / Squid Form (in own ink)</span></div>
+            <div class="ctrl-row"><kbd>Space</kbd> <span>Jump</span></div>
+            <div class="ctrl-row"><kbd>F3</kbd> <span>Toggle Debug Overlay</span></div>
+          </div>
+          <button id="start-button" class="btn-play">CLICK TO ENTER ARENA</button>
+        </div>
+      </div>
+
+      <!-- F3 Debug Overlay -->
+      <div id="debug-overlay" class="hidden">
+        <h3>DEBUG STATS (F3)</h3>
+        <div>FPS: <span id="dbg-fps">60</span></div>
+        <div>Ping: <span id="dbg-ping">--</span> ms</div>
+        <div>Player ID: <span id="dbg-player-id">--</span></div>
+        <div>Team: <span id="dbg-team">--</span></div>
+        <div>Position: <span id="dbg-pos">0, 0, 0</span></div>
+        <div>Ground Ink: <span id="dbg-ground">Neutral</span></div>
+        <div>HP: <span id="dbg-hp">100</span> | Ink: <span id="dbg-ink">100</span></div>
+        <div>Mode: <span id="dbg-mode">Humanoid</span></div>
+        <div>Paint Events: <span id="dbg-paint-count">0</span></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

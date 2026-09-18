@@ -1,0 +1,22 @@
+{
+  "name": "@ink/client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ink/shared": "*",
+    "socket.io-client": "^4.8.1",
+    "three": "^0.173.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.173.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
