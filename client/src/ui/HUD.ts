@@ -55,8 +55,12 @@ export class HUD {
   private chargeRingEl: HTMLElement | null;
   private killFeedEl: HTMLElement | null;
   private damageVignetteEl: HTMLElement | null;
+  private pinkSquidsEl: HTMLElement | null;
+  private cyanSquidsEl: HTMLElement | null;
 
   constructor() {
+    this.pinkSquidsEl = document.getElementById('team-squids-pink');
+    this.cyanSquidsEl = document.getElementById('team-squids-cyan');
     this.damageVignetteEl = document.getElementById('damage-vignette');
     this.killFeedEl = document.getElementById('kill-feed');
     this.timerEl = document.getElementById('match-timer');
@@ -357,6 +361,36 @@ export class HUD {
         }
       }, 500);
     }, 3800);
+  }
+
+  /**
+   * Updates top 4v4 team squid icons showing alive, dead, and special status
+   */
+  updateTeamSquids(players: { team: Team; alive: boolean; specialMeter?: number }[]): void {
+    if (!this.pinkSquidsEl || !this.cyanSquidsEl) return;
+
+    const pinkPlayers = players.filter((p) => p.team === Team.PINK).slice(0, 4);
+    const cyanPlayers = players.filter((p) => p.team === Team.CYAN).slice(0, 4);
+
+    const renderList = (el: HTMLElement, list: typeof pinkPlayers, teamClass: string) => {
+      let html = '';
+      for (let i = 0; i < 4; i++) {
+        const p = list[i];
+        if (!p) {
+          html += `<span class="squid-indicator empty">·</span>`;
+        } else if (!p.alive) {
+          html += `<span class="squid-indicator dead ${teamClass}">✕</span>`;
+        } else if ((p.specialMeter || 0) >= 100) {
+          html += `<span class="squid-indicator alive ${teamClass} special-ready" title="Special Ready!">🦑</span>`;
+        } else {
+          html += `<span class="squid-indicator alive ${teamClass}">🦑</span>`;
+        }
+      }
+      el.innerHTML = html;
+    };
+
+    renderList(this.pinkSquidsEl, pinkPlayers, 'pink');
+    renderList(this.cyanSquidsEl, cyanPlayers, 'cyan');
   }
 
   toggleDebugOverlay(): void {

@@ -9,6 +9,32 @@ export class RemotePlayer {
 
   private lastPos = { x: 0, y: 0, z: 0 };
   private lastTime = 0;
+  private _alive: boolean = true;
+  private _specialMeter: number = 0;
+
+  get position() {
+    return this.view.group.position;
+  }
+
+  get yaw() {
+    return this.view.group.rotation.y;
+  }
+
+  get alive(): boolean {
+    return this._alive;
+  }
+
+  set alive(val: boolean) {
+    this._alive = val;
+  }
+
+  get specialMeter(): number {
+    return this._specialMeter;
+  }
+
+  set specialMeter(val: number) {
+    this._specialMeter = val;
+  }
 
   constructor(id: string, team: Team, weaponType: WeaponType = 'shooter') {
     this.id = id;
@@ -18,6 +44,7 @@ export class RemotePlayer {
   }
 
   update(state: InterpolatedPlayerState, time: number): void {
+    this._alive = state.alive;
     const dt = this.lastTime > 0 ? Math.max(0.001, Math.min(0.1, time - this.lastTime)) : 0.05;
     const dx = state.position.x - this.lastPos.x;
     const dz = state.position.z - this.lastPos.z;

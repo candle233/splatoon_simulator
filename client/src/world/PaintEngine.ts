@@ -118,9 +118,10 @@ export class PaintEngine {
 
     if (event.prevU !== undefined && event.prevV !== undefined) {
       const prevCenter = uvToCanvas(event.prevU, event.prevV, this.canvasWidth, this.canvasHeight);
-      this.drawContinuousStroke(prevCenter.px, prevCenter.py, center.px, center.py, radiusPx, baseColor);
+      this.drawContinuousStroke(prevCenter.px, prevCenter.py, center.px, center.py, radiusPx, baseColor, team);
+      this.drawRadialCircle(center.px, center.py, radiusPx, baseColor, team);
     } else {
-      this.drawRadialCircle(center.px, center.py, radiusPx, baseColor);
+      this.drawRadialCircle(center.px, center.py, radiusPx, baseColor, team);
     }
 
     // Draw deterministic splatters
@@ -128,11 +129,20 @@ export class PaintEngine {
     for (const splat of splatters) {
       const sCenter = uvToCanvas(splat.u, splat.v, this.canvasWidth, this.canvasHeight);
       const sRadiusPx = splat.radius * this.canvasWidth;
-      this.drawRadialCircle(sCenter.px, sCenter.py, sRadiusPx, baseColor);
+      this.drawRadialCircle(sCenter.px, sCenter.py, sRadiusPx, baseColor, team);
     }
   }
 
-  private drawContinuousStroke(x1: number, y1: number, x2: number, y2: number, radiusPx: number, color: string): void {
+  private drawContinuousStroke(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    radiusPx: number,
+    color: string,
+    team: Team
+  ): void {
+    // 1. Base thick ink stroke
     this.ctx.lineCap = 'round';
     this.ctx.lineJoin = 'round';
     this.ctx.lineWidth = radiusPx * 2.0;
@@ -141,12 +151,25 @@ export class PaintEngine {
     this.ctx.moveTo(x1, y1);
     this.ctx.lineTo(x2, y2);
     this.ctx.stroke();
+
+    // 2. Liquid glossy central spine
+    if (radiusPx > 10) {
+      const glossColor = team === Team.PINK ? '#ff5cb2' : '#80ffff';
+      this.ctx.lineWidth = radiusPx * 0.75;
+      this.ctx.strokeStyle = glossColor;
+      this.ctx.beginPath();
+      this.ctx.moveTo(x1, y1);
+      this.ctx.lineTo(x2, y2);
+      this.ctx.stroke();
+    }
   }
 
-  private drawRadialCircle(cx: number, cy: number, r: number, color: string): void {
-    const grad = this.ctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
-    grad.addColorStop(0, color);
-    grad.addColorStop(0.85, color);
+  private drawRadialCircle(cx: number, cy: number, r: number, color: string, team: Team): void {
+    const glossColor = team === Team.PINK ? '#ff73be' : '#99ffff';
+    const grad = this.ctx.createRadialGradient(cx - r * 0.15, cy - r * 0.15, r * 0.08, cx, cy, r);
+    grad.addColorStop(0, glossColor);
+    grad.addColorStop(0.45, color);
+    grad.addColorStop(0.88, color);
     grad.addColorStop(1, 'rgba(0,0,0,0)');
 
     this.ctx.fillStyle = grad;

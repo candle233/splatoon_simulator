@@ -36,6 +36,10 @@ export class InputManager {
   private onDebugToggleCallback?: () => void;
   private onLockChangeCallback?: (locked: boolean) => void;
 
+  setSensitivity(sens: number): void {
+    this.mouseSensitivity = sens;
+  }
+
   constructor(
     element: HTMLElement,
     onDebugToggle?: () => void,

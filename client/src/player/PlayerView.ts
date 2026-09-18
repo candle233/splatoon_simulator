@@ -15,6 +15,11 @@ export class PlayerView {
   private leftLeg = new THREE.Group();
   private rightLeg = new THREE.Group();
   private tankLiquidMesh: THREE.Mesh;
+  private tankLedMesh: THREE.Mesh;
+  private squidTentacles: THREE.Mesh[] = [];
+  private ghostGroup = new THREE.Group();
+  private ghostActive = false;
+  private ghostTime = 0;
 
   // Weapon models
   private weaponAnchor = new THREE.Group();
@@ -23,6 +28,8 @@ export class PlayerView {
   private chargerGroup = new THREE.Group();
   private slosherGroup = new THREE.Group();
   private muzzleFlashMesh: THREE.Mesh;
+  private rollerCylinderMesh?: THREE.Mesh;
+  private chargerLaserMesh?: THREE.Mesh;
 
   // Squid swimming parts
   private rippleMesh: THREE.Mesh;
@@ -132,7 +139,27 @@ export class PlayerView {
       tentacle.rotation.x = -0.3;
       tentacle.rotation.z = side * 0.2;
       this.headGroup.add(tentacle);
+      this.squidTentacles.push(tentacle);
     }
+
+    // DJ Streetwear Headset & Earcups
+    const headbandGeo = new THREE.TorusGeometry(0.32, 0.035, 8, 16, Math.PI);
+    this.geometries.push(headbandGeo);
+    const headband = new THREE.Mesh(headbandGeo, darkMat);
+    headband.rotation.x = -Math.PI / 2;
+    headband.rotation.z = Math.PI;
+    headband.position.set(0, 0.08, 0);
+    this.headGroup.add(headband);
+
+    const earPadGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.09, 12);
+    this.geometries.push(earPadGeo);
+    for (let side = -1; side <= 1; side += 2) {
+      const earPad = new THREE.Mesh(earPadGeo, bodyMat);
+      earPad.rotation.z = Math.PI / 2;
+      earPad.position.set(side * 0.32, 0.04, 0);
+      this.headGroup.add(earPad);
+    }
+
     this.torsoGroup.add(this.headGroup);
 
     // Backpack Ink Tank
@@ -156,6 +183,16 @@ export class PlayerView {
     const capBot = new THREE.Mesh(capGeo, darkMat);
     capBot.position.y = -0.33;
     tankGroup.add(capTop, capBot);
+
+    // Tank Warning LED Light
+    const ledGeo = new THREE.SphereGeometry(0.045, 8, 8);
+    this.geometries.push(ledGeo);
+    const ledMat = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+    this.materials.push(ledMat);
+    this.tankLedMesh = new THREE.Mesh(ledGeo, ledMat);
+    this.tankLedMesh.position.set(0, 0.4, 0);
+    tankGroup.add(this.tankLedMesh);
+
     this.torsoGroup.add(tankGroup);
 
     this.torsoGroup.position.y = 0.85;
@@ -238,6 +275,7 @@ export class PlayerView {
     const rollerCylinder = new THREE.Mesh(rollerCylinderGeo, bodyMat);
     rollerCylinder.rotation.z = Math.PI / 2;
     rollerCylinder.position.set(0, -0.35, -0.6);
+    this.rollerCylinderMesh = rollerCylinder;
     this.rollerGroup.add(rollerCylinder);
     this.rollerGroup.visible = false;
     this.weaponAnchor.add(this.rollerGroup);
@@ -261,6 +299,21 @@ export class PlayerView {
     scope.rotation.x = Math.PI / 2;
     scope.position.set(0, 0.12, -0.1);
     this.chargerGroup.add(scope);
+
+    // Charger laser sight beam
+    const laserGeo = new THREE.CylinderGeometry(0.005, 0.005, 25, 6);
+    this.geometries.push(laserGeo);
+    const laserMat = new THREE.MeshBasicMaterial({
+      color: this.teamColorHex,
+      transparent: true,
+      opacity: 0.55
+    });
+    this.materials.push(laserMat);
+    this.chargerLaserMesh = new THREE.Mesh(laserGeo, laserMat);
+    this.chargerLaserMesh.rotation.x = Math.PI / 2;
+    this.chargerLaserMesh.position.z = -13.5;
+    this.chargerGroup.add(this.chargerLaserMesh);
+
     this.chargerGroup.visible = false;
     this.weaponAnchor.add(this.chargerGroup);
 
@@ -345,8 +398,49 @@ export class PlayerView {
     rightSquidEye.add(rightPupil);
     this.submergedGroup.add(rightSquidEye);
 
+    // Squid trailing tentacles
+    for (let side = -1; side <= 1; side += 2) {
+      const tentGeo = new THREE.CylinderGeometry(0.045, 0.02, 0.45, 6);
+      this.geometries.push(tentGeo);
+      const tentMesh = new THREE.Mesh(tentGeo, bodyMat);
+      tentMesh.rotation.x = Math.PI / 2;
+      tentMesh.position.set(side * 0.14, 0.06, 0.35);
+      this.squidTentacles.push(tentMesh);
+      this.submergedGroup.add(tentMesh);
+    }
+
     this.submergedGroup.visible = false;
     this.group.add(this.submergedGroup);
+
+    // ==========================================
+    // 4. Build Ascending Splat Ghost
+    // ==========================================
+    this.ghostGroup = new THREE.Group();
+    const ghostMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.85,
+      roughness: 0.2
+    });
+    this.materials.push(ghostMat);
+    const ghostBodyGeo = new THREE.ConeGeometry(0.24, 0.5, 10);
+    this.geometries.push(ghostBodyGeo);
+    const ghostBody = new THREE.Mesh(ghostBodyGeo, ghostMat);
+    ghostBody.rotation.x = Math.PI;
+    this.ghostGroup.add(ghostBody);
+
+    // Halo
+    const haloGeo = new THREE.RingGeometry(0.12, 0.16, 16);
+    this.geometries.push(haloGeo);
+    const haloMat = new THREE.MeshBasicMaterial({ color: 0xffdd44, side: THREE.DoubleSide });
+    this.materials.push(haloMat);
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = 0.35;
+    this.ghostGroup.add(halo);
+
+    this.ghostGroup.visible = false;
+    this.group.add(this.ghostGroup);
   }
 
   setWeaponType(type: WeaponType): void {
@@ -372,14 +466,22 @@ export class PlayerView {
       this.humanoidGroup.visible = false;
       this.submergedGroup.visible = false;
       if (this.nameplateSprite) this.nameplateSprite.visible = false;
+      this.ghostActive = true;
+      this.ghostTime = 0;
+      this.ghostGroup.position.set(0, 0.4, 0);
+      this.ghostGroup.visible = true;
     } else if (mode === PlayerMode.SUBMERGED) {
       this.humanoidGroup.visible = false;
       this.submergedGroup.visible = true;
       if (this.nameplateSprite) this.nameplateSprite.visible = false;
+      this.ghostActive = false;
+      this.ghostGroup.visible = false;
     } else {
       this.humanoidGroup.visible = true;
       this.submergedGroup.visible = false;
       if (this.nameplateSprite) this.nameplateSprite.visible = true;
+      this.ghostActive = false;
+      this.ghostGroup.visible = false;
     }
   }
 
@@ -525,14 +627,36 @@ export class PlayerView {
       // Locomotion vertical bob & lateral lean
       this.torsoGroup.position.y = 0.85 + Math.abs(Math.sin(this.walkPhase)) * 0.05;
       this.torsoGroup.rotation.z = Math.sin(this.walkPhase) * 0.04;
+
+      // Dynamic cephalopod hair/tentacle sway
+      const tentacleSway = Math.sin(this.walkPhase * 2) * 0.12 - speed * 0.04;
+      this.squidTentacles.forEach((t, idx) => {
+        const side = idx === 0 ? -1 : 1;
+        t.rotation.x = -0.3 + tentacleSway;
+        t.rotation.z = side * 0.2 + Math.sin(this.walkPhase) * 0.06;
+      });
+
+      // Physically roll the Splat Roller cylinder
+      if (this.currentWeapon === 'roller' && this.rollerCylinderMesh) {
+        this.rollerCylinderMesh.rotation.x += speed * dt * 5.0;
+      }
     } else {
-      // Return smoothly to idle weapon pose
+      // Return smoothly to idle weapon pose with subtle breathing
       this.leftLeg.rotation.x *= 0.85;
       this.rightLeg.rotation.x *= 0.85;
       this.leftArm.rotation.set(baseLeftX, baseLeftY, baseLeftZ);
       this.rightArm.rotation.set(baseRightX, baseRightY, baseRightZ);
-      this.torsoGroup.position.y = 0.85;
+
+      const breath = Math.sin(performance.now() * 0.003) * 0.012;
+      this.torsoGroup.position.y = 0.85 + breath;
+      this.headGroup.position.y = 0.55 + breath * 0.5;
       this.torsoGroup.rotation.z = 0;
+
+      this.squidTentacles.forEach((t, idx) => {
+        const side = idx === 0 ? -1 : 1;
+        t.rotation.x = -0.3 + Math.sin(performance.now() * 0.003) * 0.04;
+        t.rotation.z = side * 0.2;
+      });
     }
 
     // Jump squash & stretch decay
@@ -561,6 +685,25 @@ export class PlayerView {
   }
 
   updateVisuals(invulnerable: boolean, time: number, inkPct = 100): void {
+    // Update ghost floating animation
+    if (this.ghostActive) {
+      this.ghostTime += 0.016;
+      this.ghostGroup.position.y += 0.035;
+      this.ghostGroup.position.x = Math.sin(this.ghostTime * 6) * 0.08;
+      this.ghostGroup.rotation.y += 0.02;
+      const ghostProgress = Math.min(1.0, this.ghostTime / 2.5);
+      const ghostMat = this.ghostGroup.children[0]
+        ? ((this.ghostGroup.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial)
+        : null;
+      if (ghostMat) {
+        ghostMat.opacity = Math.max(0, (1 - ghostProgress) * 0.85);
+      }
+      if (this.ghostTime > 2.5) {
+        this.ghostActive = false;
+        this.ghostGroup.visible = false;
+      }
+    }
+
     if (this.currentMode === PlayerMode.DEAD) return;
 
     if (invulnerable) {
@@ -579,6 +722,18 @@ export class PlayerView {
     this.tankLiquidMesh.scale.set(1, inkRatio, 1);
     this.tankLiquidMesh.position.y = -0.29 + 0.29 * inkRatio;
 
+    // Tank Warning LED Light
+    if (this.tankLedMesh) {
+      const ledMat = this.tankLedMesh.material as THREE.MeshBasicMaterial;
+      if (inkPct < 20) {
+        ledMat.color.setHex(Math.sin(time * 18) > 0 ? 0xff0033 : 0x330000);
+      } else if (inkPct < 50) {
+        ledMat.color.setHex(0xffbb00);
+      } else {
+        ledMat.color.setHex(0x00ff88);
+      }
+    }
+
     // Gentle ripple animation when submerged with dynamic dive scale
     if (this.submergedGroup.visible) {
       if (this.diveTransitionTimer > 0) {
@@ -587,6 +742,19 @@ export class PlayerView {
       const scale = 1.0 + Math.sin(time * 9) * 0.18 + (this.diveTransitionTimer / 0.22) * 0.4;
       this.rippleMesh.scale.set(scale, scale, 1);
       this.squidDomeMesh.scale.set(scale, 1.0, scale);
+      this.squidDomeMesh.position.y = 0.08 + Math.sin(time * 12) * 0.02;
+
+      // Trailing tentacles wiggle
+      for (let i = 0; i < this.squidTentacles.length; i++) {
+        const tent = this.squidTentacles[i]!;
+        tent.rotation.z = Math.sin(time * 12 + i * Math.PI) * 0.25;
+      }
+    }
+
+    // Charger laser sight visibility
+    if (this.chargerLaserMesh) {
+      this.chargerLaserMesh.visible =
+        this.currentWeapon === 'charger' && this.currentMode === PlayerMode.HUMANOID;
     }
   }
 

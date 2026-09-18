@@ -18,10 +18,12 @@ import {
   WeaponType,
   WelcomePayload,
   getSpawnPosition,
-  uvToWorld
+  uvToWorld,
+  worldToUV
 } from '@ink/shared';
 
 import { VisualWeapon } from '../combat/Weapon.js';
+import { ParticleSystem } from '../combat/ParticleSystem.js';
 import { Crosshair } from '../combat/Crosshair.js';
 import { CameraController } from '../player/CameraController.js';
 import { LocalPlayer } from '../player/LocalPlayer.js';
@@ -30,7 +32,10 @@ import { NetworkClient } from '../network/NetworkClient.js';
 import { SnapshotBuffer } from '../network/SnapshotBuffer.js';
 import { GameOverScreen } from '../ui/GameOverScreen.js';
 import { HUD } from '../ui/HUD.js';
+import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
+import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
+import { BotController, BotState } from '../bot/BotController.js';
 import { Arena } from '../world/Arena.js';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
 import { PaintEngine } from '../world/PaintEngine.js';
@@ -46,8 +51,13 @@ export class Game {
   private paintEngine = new PaintEngine();
   private arena: Arena;
   private weaponVisual = new VisualWeapon();
+  private particleSystem = new ParticleSystem();
   private crosshair = new Crosshair();
   private hud = new HUD();
+  private minimap: Minimap;
+  private settingsModal: SettingsModal;
+  private botController: BotController;
+  private botRemotePlayers = new Map<string, RemotePlayer>();
   private gameOverScreen = new GameOverScreen();
   private lobbyScreen: LobbyScreen;
   private inputManager: InputManager;
@@ -60,6 +70,7 @@ export class Game {
   private localPlayer?: LocalPlayer;
   private remotePlayers = new Map<string, RemotePlayer>();
   private playerMeta = new Map<string, { name: string; team: Team }>();
+  private lastLocalMode = PlayerMode.HUMANOID;
 
   private inputSeq = 0;
   private matchPhase: MatchPhase = MatchPhase.WAITING;
@@ -86,6 +97,10 @@ export class Game {
     this.arena = new Arena(this.paintEngine, this.collisionWorld.getObstacles());
     this.renderer.scene.add(this.arena.group);
     this.renderer.scene.add(this.weaponVisual.group);
+    this.renderer.scene.add(this.particleSystem.group);
+
+    this.minimap = new Minimap(this.paintEngine);
+    this.botController = new BotController(this.paintEngine);
 
     this.cameraController = new CameraController(this.renderer.camera, this.collisionWorld);
     this.inputManager = new InputManager(
@@ -93,6 +108,35 @@ export class Game {
       () => this.hud.toggleDebugOverlay(),
       (locked) => this.handleLockChange(locked)
     );
+
+    this.settingsModal = new SettingsModal({
+      onSensitivityChange: (val) => {
+        this.inputManager.setSensitivity(val * 0.0022);
+      },
+      onFovChange: (fov) => {
+        this.renderer.camera.fov = fov;
+        this.renderer.camera.updateProjectionMatrix();
+      },
+      onSfxVolumeChange: (vol) => {
+        this.soundManager.setSfxVolume(vol);
+      },
+      onBgmVolumeChange: (vol) => {
+        this.soundManager.setBgmVolume(vol);
+      },
+      onSpawnBot: () => {
+        this.spawnPracticeBot();
+      },
+      onClearBots: () => {
+        this.clearPracticeBots();
+      }
+    });
+
+    // Apply loaded settings
+    this.inputManager.setSensitivity(this.settingsModal.config.mouseSensitivity * 0.0022);
+    this.renderer.camera.fov = this.settingsModal.config.fov;
+    this.renderer.camera.updateProjectionMatrix();
+    this.soundManager.setSfxVolume(this.settingsModal.config.sfxVolume);
+    this.soundManager.setBgmVolume(this.settingsModal.config.bgmVolume);
 
     this.lobbyScreen = new LobbyScreen({
       onLobbyUpdate: (data) => this.networkClient.sendLobbyUpdate(data),
@@ -200,6 +244,9 @@ export class Game {
         this.localPlayer.ink >= wConfig.inkCost;
 
       if (!canShoot) {
+        if (input.fire && this.inputManager.isLocked() && this.localPlayer.ink < wConfig.inkCost) {
+          this.soundManager.playDryFire();
+        }
         input.fire = false;
       }
       if (inLobby) {
@@ -216,10 +263,13 @@ export class Game {
 
           if (weaponType === 'charger') {
             this.soundManager.playChargerShot(input.chargeLevel || 1.0);
+            this.cameraController.addShake(0.18, 0.15);
           } else if (weaponType === 'roller') {
             this.soundManager.playRollerFlick();
+            this.cameraController.addShake(0.12, 0.12);
           } else if (weaponType === 'slosher') {
             this.soundManager.playSlosher();
+            this.cameraController.addShake(0.1, 0.1);
           } else {
             this.soundManager.playShoot();
           }
@@ -318,6 +368,36 @@ export class Game {
 
           const target = muzzleHit.hit ? muzzleHit.point : aimPoint;
           this.weaponVisual.spawnTracer(muzzle, target, this.localPlayer.team, weaponType, input.chargeLevel);
+
+          // 3D Particles: Muzzle Spray and Impact Splash
+          this.particleSystem.spawnMuzzleSpray(muzzle, muzzleDir, this.localPlayer.team);
+          this.particleSystem.spawnSplash(target, this.localPlayer.team, 8, 6.5);
+
+          // Check if shot hit any bot
+          for (const bot of this.botController.getBots()) {
+            if (bot.team !== this.localPlayer.team && bot.alive) {
+              const bdx = bot.position.x - target.x;
+              const bdz = bot.position.z - target.z;
+              if (Math.hypot(bdx, bdz) < 1.8) {
+                bot.hp -= 35;
+                this.crosshair.showHitMarker();
+                this.soundManager.playHit();
+                this.particleSystem.spawnSplash(bot.position, this.localPlayer.team, 10, 7.0);
+                if (bot.hp <= 0) {
+                  bot.alive = false;
+                  bot.mode = PlayerMode.DEAD;
+                  bot.deaths++;
+                  bot.respawnAt = now + 4000;
+                  this.localPlayer.kills++;
+                  this.soundManager.playKillChime();
+                  this.cameraController.addShake(0.35, 0.25);
+                  this.particleSystem.spawnSplash(bot.position, this.localPlayer.team, 24, 11.0);
+                  this.hud.addKillFeedEntry('You', this.localPlayer.team, bot.name, bot.team);
+                }
+                break;
+              }
+            }
+          }
         }
       }
 
@@ -346,6 +426,23 @@ export class Game {
 
       this.localPlayer.predictMovement(input, dt, groundInk);
       this.localPlayer.updateVisuals(now / 1000);
+
+      // Submerge / Surface / Swim / Burn Audio Triggers
+      if (this.localPlayer.mode !== this.lastLocalMode) {
+        if (this.localPlayer.mode === PlayerMode.SUBMERGED) {
+          this.soundManager.playSubmerge();
+        } else if (this.lastLocalMode === PlayerMode.SUBMERGED) {
+          this.soundManager.playSurface();
+        }
+        this.lastLocalMode = this.localPlayer.mode;
+      }
+      if (this.localPlayer.mode === PlayerMode.SUBMERGED && (input.moveX !== 0 || input.moveZ !== 0)) {
+        this.soundManager.playSwim();
+      }
+      const isEnemyInk = this.localPlayer.team === Team.PINK ? groundInk === Team.CYAN : groundInk === Team.PINK;
+      if (isEnemyInk && this.localPlayer.alive) {
+        this.soundManager.playBurn();
+      }
 
       // Camera Follows Local Player
       this.cameraController.update(
@@ -406,13 +503,19 @@ export class Game {
       }
     }
 
-    // 3. Visual Weapons Update (fade beam tracers)
+    // 3. Visual Weapons & Particles Update
     this.weaponVisual.update(dt);
+    this.particleSystem.update(dt);
 
-    // 4. Match Timers & Score
+    // 4. Match Timers, Score & BGM Dynamic Speed-up
     let remainingMatchSec = 0;
     if (this.matchPhase === MatchPhase.PLAYING) {
       remainingMatchSec = Math.max(0, (this.matchEndAt - serverTime) / 1000);
+      if (remainingMatchSec <= 60 && remainingMatchSec > 0) {
+        this.soundManager.setSpeedUp(true);
+      } else {
+        this.soundManager.setSpeedUp(false);
+      }
     } else if (this.matchPhase === MatchPhase.COUNTDOWN) {
       remainingMatchSec = Math.max(0, (this.matchStartAt - serverTime) / 1000);
     }
@@ -424,10 +527,108 @@ export class Game {
       this.gameOverScreen.updateCountdown(nextMatchSec);
     }
 
-    // 5. Paint Texture Upload (ONLY IF DIRTY, AT MOST ONCE PER RENDER FRAME!)
+    // 5. Offline Practice Bots Update
+    if (this.localPlayer) {
+      this.botController.update(
+        dt,
+        now,
+        {
+          position: this.localPlayer.position,
+          alive: this.localPlayer.alive,
+          team: this.localPlayer.team,
+          hp: this.localPlayer.hp
+        },
+        (bot, aimTarget) => {
+          const muzzle = { x: bot.position.x, y: bot.position.y + 0.85, z: bot.position.z };
+          this.weaponVisual.spawnTracer(muzzle, aimTarget, bot.team, bot.weaponType);
+          this.particleSystem.spawnSplash(aimTarget, bot.team, 8, 6.0);
+          const distToLocal = Math.hypot(aimTarget.x - this.localPlayer!.position.x, aimTarget.z - this.localPlayer!.position.z);
+          if (distToLocal < 1.8 && bot.team !== this.localPlayer!.team && this.localPlayer!.alive) {
+            this.localPlayer!.hp = Math.max(0, this.localPlayer!.hp - 20);
+            this.cameraController.addShake(0.35, 0.2);
+            this.hud.triggerDamageFlash();
+            if (this.localPlayer!.hp <= 0) {
+              this.localPlayer!.alive = false;
+              this.localPlayer!.mode = PlayerMode.DEAD;
+              this.localPlayer!.view.setMode(PlayerMode.DEAD);
+              this.hud.showDeathOverlay(4.0);
+              this.respawnEndsAt = Date.now() + 4000;
+              this.soundManager.playSplat();
+              this.hud.addKillFeedEntry(bot.name, bot.team, 'You', this.localPlayer!.team);
+            }
+          }
+        },
+        (bot, paintX, paintZ) => {
+          const { u, v } = worldToUV(paintX, paintZ);
+          const paintEvt: PaintEvent = {
+            id: Math.floor(Math.random() * 100000),
+            team: bot.team,
+            u,
+            v,
+            radius: PAINT_RADIUS_WORLD / 100,
+            seed: (now ^ 0x9876) >>> 0
+          };
+          this.paintEngine.applyPaintBatch([paintEvt]);
+        }
+      );
+
+      for (const bot of this.botController.getBots()) {
+        const remote = this.botRemotePlayers.get(bot.id);
+        if (remote) {
+          remote.view.setMode(bot.mode);
+          remote.view.setTransform(bot.position, bot.yaw, bot.pitch);
+          remote.view.updateLocomotion(dt, bot.alive ? 5.0 : 0, true, bot.pitch);
+          remote.view.updateVisuals(false, now / 1000, bot.ink);
+        }
+      }
+
+      // 6. Tactical Minimap Radar & Top Team Squids Update
+      const allRemotePositions: MinimapPlayerData[] = Array.from(this.remotePlayers.values()).map((p) => ({
+        position: { x: p.position.x, y: p.position.y, z: p.position.z },
+        yaw: p.yaw,
+        team: p.team,
+        alive: p.alive
+      }));
+      for (const bot of this.botController.getBots()) {
+        allRemotePositions.push({
+          position: bot.position,
+          yaw: bot.yaw,
+          team: bot.team,
+          alive: bot.alive
+        });
+      }
+
+      this.minimap.update(
+        {
+          position: this.localPlayer.position,
+          yaw: this.localPlayer.yaw,
+          team: this.localPlayer.team,
+          alive: this.localPlayer.alive
+        },
+        allRemotePositions,
+        this.collisionWorld.getObstacles()
+      );
+
+      const squidsData = [
+        {
+          team: this.localPlayer.team,
+          alive: this.localPlayer.alive,
+          specialMeter: this.localPlayer.specialMeter
+        }
+      ];
+      for (const rp of this.remotePlayers.values()) {
+        squidsData.push({ team: rp.team, alive: rp.alive, specialMeter: rp.specialMeter });
+      }
+      for (const bot of this.botController.getBots()) {
+        squidsData.push({ team: bot.team, alive: bot.alive, specialMeter: bot.specialMeter });
+      }
+      this.hud.updateTeamSquids(squidsData);
+    }
+
+    // 7. Paint Texture Upload (ONLY IF DIRTY, AT MOST ONCE PER RENDER FRAME!)
     this.paintEngine.renderUpdate();
 
-    // 6. Three.js Render
+    // 8. Three.js Render
     this.renderer.render();
   };
 
@@ -541,6 +742,7 @@ export class Game {
       return;
     }
     this.weaponVisual.spawnTracer(shot.origin, shot.target, shot.team, shot.weaponType, shot.chargeLevel);
+    this.particleSystem.spawnSplash(shot.target, shot.team, 6, 6.0);
     if (shot.weaponType === 'charger') {
       this.soundManager.playChargerShot(shot.chargeLevel || 1.0);
     } else if (shot.weaponType === 'roller') {
@@ -570,6 +772,8 @@ export class Game {
     } else if (payload.action === 'explode') {
       this.weaponVisual.explodeSubWeapon(payload.id, payload.position, payload.radius || 4.0, payload.team);
       this.soundManager.playExplosion();
+      this.particleSystem.spawnSplash(payload.position, payload.team, 16, 8.5);
+      this.cameraController.addShake(0.45, 0.25);
     }
   }
 
@@ -577,6 +781,8 @@ export class Game {
     if (payload.action === 'activate') {
       this.weaponVisual.spawnSpecial(payload);
       this.soundManager.playSpecialActivate();
+      this.particleSystem.spawnSplash(payload.position, payload.team, 20, 9.5);
+      this.cameraController.addShake(0.6, 0.4);
     } else if (payload.action === 'end') {
       this.weaponVisual.endSpecial(payload.id);
     }
@@ -607,9 +813,14 @@ export class Game {
     const isLocalVictim = Boolean(this.localPlayer && data.victimId === this.localPlayer.id);
     const isLocalKiller = Boolean(this.localPlayer && data.killerId === this.localPlayer.id);
 
+    const victimPos = isLocalVictim
+      ? this.localPlayer?.position
+      : this.remotePlayers.get(data.victimId)?.position;
+
     if (isLocalVictim && this.localPlayer) {
       this.localPlayer.alive = false;
       this.localPlayer.mode = PlayerMode.DEAD;
+      this.localPlayer.view.setMode(PlayerMode.DEAD);
       this.respawnEndsAt = data.respawnAt;
       this.soundManager.playSplat();
       this.cameraController.addShake(0.8, 0.45);
@@ -618,6 +829,8 @@ export class Game {
     if (isLocalKiller) {
       this.crosshair.showHitMarker();
       this.soundManager.playHit();
+      this.soundManager.playKillChime();
+      this.cameraController.addShake(0.3, 0.2);
     }
 
     // Kill Feed Notification (Subagent 78)
@@ -632,6 +845,10 @@ export class Game {
       const killerMeta = this.playerMeta.get(data.killerId);
       killerName = killerMeta?.name || (isLocalKiller ? 'You' : `Player #${data.killerId.slice(0, 4)}`);
       killerTeam = killerMeta?.team || (isLocalKiller && this.localPlayer ? this.localPlayer.team : killerTeam);
+    }
+
+    if (victimPos) {
+      this.particleSystem.spawnSplash(victimPos, killerTeam, 24, 11.0);
     }
 
     this.hud.addKillFeedEntry(killerName, killerTeam, victimName, victimTeam, '💥');
@@ -659,6 +876,9 @@ export class Game {
         this.soundManager.playCountdown(false);
       } else if (state.phase === MatchPhase.PLAYING) {
         this.soundManager.playCountdown(true);
+        this.soundManager.startBGM();
+      } else if (state.phase === MatchPhase.GAME_OVER) {
+        this.soundManager.stopBGM();
       }
     }
 
@@ -712,6 +932,31 @@ export class Game {
     this.hud.showSyncBanner(`Connect error: ${err.message}`);
   }
 
+  private spawnPracticeBot(): void {
+    const playerTeam = this.localPlayer?.team || Team.PINK;
+    const botTeam = playerTeam === Team.PINK ? Team.CYAN : Team.PINK;
+    const weapons: WeaponType[] = ['shooter', 'roller', 'charger', 'slosher'];
+    const botWeapon = weapons[Math.floor(Math.random() * weapons.length)] || 'shooter';
+
+    const bot = this.botController.spawnBot(botTeam, botWeapon);
+    const remoteBot = new RemotePlayer(bot.id, bot.team, bot.weaponType);
+    remoteBot.setName(`🤖 ${bot.name}`);
+    this.renderer.scene.add(remoteBot.view.group);
+    this.botRemotePlayers.set(bot.id, remoteBot);
+
+    this.hud.addKillFeedEntry('SYSTEM', Team.NEUTRAL, `Spawned ${bot.name}`, botTeam, '🤖');
+  }
+
+  private clearPracticeBots(): void {
+    for (const remoteBot of this.botRemotePlayers.values()) {
+      this.renderer.scene.remove(remoteBot.view.group);
+      remoteBot.view.dispose();
+    }
+    this.botRemotePlayers.clear();
+    this.botController.clearBots();
+    this.hud.addKillFeedEntry('SYSTEM', Team.NEUTRAL, 'Cleared all bots', Team.NEUTRAL, '🧹');
+  }
+
   dispose(): void {
     this.isRunning = false;
     this.networkClient.dispose();
@@ -719,10 +964,12 @@ export class Game {
     this.arena.dispose();
     this.paintEngine.dispose();
     this.weaponVisual.dispose();
+    this.particleSystem.dispose();
     this.localPlayer?.dispose();
     for (const r of this.remotePlayers.values()) {
       r.dispose();
     }
+    this.clearPracticeBots();
     this.renderer.dispose();
   }
 }
