@@ -30,6 +30,20 @@ export class Match {
     let phaseChanged = false;
     let gameOverPayload: GameOverPayload | undefined;
 
+    if (playerCount === 0 && this.phase !== MatchPhase.WAITING) {
+      this.phase = MatchPhase.WAITING;
+      this.matchStartAt = 0;
+      this.matchEndAt = 0;
+      this.phaseEndsAt = 0;
+      if (this.onResetCallback) {
+        this.onResetCallback();
+      }
+      return {
+        phaseChanged: true,
+        newPhase: this.phase
+      };
+    }
+
     switch (this.phase) {
       case MatchPhase.WAITING: {
         if (playerCount >= 1) {
@@ -74,6 +88,7 @@ export class Match {
   startCountdown(now: number = Date.now()): void {
     this.phase = MatchPhase.COUNTDOWN;
     this.phaseEndsAt = now + COUNTDOWN_DURATION * 1000;
+    this.matchStartAt = this.phaseEndsAt;
   }
 
   startPlaying(now: number = Date.now()): void {

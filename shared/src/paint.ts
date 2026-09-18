@@ -76,9 +76,9 @@ export function generateSplatters(
     const eta = prng.next();
     const zeta = prng.next();
 
-    const r_i = radiusUV * (0.15 + 0.25 * xi);
+    const r_i = radiusUV * (0.1 + 0.25 * xi);
     const theta_i = 2 * Math.PI * eta;
-    const d_i = radiusUV * (0.7 + 0.8 * zeta);
+    const d_i = radiusUV * (0.6 + 0.8 * zeta);
 
     const sU = clamp(centerU + d_i * Math.cos(theta_i), 0, 1);
     const sV = clamp(centerV + d_i * Math.sin(theta_i), 0, 1);

@@ -12,7 +12,7 @@
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,magenta\" \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "test": "vitest run",
-    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client"
+    "typecheck": "npm run build -w shared && npm run typecheck -w server && npm run typecheck -w client"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

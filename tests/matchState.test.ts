@@ -79,4 +79,24 @@ describe('Match State Machine', () => {
     expect(resetTriggered).toBe(true);
     expect(match.phase).toBe(MatchPhase.COUNTDOWN);
   });
+
+  it('initializes matchStartAt during COUNTDOWN so client calculates 3-second countdown', () => {
+    const now = 100000;
+    match.update(1, now);
+    const snap = match.getSnapshot(now);
+    expect(snap.matchStartAt).toBe(now + 3000);
+    const remainingSec = (snap.matchStartAt - now) / 1000;
+    expect(remainingSec).toBeCloseTo(3.0, 1);
+  });
+
+  it('resets to WAITING and calls onReset when player count drops to 0', () => {
+    const now = 100000;
+    match.update(1, now);
+    expect(match.phase).toBe(MatchPhase.COUNTDOWN);
+
+    const res = match.update(0, now + 1000);
+    expect(res.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.WAITING);
+    expect(resetTriggered).toBe(true);
+  });
 });

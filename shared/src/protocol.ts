@@ -15,7 +15,9 @@ export const PROTOCOL_EVENTS = {
   S2C_MATCH_STATE: 's2c:match_state',
   S2C_GAME_OVER: 's2c:game_over',
   S2C_PONG: 's2c:pong',
-  S2C_HIT_FEEDBACK: 's2c:hit_feedback'
+  S2C_HIT_FEEDBACK: 's2c:hit_feedback',
+  S2C_SHOT_EVENT: 's2c:shot_event'
 } as const;
 
 export type ProtocolEventName = typeof PROTOCOL_EVENTS[keyof typeof PROTOCOL_EVENTS];
+

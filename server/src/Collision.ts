@@ -102,6 +102,18 @@ export class CollisionWorld {
         } else {
           currZ += penZ;
         }
+      } else if (
+        pMaxX > minX &&
+        pMinX < maxX &&
+        pMaxZ > minZ &&
+        pMinZ < maxZ &&
+        Math.abs(currY - maxY) <= 0.06 &&
+        player.velocity.y <= 0
+      ) {
+        // Player is standing stably on top of obstacle platform
+        currY = maxY;
+        grounded = true;
+        player.velocity.y = 0;
       }
     }
 
@@ -120,6 +132,44 @@ export class CollisionWorld {
 
     return { grounded };
   }
+
+  /**
+   * Raycast for camera collision so camera doesn't clip through walls
+   */
+  castCameraRay(ray: Ray, maxDistance: number): number | null {
+    let closest = maxDistance;
+    let hitAny = false;
+
+    for (const obs of this.obstacles) {
+      const aabb = {
+        min: {
+          x: obs.position.x - obs.size.x * 0.5,
+          y: obs.position.y - obs.size.y * 0.5,
+          z: obs.position.z - obs.size.z * 0.5
+        },
+        max: {
+          x: obs.position.x + obs.size.x * 0.5,
+          y: obs.position.y + obs.size.y * 0.5,
+          z: obs.position.z + obs.size.z * 0.5
+        }
+      };
+
+      const hit = intersectRayAABB(ray, aabb);
+      if (hit && hit.t > 0 && hit.t < closest) {
+        closest = hit.t;
+        hitAny = true;
+      }
+    }
+
+    const ground = intersectRayGroundPlane(ray, 0.2, ARENA_HALF_SIZE);
+    if (ground && ground.t > 0 && ground.t < closest) {
+      closest = ground.t;
+      hitAny = true;
+    }
+
+    return hitAny ? closest : null;
+  }
+
 
   /**
    * Raycast against ground plane, obstacles, and enemy players.

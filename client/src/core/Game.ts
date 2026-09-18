@@ -7,6 +7,7 @@ import {
   PaintEvent,
   PlayerMode,
   PlayerSnapshot,
+  ShotEventPayload,
   SnapshotPayload,
   Team,
   WelcomePayload,
@@ -56,6 +57,7 @@ export class Game {
   private pinkScore = 0;
   private cyanScore = 0;
   private totalPaintEventsReceived = 0;
+  private expectedTotalPaintEvents = 0;
 
   private isRunning = false;
   private respawnEndsAt = 0;
@@ -94,6 +96,7 @@ export class Game {
       onMatchState: (state) => this.handleMatchState(state),
       onGameOver: (payload) => this.handleGameOver(payload),
       onHitFeedback: () => this.crosshair.showHitMarker(),
+      onShotEvent: (shot) => this.handleShotEvent(shot),
       onDisconnect: () => this.handleDisconnect(),
       onConnectError: (err) => this.handleConnectError(err)
     });
@@ -272,6 +275,8 @@ export class Game {
     }
 
     // 2. Replay all Paint History (Late Join)
+    this.expectedTotalPaintEvents = payload.totalPaintEvents ?? (payload.paintHistory ? payload.paintHistory.length : 0);
+
     if (payload.paintHistory && payload.paintHistory.length > 0) {
       this.paintEngine.applyPaintBatch(payload.paintHistory);
       this.totalPaintEventsReceived += payload.paintHistory.length;
@@ -297,22 +302,37 @@ export class Game {
     // 5. Set match state
     this.handleMatchState(payload.match);
 
-    this.hud.hideSyncBanner();
+    if (this.totalPaintEventsReceived >= this.expectedTotalPaintEvents) {
+      this.hud.hideSyncBanner();
+    } else {
+      this.hud.showSyncBanner(
+        `Synchronizing arena... (${this.totalPaintEventsReceived}/${this.expectedTotalPaintEvents})`
+      );
+    }
   }
 
   private handlePaintHistoryChunk(events: PaintEvent[]): void {
     this.paintEngine.applyPaintBatch(events);
     this.totalPaintEventsReceived += events.length;
+
+    if (this.totalPaintEventsReceived >= this.expectedTotalPaintEvents) {
+      this.hud.hideSyncBanner();
+    } else {
+      this.hud.showSyncBanner(
+        `Synchronizing arena... (${this.totalPaintEventsReceived}/${this.expectedTotalPaintEvents})`
+      );
+    }
   }
 
   private handleSnapshot(payload: SnapshotPayload): void {
     this.snapshotBuffer.addSnapshot(payload.serverTime, payload.players);
 
-    // Reconcile Local Player
+    // Reconcile Local Player with acknowledged sequence number
     if (this.localPlayer) {
       const mySnap = payload.players.find((p) => p.id === this.localPlayer?.id);
       if (mySnap) {
-        this.localPlayer.applyServerState(mySnap);
+        const lastAckSeq = payload.lastProcessedInputSeq[this.localPlayer.id];
+        this.localPlayer.applyServerState(mySnap, lastAckSeq);
       }
     }
 
@@ -330,14 +350,14 @@ export class Game {
   private handlePaintBatch(events: PaintEvent[]): void {
     this.paintEngine.applyPaintBatch(events);
     this.totalPaintEventsReceived += events.length;
+  }
 
-    // Spawn visual tracer for each paint event towards the ground
-    for (const evt of events) {
-      const worldPos = uvToWorld(evt.u, evt.v);
-      const startPos = { x: worldPos.x, y: 15.0, z: worldPos.z };
-      const hitPos = { x: worldPos.x, y: 0.1, z: worldPos.z };
-      this.weaponVisual.spawnTracer(startPos, hitPos, evt.team);
+  private handleShotEvent(shot: ShotEventPayload): void {
+    // If local player already spawned predicted tracer, skip to avoid double rendering
+    if (this.localPlayer && shot.shooterId === this.localPlayer.id) {
+      return;
     }
+    this.weaponVisual.spawnTracer(shot.origin, shot.target, shot.team);
   }
 
   private handlePlayerJoined(snap: PlayerSnapshot): void {
@@ -392,6 +412,8 @@ export class Game {
       this.paintEngine.reset();
       this.snapshotBuffer.clear();
       this.totalPaintEventsReceived = 0;
+      this.respawnEndsAt = 0;
+      this.hud.hideDeathOverlay();
     }
   }
 

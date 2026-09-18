@@ -6,6 +6,7 @@ import {
   PaintEvent,
   PlayerInput,
   PlayerSnapshot,
+  ShotEventPayload,
   SnapshotPayload,
   WelcomePayload
 } from '@ink/shared';
@@ -22,6 +23,7 @@ export interface NetworkCallbacks {
   onMatchState: (state: MatchStateSnapshot) => void;
   onGameOver: (payload: GameOverPayload) => void;
   onHitFeedback: (data: { targetId: string }) => void;
+  onShotEvent: (shot: ShotEventPayload) => void;
   onDisconnect: () => void;
   onConnectError: (err: Error) => void;
 }
@@ -103,11 +105,16 @@ export class NetworkClient {
       this.callbacks.onHitFeedback(data);
     });
 
+    this.socket.on(PROTOCOL_EVENTS.S2C_SHOT_EVENT, (shot: ShotEventPayload) => {
+      this.callbacks.onShotEvent(shot);
+    });
+
     this.socket.on(
       PROTOCOL_EVENTS.S2C_PONG,
       (data: { clientTime: number; serverTime: number }) => {
         const now = Date.now();
         this.currentPing = Math.max(0, now - data.clientTime);
+        this.serverTimeOffset = data.serverTime + this.currentPing / 2 - now;
       }
     );
 

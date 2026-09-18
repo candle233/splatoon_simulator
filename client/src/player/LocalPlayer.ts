@@ -39,6 +39,7 @@ export class LocalPlayer {
   deaths = 0;
 
   private collisionWorld: ClientCollisionWorld;
+  private pendingInputs: { seq: number; input: PlayerInput; dt: number; groundInk: Team }[] = [];
 
   constructor(
     id: string,
@@ -54,27 +55,29 @@ export class LocalPlayer {
     this.syncViewPosition();
   }
 
-  predictMovement(input: PlayerInput, dt: number, groundInk: Team): void {
-    if (!this.alive) return;
-
-    this.yaw = input.yaw;
-    this.pitch = input.pitch;
-
+  private simulateStep(
+    pos: Vec3,
+    vel: Vec3,
+    grounded: boolean,
+    input: PlayerInput,
+    dt: number,
+    groundInk: Team
+  ): { position: Vec3; velocity: Vec3; grounded: boolean; mode: PlayerMode } {
     const isEnemyInk = this.team === Team.PINK ? groundInk === Team.CYAN : groundInk === Team.PINK;
     const isOwnInk = groundInk === this.team;
 
     let currentSpeed = RUN_SPEED;
-    if (input.squid && isOwnInk && this.grounded) {
-      this.mode = PlayerMode.SUBMERGED;
+    let mode = PlayerMode.HUMANOID;
+    if (input.squid && isOwnInk && grounded) {
+      mode = PlayerMode.SUBMERGED;
       currentSpeed = SQUID_SPEED;
     } else {
-      this.mode = PlayerMode.HUMANOID;
+      mode = PlayerMode.HUMANOID;
       currentSpeed = isEnemyInk ? ENEMY_INK_SPEED : RUN_SPEED;
     }
 
-    // Direction calculation
-    const sinYaw = Math.sin(this.yaw);
-    const cosYaw = Math.cos(this.yaw);
+    const sinYaw = Math.sin(input.yaw);
+    const cosYaw = Math.cos(input.yaw);
 
     const forwardX = -sinYaw;
     const forwardZ = -cosYaw;
@@ -97,48 +100,83 @@ export class LocalPlayer {
       }
     }
 
-    this.velocity.x = (rightX * normRight + forwardX * normForward) * currentSpeed;
-    this.velocity.z = (rightZ * normRight + forwardZ * normForward) * currentSpeed;
+    const stepVel = {
+      x: (rightX * normRight + forwardX * normForward) * currentSpeed,
+      y: vel.y,
+      z: (rightZ * normRight + forwardZ * normForward) * currentSpeed
+    };
 
-    // Jump
-    if (input.jump && this.grounded && this.mode === PlayerMode.HUMANOID) {
-      this.velocity.y = JUMP_VELOCITY;
-      this.grounded = false;
+    let stepGrounded = grounded;
+    if (input.jump && stepGrounded) {
+      stepVel.y = JUMP_VELOCITY;
+      stepGrounded = false;
     }
 
-    // Gravity
-    if (!this.grounded) {
-      this.velocity.y += GRAVITY * dt;
+    if (!stepGrounded) {
+      stepVel.y += GRAVITY * dt;
     }
 
-    // Collision & Integration
     const radius = PLAYER_RADIUS;
-    const height = this.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
+    const height = mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
 
-    const prevPos = { ...this.position };
     const newPos = {
-      x: this.position.x + this.velocity.x * dt,
-      y: this.position.y + this.velocity.y * dt,
-      z: this.position.z + this.velocity.z * dt
+      x: pos.x + stepVel.x * dt,
+      y: pos.y + stepVel.y * dt,
+      z: pos.z + stepVel.z * dt
     };
 
     const res = this.collisionWorld.resolveMovement(
-      prevPos,
+      pos,
       newPos,
       radius,
       height,
-      this.velocity
+      stepVel
+    );
+
+    return {
+      position: res.position,
+      velocity: res.velocity,
+      grounded: res.grounded,
+      mode
+    };
+  }
+
+  predictMovement(input: PlayerInput, dt: number, groundInk: Team): void {
+    if (!this.alive) return;
+
+    this.yaw = input.yaw;
+    this.pitch = input.pitch;
+
+    const res = this.simulateStep(
+      this.position,
+      this.velocity,
+      this.grounded,
+      input,
+      dt,
+      groundInk
     );
 
     this.position = res.position;
     this.velocity = res.velocity;
     this.grounded = res.grounded;
+    this.mode = res.mode;
+
+    this.pendingInputs.push({
+      seq: input.seq,
+      input: { ...input },
+      dt,
+      groundInk
+    });
+
+    if (this.pendingInputs.length > 120) {
+      this.pendingInputs.shift();
+    }
 
     this.syncViewPosition();
     this.view.setMode(this.mode);
   }
 
-  applyServerState(snapshot: PlayerSnapshot): void {
+  applyServerState(snapshot: PlayerSnapshot, lastAckSeq?: number): void {
     this.hp = snapshot.hp;
     this.ink = snapshot.ink;
     this.alive = snapshot.alive;
@@ -146,27 +184,54 @@ export class LocalPlayer {
     this.kills = snapshot.kills;
     this.deaths = snapshot.deaths;
 
-    // Smooth error correction if discrepancy is moderate, snap if large
-    const dx = snapshot.x - this.position.x;
-    const dy = snapshot.y - this.position.y;
-    const dz = snapshot.z - this.position.z;
-    const distSq = dx * dx + dy * dy + dz * dz;
-
-    if (distSq > 4.0 || !this.alive) {
-      // Large deviation or dead -> snap to server position
-      this.position.x = snapshot.x;
-      this.position.y = snapshot.y;
-      this.position.z = snapshot.z;
-      this.mode = snapshot.mode;
-    } else if (distSq > 0.04) {
-      // Small deviation -> soft blend towards authoritative position
-      this.position.x += dx * 0.2;
-      this.position.y += dy * 0.2;
-      this.position.z += dz * 0.2;
+    if (!this.alive) {
+      this.pendingInputs = [];
+      this.position = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      this.mode = PlayerMode.DEAD;
+      this.syncViewPosition();
+      this.view.setMode(PlayerMode.DEAD);
+      return;
     }
 
-    this.syncViewPosition();
-    this.view.setMode(this.alive ? this.mode : PlayerMode.DEAD);
+    if (lastAckSeq !== undefined) {
+      this.pendingInputs = this.pendingInputs.filter((p) => p.seq > lastAckSeq);
+    }
+
+    // Replay pending inputs starting from authoritative server snapshot
+    let replayedPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+    let replayedVel = { ...this.velocity };
+    let replayedGrounded = this.grounded;
+    let replayedMode = snapshot.mode;
+
+    for (const item of this.pendingInputs) {
+      const stepRes = this.simulateStep(
+        replayedPos,
+        replayedVel,
+        replayedGrounded,
+        item.input,
+        item.dt,
+        item.groundInk
+      );
+      replayedPos = stepRes.position;
+      replayedVel = stepRes.velocity;
+      replayedGrounded = stepRes.grounded;
+      replayedMode = stepRes.mode;
+    }
+
+    const errX = replayedPos.x - this.position.x;
+    const errY = replayedPos.y - this.position.y;
+    const errZ = replayedPos.z - this.position.z;
+    const errDistSq = errX * errX + errY * errY + errZ * errZ;
+
+    if (errDistSq > 0.04) {
+      // Reconcile to replayed authoritative state
+      this.position = replayedPos;
+      this.velocity = replayedVel;
+      this.grounded = replayedGrounded;
+      this.mode = replayedMode;
+      this.syncViewPosition();
+      this.view.setMode(this.mode);
+    }
   }
 
   private syncViewPosition(): void {

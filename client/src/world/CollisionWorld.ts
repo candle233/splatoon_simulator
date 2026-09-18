@@ -133,6 +133,18 @@ export class ClientCollisionWorld {
         } else {
           currZ += penZ;
         }
+      } else if (
+        pMaxX > minX &&
+        pMinX < maxX &&
+        pMaxZ > minZ &&
+        pMinZ < maxZ &&
+        Math.abs(currY - maxY) <= 0.06 &&
+        velocity.y <= 0
+      ) {
+        // Player is standing stably on top of obstacle platform
+        currY = maxY;
+        grounded = true;
+        velocity.y = 0;
       }
     }
 

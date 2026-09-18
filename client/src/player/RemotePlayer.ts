@@ -1,4 +1,4 @@
-import { Team } from '@ink/shared';
+import { PlayerMode, Team } from '@ink/shared';
 import { InterpolatedPlayerState } from '../network/SnapshotBuffer.js';
 import { PlayerView } from './PlayerView.js';
 
@@ -17,7 +17,7 @@ export class RemotePlayer {
     this.view.group.position.set(state.position.x, state.position.y, state.position.z);
     this.view.group.rotation.y = state.yaw;
 
-    this.view.setMode(state.alive ? state.mode : 2); // 2 = DEAD
+    this.view.setMode(state.alive ? state.mode : PlayerMode.DEAD);
     this.view.updateVisuals(state.invulnerable, time);
   }
 

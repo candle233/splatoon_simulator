@@ -100,6 +100,7 @@ export interface WelcomePayload {
   match: MatchStateSnapshot;
   players: PlayerSnapshot[];
   paintHistory: PaintEvent[];
+  totalPaintEvents?: number;
   obstacles: BoxObstacle[];
 }
 
@@ -119,3 +120,11 @@ export interface HitResult {
   hitObstacleId?: string;
   isGround: boolean;
 }
+
+export interface ShotEventPayload {
+  shooterId: string;
+  origin: Vec3;
+  target: Vec3;
+  team: Team;
+}
+

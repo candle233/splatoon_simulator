@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARENA_OBSTACLES, ARENA_SIZE, BoxObstacle, Team } from '@ink/shared';
+import { ARENA_HALF_SIZE, ARENA_OBSTACLES, ARENA_SIZE, BoxObstacle, Team } from '@ink/shared';
 import { PaintEngine } from './PaintEngine.js';
 
 export class Arena {
@@ -14,6 +14,18 @@ export class Arena {
 
     // 1. Ground Plane (100 x 100)
     const groundGeo = new THREE.PlaneGeometry(ARENA_SIZE, ARENA_SIZE);
+    groundGeo.rotateX(-Math.PI / 2);
+
+    // Explicitly align UV coordinates with worldToUV (x, z in [-50, 50] -> u, v in [0, 1])
+    const posAttr = groundGeo.attributes.position as THREE.BufferAttribute;
+    const uvAttr = groundGeo.attributes.uv as THREE.BufferAttribute;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const z = posAttr.getZ(i);
+      uvAttr.setXY(i, (x + ARENA_HALF_SIZE) / ARENA_SIZE, (z + ARENA_HALF_SIZE) / ARENA_SIZE);
+    }
+    uvAttr.needsUpdate = true;
+
     const groundMat = new THREE.MeshStandardMaterial({
       map: this.paintEngine.texture,
       roughness: 0.8,
@@ -21,7 +33,6 @@ export class Arena {
     });
 
     this.groundMesh = new THREE.Mesh(groundGeo, groundMat);
-    this.groundMesh.rotation.x = -Math.PI / 2;
     this.groundMesh.position.set(0, 0, 0);
     this.groundMesh.receiveShadow = true;
     this.group.add(this.groundMesh);

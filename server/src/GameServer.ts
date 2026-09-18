@@ -16,6 +16,7 @@ import {
   PlayerInput,
   PlayerMode,
   RESPAWN_TIME,
+  ShotEventPayload,
   SnapshotPayload,
   TICK_RATE,
   Team,
@@ -47,6 +48,7 @@ export class GameServer {
   private latestInputs: Map<string, PlayerInput> = new Map();
   private paintHistory: PaintEvent[] = [];
   private tickPaintEvents: PaintEvent[] = [];
+  private tickShotEvents: ShotEventPayload[] = [];
 
   private rateLimiter = new RateLimiter(60, 40);
   private isRunning = false;
@@ -121,6 +123,7 @@ export class GameServer {
       match: this.match.getSnapshot(now),
       players: Array.from(this.players.values()).map((p) => p.toSnapshot()),
       paintHistory: this.paintHistory.slice(0, PAINT_HISTORY_CHUNK_SIZE),
+      totalPaintEvents: this.paintHistory.length,
       obstacles: this.collisionWorld.getObstacles()
     };
 
@@ -167,12 +170,18 @@ export class GameServer {
     this.rateLimiter.remove(`ping:${playerId}`);
 
     this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, playerId);
+
+    if (this.players.size === 0) {
+      this.match.update(0, Date.now());
+    }
   }
 
   private handleMatchReset(): void {
     this.paintGrid.reset();
     this.paintHistory = [];
     this.tickPaintEvents = [];
+    this.tickShotEvents = [];
+    this.latestInputs.clear();
     this.weaponSim.reset();
 
     // Respawn all players at base
@@ -183,12 +192,14 @@ export class GameServer {
     }
   }
 
-  start(port = 3000): Promise<void> {
+  start(port = 3000): Promise<number> {
     return new Promise((resolve) => {
       this.httpServer.listen(port, () => {
         this.isRunning = true;
         this.startSimulationLoop();
-        resolve();
+        const addr = this.httpServer.address();
+        const actualPort = typeof addr === 'object' && addr ? addr.port : port;
+        resolve(actualPort);
       });
     });
   }
@@ -276,6 +287,15 @@ export class GameServer {
         if (input.fire && this.match.phase === MatchPhase.PLAYING) {
           const shotResult = this.weaponSim.processFire(player, allPlayersList, now);
           if (shotResult.fired) {
+            if (shotResult.origin && shotResult.target) {
+              this.tickShotEvents.push({
+                shooterId: player.id,
+                origin: shotResult.origin,
+                target: shotResult.target,
+                team: player.team
+              });
+            }
+
             for (const pe of shotResult.paintEvents) {
               this.recordPaintEvent(pe);
             }
@@ -303,10 +323,17 @@ export class GameServer {
       }
     }
 
-    // 3. Broadcast Paint Batch if any events occurred during this tick
+    // 3. Broadcast Paint Batch & Shot Events
     if (this.tickPaintEvents.length > 0) {
       this.io.emit(PROTOCOL_EVENTS.S2C_PAINT_BATCH, this.tickPaintEvents);
       this.tickPaintEvents = [];
+    }
+
+    if (this.tickShotEvents.length > 0) {
+      for (const shot of this.tickShotEvents) {
+        this.io.emit(PROTOCOL_EVENTS.S2C_SHOT_EVENT, shot);
+      }
+      this.tickShotEvents = [];
     }
 
     // 4. Broadcast Snapshot at 20Hz

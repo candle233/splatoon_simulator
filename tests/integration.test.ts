@@ -8,19 +8,20 @@ import {
   PlayerInput,
   PlayerMode,
   PlayerSnapshot,
+  ShotEventPayload,
   SnapshotPayload,
   Team,
   WelcomePayload
 } from '@ink/shared';
 
 describe('Multiplayer Network Integration & Sanity', () => {
-  const TEST_PORT = 3999;
-  const SERVER_URL = `http://localhost:${TEST_PORT}`;
   let server: GameServer;
+  let serverUrl: string;
 
   beforeAll(async () => {
     server = new GameServer();
-    await server.start(TEST_PORT);
+    const port = await server.start(0);
+    serverUrl = `http://localhost:${port}`;
   });
 
   afterAll(async () => {
@@ -28,7 +29,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
   });
 
   it('Test A & B: Two clients join, get balanced teams, and receive snapshots', async () => {
-    const clientA: Socket = ClientSocket(SERVER_URL);
+    const clientA: Socket = ClientSocket(serverUrl);
 
     const welcomeA = await new Promise<WelcomePayload>((resolve) => {
       clientA.once(PROTOCOL_EVENTS.S2C_WELCOME, (payload: WelcomePayload) => {
@@ -42,7 +43,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
       });
     });
 
-    const clientB: Socket = ClientSocket(SERVER_URL);
+    const clientB: Socket = ClientSocket(serverUrl);
 
     const welcomeB = await new Promise<WelcomePayload>((resolve) => {
       clientB.once(PROTOCOL_EVENTS.S2C_WELCOME, (payload: WelcomePayload) => {
@@ -91,7 +92,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
   });
 
   it('Test C & D: Shooting ground paints turf and Late Join recovers paint history', async () => {
-    const shooter: Socket = ClientSocket(SERVER_URL);
+    const shooter: Socket = ClientSocket(serverUrl);
     await new Promise<void>((res) => shooter.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()));
 
     // Shoot downwards towards ground (pitch = -Math.PI / 3)
@@ -122,7 +123,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
     expect(paintEvt.seed).toBeDefined();
 
     // Now connect lateJoiner
-    const lateJoiner: Socket = ClientSocket(SERVER_URL);
+    const lateJoiner: Socket = ClientSocket(serverUrl);
     const lateWelcome = await new Promise<WelcomePayload>((resolve) => {
       lateJoiner.once(PROTOCOL_EVENTS.S2C_WELCOME, (payload: WelcomePayload) => {
         resolve(payload);
@@ -139,7 +140,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
   });
 
   it('Test Ping/Pong RTT calculation', async () => {
-    const client: Socket = ClientSocket(SERVER_URL);
+    const client: Socket = ClientSocket(serverUrl);
     await new Promise<void>((res) => client.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()));
 
     const sendTime = Date.now();
@@ -156,4 +157,43 @@ describe('Multiplayer Network Integration & Sanity', () => {
 
     client.disconnect();
   });
+
+  it('Test E: Firing weapon broadcasts S2C_SHOT_EVENT with origin and target to other clients', async () => {
+    const clientA: Socket = ClientSocket(serverUrl);
+    const clientB: Socket = ClientSocket(serverUrl);
+
+    await Promise.all([
+      new Promise<void>((res) => clientA.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res())),
+      new Promise<void>((res) => clientB.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()))
+    ]);
+
+    const shotReceivedPromise = new Promise<ShotEventPayload>((resolve) => {
+      clientB.once(PROTOCOL_EVENTS.S2C_SHOT_EVENT, (shot: ShotEventPayload) => {
+        resolve(shot);
+      });
+    });
+
+    const fireInput: PlayerInput = {
+      seq: 200,
+      moveX: 0,
+      moveZ: 0,
+      yaw: 0,
+      pitch: -0.5,
+      jump: false,
+      squid: false,
+      fire: true,
+      clientTime: Date.now()
+    };
+
+    clientA.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, fireInput);
+
+    const shot = await shotReceivedPromise;
+    expect(shot.shooterId).toBe(clientA.id);
+    expect(shot.origin).toBeDefined();
+    expect(shot.target).toBeDefined();
+
+    clientA.disconnect();
+    clientB.disconnect();
+  });
 });
+

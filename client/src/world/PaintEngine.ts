@@ -25,7 +25,7 @@ export class PaintEngine {
 
   private paintTextureDirty = false;
 
-  constructor(canvasRes = 1024, gridRes = PAINT_GRID_RES) {
+  constructor(canvasRes = CANVAS_RES, gridRes = PAINT_GRID_RES) {
     this.canvasWidth = canvasRes;
     this.canvasHeight = canvasRes;
     this.gridResolution = gridRes;

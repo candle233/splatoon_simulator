@@ -9,6 +9,7 @@ import {
   PlayerMode,
   Ray,
   Team,
+  Vec3,
   WEAPON_DAMAGE,
   WEAPON_RANGE,
   WEAPON_SPREAD,
@@ -24,6 +25,8 @@ export interface ShotResult {
   paintEvents: PaintEvent[];
   hitPlayerId?: string;
   killedPlayerId?: string;
+  origin?: Vec3;
+  target?: Vec3;
 }
 
 export class WeaponSimulation {
@@ -50,7 +53,7 @@ export class WeaponSimulation {
       return { fired: false, paintEvents: [] };
     }
 
-    // Rate limit check: allow 10ms tolerance for 20Hz tick quantization
+    // Rate limit check: allow 15ms tolerance for 20Hz tick quantization
     const elapsedSinceLastShot = (now - shooter.lastShotTime) / 1000;
     if (elapsedSinceLastShot < FIRE_INTERVAL - 0.015) {
       return { fired: false, paintEvents: [] };
@@ -66,7 +69,7 @@ export class WeaponSimulation {
     shooter.lastShotTime = now;
     shooter.lastFiredTime = now;
 
-    // 2. Compute firing ray with deterministic spread
+    // 2. Compute vectors for Two-Stage Aiming
     const seed = (now ^ (Math.floor(shooter.position.x * 1000) << 16)) >>> 0;
     const prng = new PRNG(seed);
 
@@ -75,44 +78,136 @@ export class WeaponSimulation {
     const cosYaw = Math.cos(shooter.yaw);
     const sinYaw = Math.sin(shooter.yaw);
 
-    // Forward vector
-    let dirX = -sinYaw * cosPitch;
-    let dirY = sinPitch;
-    let dirZ = -cosYaw * cosPitch;
+    const fwdX = -sinYaw * cosPitch;
+    const fwdY = sinPitch;
+    const fwdZ = -cosYaw * cosPitch;
+    const rgtX = cosYaw;
+    const rgtZ = -sinYaw;
 
-    // Add spread
-    const spreadX = prng.range(-WEAPON_SPREAD, WEAPON_SPREAD);
-    const spreadY = prng.range(-WEAPON_SPREAD, WEAPON_SPREAD);
-    dirX += spreadX * cosYaw;
-    dirY += spreadY;
-    dirZ += -spreadX * sinYaw;
+    const headX = shooter.position.x;
+    const headY = shooter.position.y + 1.8;
+    const headZ = shooter.position.z;
 
-    const normalizedDir = vec3Normalize({ x: dirX, y: dirY, z: dirZ });
+    const baseCamDist = 5.2;
+    const shoulderOffset = 0.65;
 
-    // Eye / Muzzle position
-    const origin = {
-      x: shooter.position.x,
-      y: shooter.position.y + 1.3,
-      z: shooter.position.z
+    // Camera target point ahead in looking direction
+    const aimTargetX = headX + fwdX * 30;
+    const aimTargetY = headY + fwdY * 30;
+    const aimTargetZ = headZ + fwdZ * 30;
+
+    // Desired camera position
+    let camX = headX - fwdX * baseCamDist + rgtX * shoulderOffset;
+    let camY = headY - fwdY * baseCamDist;
+    let camZ = headZ - fwdZ * baseCamDist + rgtZ * shoulderOffset;
+
+    // Check camera ray for obstacle occlusion
+    const camDirX = camX - headX;
+    const camDirY = camY - headY;
+    const camDirZ = camZ - headZ;
+    const camRayLen = Math.sqrt(camDirX * camDirX + camDirY * camDirY + camDirZ * camDirZ);
+
+    if (camRayLen > 1e-4) {
+      const hitCamDist = this.collisionWorld.castCameraRay(
+        {
+          origin: { x: headX, y: headY, z: headZ },
+          direction: { x: camDirX / camRayLen, y: camDirY / camRayLen, z: camDirZ / camRayLen }
+        },
+        camRayLen
+      );
+      if (hitCamDist !== null && hitCamDist < camRayLen) {
+        const safeDist = Math.max(0.6, hitCamDist - 0.25);
+        camX = headX + (camDirX / camRayLen) * safeDist;
+        camY = headY + (camDirY / camRayLen) * safeDist;
+        camZ = headZ + (camDirZ / camRayLen) * safeDist;
+      }
+    }
+
+    // Camera forward ray direction
+    const toCrosshairX = aimTargetX - camX;
+    const toCrosshairY = aimTargetY - camY;
+    const toCrosshairZ = aimTargetZ - camZ;
+    const crosshairDir = vec3Normalize({
+      x: toCrosshairX,
+      y: toCrosshairY,
+      z: toCrosshairZ
+    });
+
+    // Stage 1: Camera Raycast to get exact 3D aim point
+    const cameraHit = this.collisionWorld.castRay(
+      { origin: { x: camX, y: camY, z: camZ }, direction: crosshairDir },
+      WEAPON_RANGE + baseCamDist,
+      allPlayers,
+      shooter.team,
+      shooter.id
+    );
+
+    const aimPoint = cameraHit.hit
+      ? cameraHit.point
+      : {
+          x: camX + crosshairDir.x * WEAPON_RANGE,
+          y: camY + crosshairDir.y * WEAPON_RANGE,
+          z: camZ + crosshairDir.z * WEAPON_RANGE
+        };
+
+    // Stage 2: Muzzle Raycast
+    const muzzleOrigin: Vec3 = {
+      x: shooter.position.x + rgtX * 0.35 + fwdX * 0.4,
+      y: shooter.position.y + 0.85 + fwdY * 0.4,
+      z: shooter.position.z + rgtZ * 0.35 + fwdZ * 0.4
     };
 
-    const ray: Ray = {
-      origin,
+    let dirToAimX = aimPoint.x - muzzleOrigin.x;
+    let dirToAimY = aimPoint.y - muzzleOrigin.y;
+    let dirToAimZ = aimPoint.z - muzzleOrigin.z;
+    const lenToAim = Math.sqrt(dirToAimX * dirToAimX + dirToAimY * dirToAimY + dirToAimZ * dirToAimZ);
+
+    if (lenToAim > 1e-4) {
+      dirToAimX /= lenToAim;
+      dirToAimY /= lenToAim;
+      dirToAimZ /= lenToAim;
+    } else {
+      dirToAimX = fwdX;
+      dirToAimY = fwdY;
+      dirToAimZ = fwdZ;
+    }
+
+    // Add deterministic spread
+    const spreadX = prng.range(-WEAPON_SPREAD, WEAPON_SPREAD);
+    const spreadY = prng.range(-WEAPON_SPREAD, WEAPON_SPREAD);
+    dirToAimX += spreadX * cosYaw;
+    dirToAimY += spreadY;
+    dirToAimZ += -spreadX * sinYaw;
+
+    const normalizedDir = vec3Normalize({ x: dirToAimX, y: dirToAimY, z: dirToAimZ });
+
+    const muzzleRay: Ray = {
+      origin: muzzleOrigin,
       direction: normalizedDir
     };
 
-    // 3. Cast ray in collision world
+    // 3. Cast muzzle ray in collision world
     const hit = this.collisionWorld.castRay(
-      ray,
+      muzzleRay,
       WEAPON_RANGE,
       allPlayers,
       shooter.team,
       shooter.id
     );
 
+    const hitPoint = hit.hit
+      ? hit.point
+      : {
+          x: muzzleOrigin.x + normalizedDir.x * WEAPON_RANGE,
+          y: muzzleOrigin.y + normalizedDir.y * WEAPON_RANGE,
+          z: muzzleOrigin.z + normalizedDir.z * WEAPON_RANGE
+        };
+
     const result: ShotResult = {
       fired: true,
-      paintEvents: []
+      paintEvents: [],
+      origin: muzzleOrigin,
+      target: hitPoint
     };
 
     // 4. Handle Player Hit

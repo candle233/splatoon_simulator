@@ -138,7 +138,7 @@ export class MovementSimulation {
     player.velocity.z = targetVz;
 
     // 7. Jump
-    if (input.jump && player.grounded && player.mode === PlayerMode.HUMANOID) {
+    if (input.jump && player.grounded) {
       player.velocity.y = JUMP_VELOCITY;
       player.grounded = false;
     }
@@ -148,16 +148,27 @@ export class MovementSimulation {
       player.velocity.y += GRAVITY * dt;
     }
 
-    // 9. Position Integration & Collision
+    // 9. Position Integration & Collision with Cheat Validation
     const radius = PLAYER_RADIUS;
     const height = player.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
 
     const prevPos = { ...player.position };
-    const newPos = {
-      x: player.position.x + player.velocity.x * dt,
-      y: player.position.y + player.velocity.y * dt,
-      z: player.position.z + player.velocity.z * dt
-    };
+    let newX = player.position.x + player.velocity.x * dt;
+    let newY = player.position.y + player.velocity.y * dt;
+    let newZ = player.position.z + player.velocity.z * dt;
+
+    // Sanitize NaN / Infinity
+    if (!Number.isFinite(newX) || !Number.isFinite(newY) || !Number.isFinite(newZ)) {
+      newX = prevPos.x;
+      newY = prevPos.y;
+      newZ = prevPos.z;
+      player.velocity = { x: 0, y: 0, z: 0 };
+    }
+
+    // Clamp vertical ceiling to avoid flight exploits
+    newY = Math.max(-5, Math.min(30, newY));
+
+    const newPos = { x: newX, y: newY, z: newZ };
 
     const res = this.collisionWorld.resolvePlayerMovement(player, prevPos, newPos, radius, height);
     player.grounded = res.grounded;
