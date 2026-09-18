@@ -167,6 +167,5 @@ Rather than teleporting remote players upon receiving 20Hz network snapshots:
 ---
 
 ## ⚠️ Known Limitations
-- **Offscreen Canvas Support**: Falls back to hidden in-memory DOM canvas elements in browsers where `OffscreenCanvas` 2D context is unavailable.
-- **Audio Effects**: Sound effects and background music are omitted to ensure zero reliance on external copyrighted assets.
+- **Audio Effects**: Built with 100% original procedural Web Audio API synthesis (sawtooth/sine oscillators, noise burst filters) without any copyrighted external audio assets.
 - **Bot AI**: Offline AI bots are not implemented; test with 2+ browser windows for multiplayer interaction.
