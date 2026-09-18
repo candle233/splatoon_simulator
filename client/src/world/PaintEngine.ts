@@ -116,8 +116,12 @@ export class PaintEngine {
     const center = uvToCanvas(event.u, event.v, this.canvasWidth, this.canvasHeight);
     const radiusPx = event.radius * this.canvasWidth;
 
-    // Draw main circle with radial gradient
-    this.drawRadialCircle(center.px, center.py, radiusPx, baseColor);
+    if (event.prevU !== undefined && event.prevV !== undefined) {
+      const prevCenter = uvToCanvas(event.prevU, event.prevV, this.canvasWidth, this.canvasHeight);
+      this.drawContinuousStroke(prevCenter.px, prevCenter.py, center.px, center.py, radiusPx, baseColor);
+    } else {
+      this.drawRadialCircle(center.px, center.py, radiusPx, baseColor);
+    }
 
     // Draw deterministic splatters
     const splatters = generateSplatters(event.u, event.v, event.radius, event.seed);
@@ -128,23 +132,58 @@ export class PaintEngine {
     }
   }
 
+  private drawContinuousStroke(x1: number, y1: number, x2: number, y2: number, radiusPx: number, color: string): void {
+    this.ctx.lineCap = 'round';
+    this.ctx.lineJoin = 'round';
+    this.ctx.lineWidth = radiusPx * 2.0;
+    this.ctx.strokeStyle = color;
+    this.ctx.beginPath();
+    this.ctx.moveTo(x1, y1);
+    this.ctx.lineTo(x2, y2);
+    this.ctx.stroke();
+  }
+
   private drawRadialCircle(cx: number, cy: number, r: number, color: string): void {
-    const grad = this.ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r);
+    const grad = this.ctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
     grad.addColorStop(0, color);
     grad.addColorStop(0.85, color);
     grad.addColorStop(1, 'rgba(0,0,0,0)');
 
-    this.ctx.save();
     this.ctx.fillStyle = grad;
     this.ctx.beginPath();
     this.ctx.arc(cx, cy, r, 0, Math.PI * 2);
     this.ctx.fill();
-    this.ctx.restore();
   }
 
   private updateLocalGrid(event: PaintEvent): void {
-    const { gx: cx, gy: cy } = uvToPaintGrid(event.u, event.v, this.gridResolution);
-    const rCells = Math.max(1, Math.round(event.radius * this.gridResolution));
+    const team = event.team;
+    if (team === Team.NEUTRAL) return;
+
+    if (event.prevU !== undefined && event.prevV !== undefined) {
+      const du = event.u - event.prevU;
+      const dv = event.v - event.prevV;
+      const dist = Math.sqrt(du * du + dv * dv);
+      const stepSize = Math.max(0.002, event.radius * 0.5);
+      const steps = Math.max(1, Math.ceil(dist / stepSize));
+
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        this.fillGridCircle(event.prevU + du * t, event.prevV + dv * t, event.radius, team);
+      }
+    } else {
+      this.fillGridCircle(event.u, event.v, event.radius, team);
+    }
+
+    // Splatters in grid
+    const splatters = generateSplatters(event.u, event.v, event.radius, event.seed);
+    for (const splat of splatters) {
+      this.fillGridCircle(splat.u, splat.v, splat.radius, team);
+    }
+  }
+
+  private fillGridCircle(u: number, v: number, radius: number, team: Team): void {
+    const { gx: cx, gy: cy } = uvToPaintGrid(u, v, this.gridResolution);
+    const rCells = Math.max(1, Math.round(radius * this.gridResolution));
     const rSq = rCells * rCells;
 
     const minX = Math.max(0, cx - rCells);
@@ -160,49 +199,77 @@ export class PaintEngine {
       for (let x = minX; x <= maxX; x++) {
         const dx = x - cx;
         if (dx * dx + dySq <= rSq) {
-          this.paintGrid[rowOffset + x] = event.team;
+          this.paintGrid[rowOffset + x] = team;
         }
       }
     }
+  }
 
-    // Also update splatters in grid
-    const splatters = generateSplatters(event.u, event.v, event.radius, event.seed);
-    for (const splat of splatters) {
-      const { gx: scx, gy: scy } = uvToPaintGrid(splat.u, splat.v, this.gridResolution);
-      const srCells = Math.max(1, Math.round(splat.radius * this.gridResolution));
-      const srSq = srCells * srCells;
+  public textureUploads = 0;
 
-      const sMinX = Math.max(0, scx - srCells);
-      const sMaxX = Math.min(this.gridResolution - 1, scx + srCells);
-      const sMinY = Math.max(0, scy - srCells);
-      const sMaxY = Math.min(this.gridResolution - 1, scy + srCells);
+  /**
+   * Marks paint texture dirty for next frame GPU upload (Subagent 16)
+   */
+  markDirty(): void {
+    this.paintTextureDirty = true;
+  }
 
-      for (let sy = sMinY; sy <= sMaxY; sy++) {
-        const sdy = sy - scy;
-        const sdySq = sdy * sdy;
-        const sRowOffset = sy * this.gridResolution;
-
-        for (let sx = sMinX; sx <= sMaxX; sx++) {
-          const sdx = sx - scx;
-          if (sdx * sdx + sdySq <= srSq) {
-            this.paintGrid[sRowOffset + sx] = event.team;
-          }
-        }
-      }
+  /**
+   * Flushes texture update to GPU at most once per render frame (Subagent 16)
+   */
+  flushTextureUpdate(): boolean {
+    if (this.paintTextureDirty) {
+      this.texture.needsUpdate = true;
+      this.paintTextureDirty = false;
+      this.textureUploads++;
+      return true;
     }
+    return false;
   }
 
   /**
    * Called ONCE per render frame to upload texture if dirty
    */
   renderUpdate(): void {
-    if (this.paintTextureDirty) {
-      this.texture.needsUpdate = true;
-      this.paintTextureDirty = false;
-    }
+    this.flushTextureUpdate();
   }
 
   dispose(): void {
     this.texture.dispose();
+  }
+}
+
+/**
+ * Subagent 16: PaintTextureController managing dirty flag and GPU upload frequency
+ */
+export class PaintTextureController {
+  private texture: { needsUpdate: boolean; dispose?: () => void };
+  private dirty = false;
+  public textureUploads = 0;
+
+  constructor(texture: { needsUpdate: boolean; dispose?: () => void }) {
+    this.texture = texture;
+  }
+
+  markDirty(): void {
+    this.dirty = true;
+  }
+
+  isDirty(): boolean {
+    return this.dirty;
+  }
+
+  flushTextureUpdate(): boolean {
+    if (this.dirty) {
+      this.texture.needsUpdate = true;
+      this.dirty = false;
+      this.textureUploads++;
+      return true;
+    }
+    return false;
+  }
+
+  dispose(): void {
+    this.texture.dispose?.();
   }
 }

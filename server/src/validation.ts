@@ -13,6 +13,13 @@ export function sanitizePlayerInput(input: unknown): PlayerInput | null {
   const jump = Boolean(raw.jump);
   const squid = Boolean(raw.squid);
   const fire = Boolean(raw.fire);
+  const subWeapon = Boolean(raw.subWeapon);
+  const special = Boolean(raw.special);
+  const chargeLevel = Number.isFinite(Number(raw.chargeLevel)) ? clamp(Number(raw.chargeLevel), 0, 1) : undefined;
+  const weaponType =
+    typeof raw.weaponType === 'string' && ['shooter', 'roller', 'charger', 'slosher'].includes(raw.weaponType)
+      ? (raw.weaponType as any)
+      : undefined;
   const clientTime = Number(raw.clientTime);
 
   if (
@@ -35,6 +42,10 @@ export function sanitizePlayerInput(input: unknown): PlayerInput | null {
     jump,
     squid,
     fire,
+    subWeapon,
+    special,
+    chargeLevel,
+    weaponType,
     clientTime: Number.isFinite(clientTime) ? clientTime : Date.now()
   };
 }

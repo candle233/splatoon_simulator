@@ -1,4 +1,11 @@
-import { MatchPhase, PlayerMode, Team } from '@ink/shared';
+import {
+  MatchPhase,
+  PlayerMode,
+  SUB_WEAPON_CONFIGS,
+  Team,
+  WEAPON_CONFIGS,
+  WeaponType
+} from '@ink/shared';
 
 export class HUD {
   private timerEl: HTMLElement | null;
@@ -36,7 +43,20 @@ export class HUD {
   private dbgModeEl: HTMLElement | null;
   private dbgPaintCountEl: HTMLElement | null;
 
+  // New Skills & Weapon HUD elements
+  private hudWeaponIconEl: HTMLImageElement | null;
+  private hudSubIconEl: HTMLImageElement | null;
+  private hudWeaponNameEl: HTMLElement | null;
+  private hudSubNameEl: HTMLElement | null;
+  private hudSubCostEl: HTMLElement | null;
+  private specialValueEl: HTMLElement | null;
+  private specialBarFillEl: HTMLElement | null;
+  private specialReadyBannerEl: HTMLElement | null;
+  private chargeRingEl: HTMLElement | null;
+  private killFeedEl: HTMLElement | null;
+
   constructor() {
+    this.killFeedEl = document.getElementById('kill-feed');
     this.timerEl = document.getElementById('match-timer');
     this.phaseEl = document.getElementById('match-phase-label');
     this.pinkScoreEl = document.getElementById('pink-score-text');
@@ -49,6 +69,16 @@ export class HUD {
     this.inkValueEl = document.getElementById('ink-value');
     this.inkBarFillEl = document.getElementById('ink-bar-fill');
     this.modeTagEl = document.getElementById('player-mode-tag');
+
+    this.hudWeaponIconEl = document.getElementById('hud-weapon-icon') as HTMLImageElement | null;
+    this.hudSubIconEl = document.getElementById('hud-sub-icon') as HTMLImageElement | null;
+    this.hudWeaponNameEl = document.getElementById('hud-weapon-name');
+    this.hudSubNameEl = document.getElementById('hud-sub-name');
+    this.hudSubCostEl = document.getElementById('hud-sub-cost');
+    this.specialValueEl = document.getElementById('special-value');
+    this.specialBarFillEl = document.getElementById('special-bar-fill');
+    this.specialReadyBannerEl = document.getElementById('special-ready-banner');
+    this.chargeRingEl = document.getElementById('charge-ring');
 
     this.deathScreenEl = document.getElementById('death-screen');
     this.respawnCountdownEl = document.getElementById('respawn-countdown');
@@ -143,6 +173,88 @@ export class HUD {
     }
   }
 
+  updateLoadoutAndSkills(
+    weaponType: WeaponType,
+    specialMeter: number,
+    currentInk: number,
+    chargeLevel = 0
+  ): void {
+    const config = WEAPON_CONFIGS[weaponType] || WEAPON_CONFIGS.shooter;
+    const subConfig = SUB_WEAPON_CONFIGS[config.sub];
+
+    const weaponThumbMap: Record<WeaponType, string> = {
+      shooter: '/assets/weapons/splattershot.jpg',
+      roller: '/assets/weapons/splat_roller.jpg',
+      charger: '/assets/weapons/splat_charger.jpg',
+      slosher: '/assets/weapons/slosher.jpg'
+    };
+    const subThumbMap: Record<string, string> = {
+      splat_bomb: '/assets/weapons/splat_bomb.jpg',
+      curling_bomb: '/assets/weapons/curling_bomb.jpg',
+      burst_bomb: '/assets/weapons/splat_bomb.jpg'
+    };
+
+    if (this.hudWeaponIconEl) {
+      const src = weaponThumbMap[weaponType] || weaponThumbMap.shooter;
+      if (this.hudWeaponIconEl.getAttribute('src') !== src) {
+        this.hudWeaponIconEl.src = src;
+      }
+    }
+    if (this.hudSubIconEl) {
+      const subSrc = subThumbMap[config.sub] || '/assets/weapons/splat_bomb.jpg';
+      if (this.hudSubIconEl.getAttribute('src') !== subSrc) {
+        this.hudSubIconEl.src = subSrc;
+      }
+    }
+
+    if (this.hudWeaponNameEl) {
+      this.hudWeaponNameEl.textContent = config.name;
+    }
+    if (this.hudSubNameEl) {
+      this.hudSubNameEl.textContent = subConfig.name;
+    }
+    if (this.hudSubCostEl) {
+      this.hudSubCostEl.textContent = `(${subConfig.inkCost}%)`;
+      if (currentInk < subConfig.inkCost) {
+        this.hudSubCostEl.style.color = '#ff4444';
+      } else {
+        this.hudSubCostEl.style.color = '#aaffaa';
+      }
+    }
+
+    if (this.specialValueEl) {
+      this.specialValueEl.textContent = `${Math.min(100, Math.round(specialMeter))}%`;
+    }
+    if (this.specialBarFillEl) {
+      const pct = Math.min(100, Math.max(0, specialMeter));
+      this.specialBarFillEl.style.width = `${pct}%`;
+      if (pct >= 100) {
+        this.specialBarFillEl.classList.add('ready');
+      } else {
+        this.specialBarFillEl.classList.remove('ready');
+      }
+    }
+    if (this.specialReadyBannerEl) {
+      if (specialMeter >= 100) {
+        this.specialReadyBannerEl.classList.remove('hidden');
+      } else {
+        this.specialReadyBannerEl.classList.add('hidden');
+      }
+    }
+
+    // Reticle charge ring for Charger
+    if (this.chargeRingEl) {
+      if (weaponType === 'charger' && chargeLevel > 0.05) {
+        this.chargeRingEl.classList.remove('hidden');
+        const scale = 1.0 + chargeLevel * 0.8;
+        this.chargeRingEl.style.transform = `scale(${scale})`;
+        this.chargeRingEl.style.borderColor = chargeLevel >= 0.98 ? '#ffff00' : 'rgba(255,255,255,0.8)';
+      } else {
+        this.chargeRingEl.classList.add('hidden');
+      }
+    }
+  }
+
   showDeathOverlay(respawnCountdownSec: number): void {
     this.deathScreenEl?.classList.remove('hidden');
     if (this.respawnCountdownEl) {
@@ -161,6 +273,53 @@ export class HUD {
 
   hideSyncBanner(): void {
     this.syncBannerEl?.classList.add('hidden');
+  }
+
+  /**
+   * Displays an animated kill feed event in the HUD (Subagent 78)
+   */
+  addKillFeedEntry(
+    killerName: string,
+    killerTeam: Team,
+    victimName: string,
+    victimTeam: Team,
+    icon = '💥'
+  ): void {
+    if (!this.killFeedEl) return;
+
+    const entry = document.createElement('div');
+    entry.className = 'killfeed-entry';
+
+    const killerSpan = document.createElement('span');
+    killerSpan.className = killerTeam === Team.PINK ? 'killfeed-pink' : 'killfeed-cyan';
+    killerSpan.textContent = killerName;
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'killfeed-icon';
+    iconSpan.textContent = icon;
+
+    const victimSpan = document.createElement('span');
+    victimSpan.className = victimTeam === Team.PINK ? 'killfeed-pink' : 'killfeed-cyan';
+    victimSpan.textContent = victimName;
+
+    entry.appendChild(killerSpan);
+    entry.appendChild(iconSpan);
+    entry.appendChild(victimSpan);
+
+    this.killFeedEl.appendChild(entry);
+
+    while (this.killFeedEl.children.length > 5) {
+      this.killFeedEl.removeChild(this.killFeedEl.firstChild!);
+    }
+
+    window.setTimeout(() => {
+      entry.classList.add('fading');
+      window.setTimeout(() => {
+        if (entry.parentElement === this.killFeedEl) {
+          this.killFeedEl?.removeChild(entry);
+        }
+      }, 500);
+    }, 3800);
   }
 
   toggleDebugOverlay(): void {

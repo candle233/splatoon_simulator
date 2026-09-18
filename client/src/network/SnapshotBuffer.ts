@@ -1,4 +1,4 @@
-import { PlayerSnapshot, Vec3, lerp } from '@ink/shared';
+import { PlayerSnapshot, Vec3, WeaponType, lerp } from '@ink/shared';
 
 export interface TimestampedSnapshot {
   timestamp: number;
@@ -13,6 +13,9 @@ export interface InterpolatedPlayerState {
   alive: boolean;
   hp: number;
   invulnerable: boolean;
+  weaponType?: WeaponType;
+  ink?: number;
+  name?: string;
 }
 
 export class SnapshotBuffer {
@@ -56,7 +59,10 @@ export class SnapshotBuffer {
         mode: snap.mode,
         alive: snap.alive,
         hp: snap.hp,
-        invulnerable: snap.invulnerable
+        invulnerable: snap.invulnerable,
+        weaponType: snap.weaponType,
+        ink: snap.ink,
+        name: snap.name
       };
     }
 
@@ -72,7 +78,10 @@ export class SnapshotBuffer {
         mode: snap.mode,
         alive: snap.alive,
         hp: snap.hp,
-        invulnerable: snap.invulnerable
+        invulnerable: snap.invulnerable,
+        weaponType: snap.weaponType,
+        ink: snap.ink,
+        name: snap.name
       };
     }
 
@@ -100,7 +109,9 @@ export class SnapshotBuffer {
         mode: snap.mode,
         alive: snap.alive,
         hp: snap.hp,
-        invulnerable: snap.invulnerable
+        invulnerable: snap.invulnerable,
+        weaponType: snap.weaponType,
+        ink: snap.ink
       };
     }
 
@@ -117,35 +128,61 @@ export class SnapshotBuffer {
         mode: fallback.mode,
         alive: fallback.alive,
         hp: fallback.hp,
-        invulnerable: fallback.invulnerable
+        invulnerable: fallback.invulnerable,
+        weaponType: fallback.weaponType,
+        ink: fallback.ink
       };
     }
 
     const timeDelta = s1.timestamp - s0.timestamp;
     const alpha = timeDelta > 0 ? (renderTime - s0.timestamp) / timeDelta : 0;
 
-    // Shortest-path angle interpolation for yaw
-    let diffYaw = snap1.yaw - snap0.yaw;
-    while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
-    while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
-    const interpYaw = snap0.yaw + diffYaw * alpha;
-
-    return {
-      position: {
-        x: lerp(snap0.x, snap1.x, alpha),
-        y: lerp(snap0.y, snap1.y, alpha),
-        z: lerp(snap0.z, snap1.z, alpha)
-      },
-      yaw: interpYaw,
-      pitch: lerp(snap0.pitch, snap1.pitch, alpha),
-      mode: snap1.mode,
-      alive: snap1.alive,
-      hp: snap1.hp,
-      invulnerable: snap1.invulnerable
-    };
+    return interpolatePlayerState(snap0, snap1, alpha);
   }
 
   clear(): void {
     this.buffer = [];
   }
+}
+
+/**
+ * Pure interpolation function between two player snapshots (Subagent 37)
+ *
+ * Includes teleport / respawn detection: avoids sliding across arena when respawning.
+ */
+export function interpolatePlayerState(
+  snap0: PlayerSnapshot,
+  snap1: PlayerSnapshot,
+  alpha: number
+): InterpolatedPlayerState {
+  // Teleport / Respawn Detection:
+  // If player transitioned from dead to alive, or position jumped > 10m, snap directly without lerp
+  const dx = snap1.x - snap0.x;
+  const dy = snap1.y - snap0.y;
+  const dz = snap1.z - snap0.z;
+  const distSq = dx * dx + dy * dy + dz * dz;
+  const isRespawnOrTeleport = (!snap0.alive && snap1.alive) || distSq > 100.0;
+
+  const posX = isRespawnOrTeleport ? snap1.x : lerp(snap0.x, snap1.x, alpha);
+  const posY = isRespawnOrTeleport ? snap1.y : lerp(snap0.y, snap1.y, alpha);
+  const posZ = isRespawnOrTeleport ? snap1.z : lerp(snap0.z, snap1.z, alpha);
+
+  // Shortest-path angle interpolation for yaw
+  let diffYaw = snap1.yaw - snap0.yaw;
+  while (diffYaw < -Math.PI) diffYaw += Math.PI * 2;
+  while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
+  const interpYaw = snap0.yaw + diffYaw * alpha;
+
+  return {
+    position: { x: posX, y: posY, z: posZ },
+    yaw: interpYaw,
+    pitch: lerp(snap0.pitch, snap1.pitch, alpha),
+    mode: snap1.mode,
+    alive: snap1.alive,
+    hp: snap1.hp,
+    invulnerable: snap1.invulnerable,
+    weaponType: snap1.weaponType || snap0.weaponType,
+    ink: snap1.ink,
+    name: snap1.name || snap0.name
+  };
 }

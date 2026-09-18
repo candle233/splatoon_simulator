@@ -1,24 +1,17 @@
 import {
-  ENEMY_INK_DOT,
-  ENEMY_INK_SPEED,
   GRAVITY,
-  HEALTH_REGEN_DELAY,
-  HEALTH_REGEN_RATE,
-  INK_REGEN_DELAY,
-  INK_REGEN_NORMAL,
-  INK_REGEN_SQUID,
   JUMP_VELOCITY,
-  MAX_HP,
-  MAX_INK,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PlayerInput,
   PlayerMode,
-  RUN_SPEED,
   SQUID_HEIGHT,
-  SQUID_SPEED,
   Team,
-  clamp
+  clamp,
+  computeMovementVelocity,
+  enforceSpawnBarrier,
+  getMovementSpeed,
+  nextPlayerForm
 } from '@ink/shared';
 import { CollisionWorld } from './Collision.js';
 import { PaintGrid } from './PaintGrid.js';
@@ -54,88 +47,37 @@ export class MovementSimulation {
       player.team === Team.PINK ? groundInk === Team.CYAN : groundInk === Team.PINK;
     const isOwnInk = groundInk === player.team;
 
-    // 2. Mode & Speed Determination
-    let currentSpeed = RUN_SPEED;
-    let inkRegenRate = INK_REGEN_NORMAL;
+    // 2. Mode & Speed Determination via shared pure functions (Subagents 08 & 11)
+    player.mode = nextPlayerForm(
+      player.mode,
+      player.alive,
+      player.grounded,
+      Boolean(input.squid),
+      groundInk,
+      player.team
+    );
+    const currentSpeed = getMovementSpeed(player.mode, groundInk, player.team);
 
-    if (input.squid && isOwnInk && player.grounded) {
-      player.mode = PlayerMode.SUBMERGED;
-      currentSpeed = SQUID_SPEED;
-      inkRegenRate = INK_REGEN_SQUID;
-    } else {
-      player.mode = PlayerMode.HUMANOID;
-      if (isEnemyInk) {
-        currentSpeed = ENEMY_INK_SPEED;
-      } else {
-        currentSpeed = RUN_SPEED;
-      }
-    }
-
-    // 3. Enemy Ink Damage over Time (DoT)
+    // 3. Enemy Ink Damage over Time (DoT) via PlayerState (Subagent 19)
     let diedByEnemyInk = false;
-    if (isEnemyInk && !player.isInvulnerable(now)) {
-      player.hp -= ENEMY_INK_DOT * dt;
-      player.lastDamageTime = now;
-      if (player.hp <= 0) {
-        player.hp = 0;
-        player.alive = false;
-        player.mode = PlayerMode.DEAD;
-        diedByEnemyInk = true;
-        return { diedByEnemyInk };
+    if (isEnemyInk) {
+      diedByEnemyInk = player.updateEnemyInkDOT(dt, now);
+      if (diedByEnemyInk) {
+        return { diedByEnemyInk: true };
       }
     }
 
-    // 4. Out-of-combat Health Regeneration
-    if (
-      player.alive &&
-      player.hp < MAX_HP &&
-      !isEnemyInk &&
-      now - player.lastDamageTime >= HEALTH_REGEN_DELAY * 1000
-    ) {
-      player.hp = Math.min(MAX_HP, player.hp + HEALTH_REGEN_RATE * dt);
-    }
+    // 4. Out-of-combat Health Regeneration (Subagent 19)
+    player.updateHealthRegen(dt, isEnemyInk, now);
 
-    // 5. Ink Regeneration
-    if (player.alive && player.ink < MAX_INK && now - player.lastFiredTime >= INK_REGEN_DELAY * 1000) {
-      player.ink = Math.min(MAX_INK, player.ink + inkRegenRate * dt);
-    }
+    // 5. Ink Regeneration (Subagent 18)
+    const isSquidInOwnInk = player.mode === PlayerMode.SUBMERGED && isOwnInk;
+    player.updateInkRegen(dt, isSquidInOwnInk, now);
 
-    // 6. Compute Desired Horizontal Velocity
-    // Input moveX: -1 (left) to 1 (right)
-    // Input moveZ: -1 (forward) to 1 (backward)
-    // Note: yaw=0 points towards -Z, yaw=PI/2 points towards +X
-    const sinYaw = Math.sin(player.yaw);
-    const cosYaw = Math.cos(player.yaw);
-
-    // Forward vector on X-Z plane: (-sinYaw, -cosYaw)
-    // Right vector on X-Z plane: (cosYaw, -sinYaw)
-    const forwardX = -sinYaw;
-    const forwardZ = -cosYaw;
-    const rightX = cosYaw;
-    const rightZ = -sinYaw;
-
-    // Invert moveZ so positive is forward
-    const inputForward = -input.moveZ;
-    const inputRight = input.moveX;
-
-    let moveLen = Math.sqrt(inputRight * inputRight + inputForward * inputForward);
-    let normRight = 0;
-    let normForward = 0;
-    if (moveLen > 1e-4) {
-      if (moveLen > 1.0) {
-        normRight = inputRight / moveLen;
-        normForward = inputForward / moveLen;
-      } else {
-        normRight = inputRight;
-        normForward = inputForward;
-      }
-    }
-
-    const targetVx = (rightX * normRight + forwardX * normForward) * currentSpeed;
-    const targetVz = (rightZ * normRight + forwardZ * normForward) * currentSpeed;
-
-    player.velocity.x = targetVx;
-    player.velocity.z = targetVz;
+    // 6. Compute Desired Horizontal Velocity via shared pure function (Subagents 05 & 08)
+    const { vx, vz } = computeMovementVelocity(player.yaw, input.moveX, input.moveZ, currentSpeed);
+    player.velocity.x = vx;
+    player.velocity.z = vz;
 
     // 7. Jump
     if (input.jump && player.grounded) {
@@ -172,6 +114,7 @@ export class MovementSimulation {
 
     const res = this.collisionWorld.resolvePlayerMovement(player, prevPos, newPos, radius, height);
     player.grounded = res.grounded;
+    player.position = enforceSpawnBarrier(player.position, player.team);
 
     return { diedByEnemyInk: false };
   }

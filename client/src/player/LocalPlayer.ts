@@ -1,6 +1,4 @@
-import * as THREE from 'three';
 import {
-  ENEMY_INK_SPEED,
   GRAVITY,
   JUMP_VELOCITY,
   MAX_HP,
@@ -10,11 +8,14 @@ import {
   PlayerInput,
   PlayerMode,
   PlayerSnapshot,
-  RUN_SPEED,
   SQUID_HEIGHT,
-  SQUID_SPEED,
   Team,
-  Vec3
+  Vec3,
+  WeaponType,
+  computeMovementVelocity,
+  enforceSpawnBarrier,
+  getMovementSpeed,
+  nextPlayerForm
 } from '@ink/shared';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
 import { PlayerView } from './PlayerView.js';
@@ -38,6 +39,11 @@ export class LocalPlayer {
   kills = 0;
   deaths = 0;
 
+  weaponType: WeaponType = 'shooter';
+  specialMeter = 0;
+  specialActive = false;
+  chargeLevel = 0;
+
   private collisionWorld: ClientCollisionWorld;
   private pendingInputs: { seq: number; input: PlayerInput; dt: number; groundInk: Team }[] = [];
 
@@ -45,13 +51,16 @@ export class LocalPlayer {
     id: string,
     team: Team,
     spawnPos: Vec3,
-    collisionWorld: ClientCollisionWorld
+    collisionWorld: ClientCollisionWorld,
+    weaponType: WeaponType = 'shooter'
   ) {
     this.id = id;
     this.team = team;
     this.position = { ...spawnPos };
     this.collisionWorld = collisionWorld;
+    this.weaponType = weaponType;
     this.view = new PlayerView(team);
+    this.view.setWeaponType(weaponType);
     this.syncViewPosition();
   }
 
@@ -63,47 +72,21 @@ export class LocalPlayer {
     dt: number,
     groundInk: Team
   ): { position: Vec3; velocity: Vec3; grounded: boolean; mode: PlayerMode } {
-    const isEnemyInk = this.team === Team.PINK ? groundInk === Team.CYAN : groundInk === Team.PINK;
-    const isOwnInk = groundInk === this.team;
-
-    let currentSpeed = RUN_SPEED;
-    let mode = PlayerMode.HUMANOID;
-    if (input.squid && isOwnInk && grounded) {
-      mode = PlayerMode.SUBMERGED;
-      currentSpeed = SQUID_SPEED;
-    } else {
-      mode = PlayerMode.HUMANOID;
-      currentSpeed = isEnemyInk ? ENEMY_INK_SPEED : RUN_SPEED;
-    }
-
-    const sinYaw = Math.sin(input.yaw);
-    const cosYaw = Math.cos(input.yaw);
-
-    const forwardX = -sinYaw;
-    const forwardZ = -cosYaw;
-    const rightX = cosYaw;
-    const rightZ = -sinYaw;
-
-    const inputForward = -input.moveZ;
-    const inputRight = input.moveX;
-
-    let moveLen = Math.sqrt(inputRight * inputRight + inputForward * inputForward);
-    let normRight = 0;
-    let normForward = 0;
-    if (moveLen > 1e-4) {
-      if (moveLen > 1.0) {
-        normRight = inputRight / moveLen;
-        normForward = inputForward / moveLen;
-      } else {
-        normRight = inputRight;
-        normForward = inputForward;
-      }
-    }
+    const mode = nextPlayerForm(
+      PlayerMode.HUMANOID,
+      this.alive,
+      grounded,
+      Boolean(input.squid),
+      groundInk,
+      this.team
+    );
+    const currentSpeed = getMovementSpeed(mode, groundInk, this.team);
+    const { vx, vz } = computeMovementVelocity(input.yaw, input.moveX, input.moveZ, currentSpeed);
 
     const stepVel = {
-      x: (rightX * normRight + forwardX * normForward) * currentSpeed,
+      x: vx,
       y: vel.y,
-      z: (rightZ * normRight + forwardZ * normForward) * currentSpeed
+      z: vz
     };
 
     let stepGrounded = grounded;
@@ -134,7 +117,7 @@ export class LocalPlayer {
     );
 
     return {
-      position: res.position,
+      position: enforceSpawnBarrier(res.position, this.team),
       velocity: res.velocity,
       grounded: res.grounded,
       mode
@@ -174,6 +157,18 @@ export class LocalPlayer {
 
     this.syncViewPosition();
     this.view.setMode(this.mode);
+
+    const speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.z * this.velocity.z);
+    this.view.updateLocomotion(dt, speed, this.grounded, this.pitch);
+  }
+
+  setWeaponType(weapon: WeaponType): void {
+    this.weaponType = weapon;
+    this.view.setWeaponType(weapon);
+  }
+
+  triggerShootRecoil(): void {
+    this.view.triggerRecoil();
   }
 
   applyServerState(snapshot: PlayerSnapshot, lastAckSeq?: number): void {
@@ -183,6 +178,19 @@ export class LocalPlayer {
     this.invulnerable = snapshot.invulnerable;
     this.kills = snapshot.kills;
     this.deaths = snapshot.deaths;
+
+    if (snapshot.weaponType) {
+      this.setWeaponType(snapshot.weaponType);
+    }
+    if (snapshot.specialMeter !== undefined) {
+      this.specialMeter = snapshot.specialMeter;
+    }
+    if (snapshot.specialActive !== undefined) {
+      this.specialActive = snapshot.specialActive;
+    }
+    if (snapshot.chargeLevel !== undefined) {
+      this.chargeLevel = snapshot.chargeLevel;
+    }
 
     if (!this.alive) {
       this.pendingInputs = [];
@@ -224,13 +232,21 @@ export class LocalPlayer {
     const errDistSq = errX * errX + errY * errY + errZ * errZ;
 
     if (errDistSq > 0.04) {
-      // Reconcile to replayed authoritative state
+      // Hard correction for large deviation (> 0.2m)
       this.position = replayedPos;
       this.velocity = replayedVel;
       this.grounded = replayedGrounded;
       this.mode = replayedMode;
       this.syncViewPosition();
       this.view.setMode(this.mode);
+    } else if (errDistSq > 0.0004) {
+      // Smooth EMA correction for tiny discrepancies to prevent jitter (Subagent 38)
+      this.position.x = this.position.x * 0.8 + replayedPos.x * 0.2;
+      this.position.y = this.position.y * 0.8 + replayedPos.y * 0.2;
+      this.position.z = this.position.z * 0.8 + replayedPos.z * 0.2;
+      this.velocity = replayedVel;
+      this.grounded = replayedGrounded;
+      this.syncViewPosition();
     }
   }
 
@@ -240,7 +256,7 @@ export class LocalPlayer {
   }
 
   updateVisuals(time: number): void {
-    this.view.updateVisuals(this.invulnerable, time);
+    this.view.updateVisuals(this.invulnerable, time, this.ink);
   }
 
   dispose(): void {

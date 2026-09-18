@@ -14,6 +14,7 @@ export class Match {
   matchStartAt = 0;
   matchEndAt = 0;
   phaseEndsAt = 0;
+  autoStart = true;
 
   private paintGrid: PaintGrid;
   private onResetCallback?: () => void;
@@ -46,7 +47,7 @@ export class Match {
 
     switch (this.phase) {
       case MatchPhase.WAITING: {
-        if (playerCount >= 1) {
+        if (this.autoStart && playerCount >= 1) {
           this.startCountdown(now);
           phaseChanged = true;
         }

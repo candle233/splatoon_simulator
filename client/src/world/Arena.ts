@@ -92,6 +92,21 @@ export class Arena {
     pinkPad.receiveShadow = true;
     this.group.add(pinkPad);
 
+    // Pink Forcefield Barrier Dome (Subagent 80)
+    const pinkDomeGeo = new THREE.SphereGeometry(6.5, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const pinkDomeMat = new THREE.MeshStandardMaterial({
+      color: 0xff007f,
+      emissive: 0xff007f,
+      emissiveIntensity: 0.35,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.2,
+      side: THREE.DoubleSide
+    });
+    const pinkDome = new THREE.Mesh(pinkDomeGeo, pinkDomeMat);
+    pinkDome.position.set(-40, 0, 0);
+    this.group.add(pinkDome);
+
     // Cyan Spawn Pad at (40, 0.05, 0)
     const cyanPadGeo = new THREE.CylinderGeometry(5.5, 6, 0.2, 32);
     const cyanPadMat = new THREE.MeshStandardMaterial({
@@ -103,6 +118,21 @@ export class Arena {
     cyanPad.position.set(40, 0.1, 0);
     cyanPad.receiveShadow = true;
     this.group.add(cyanPad);
+
+    // Cyan Forcefield Barrier Dome (Subagent 80)
+    const cyanDomeGeo = new THREE.SphereGeometry(6.5, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const cyanDomeMat = new THREE.MeshStandardMaterial({
+      color: 0x00ffff,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.35,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.2,
+      side: THREE.DoubleSide
+    });
+    const cyanDome = new THREE.Mesh(cyanDomeGeo, cyanDomeMat);
+    cyanDome.position.set(40, 0, 0);
+    this.group.add(cyanDome);
   }
 
   dispose(): void {
@@ -117,5 +147,19 @@ export class Arena {
         mesh.material.dispose();
       }
     }
+  }
+
+  /**
+   * Returns paintable ground mesh surface (Subagent 04)
+   */
+  getPaintSurface(): THREE.Mesh {
+    return this.groundMesh;
+  }
+
+  /**
+   * Returns camera collision obstacle meshes (Subagent 04)
+   */
+  getCameraCollisionMeshes(): THREE.Mesh[] {
+    return this.obstacleMeshes;
   }
 }

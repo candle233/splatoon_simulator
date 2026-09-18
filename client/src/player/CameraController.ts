@@ -9,6 +9,13 @@ export class CameraController {
   private baseDistance = 5.2;
   private cameraHeight = 1.8;
   private shoulderOffset = 0.65;
+  private currentYaw = 0;
+  private currentPitch = 0;
+
+  // Camera Shake & Recoil (Subagents 73 & 74)
+  private shakeIntensity = 0;
+  private shakeDecay = 0;
+  private recoilPitch = 0;
 
   // Reusable vectors to avoid allocations in render loop
   private tempPlayerHead = new THREE.Vector3();
@@ -23,9 +30,24 @@ export class CameraController {
     this.collisionWorld = collisionWorld;
   }
 
-  update(playerPos: Vec3, yaw: number, pitch: number): void {
-    const cosPitch = Math.cos(pitch);
-    const sinPitch = Math.sin(pitch);
+  addShake(intensity: number, duration = 0.25): void {
+    this.shakeIntensity = Math.min(1.0, this.shakeIntensity + intensity);
+    this.shakeDecay = duration > 0 ? this.shakeIntensity / duration : 10;
+  }
+
+  addRecoil(pitchAmount: number): void {
+    this.recoilPitch = Math.min(0.12, this.recoilPitch + pitchAmount);
+  }
+
+  update(playerPos: Vec3, yaw: number, pitch: number, dt = 0.016): void {
+    // Smoothly decay recoil pitch
+    this.recoilPitch = Math.max(0, this.recoilPitch - dt * 0.9);
+    const effectivePitch = pitch + this.recoilPitch;
+
+    this.currentYaw = yaw;
+    this.currentPitch = effectivePitch;
+    const cosPitch = Math.cos(effectivePitch);
+    const sinPitch = Math.sin(effectivePitch);
     const cosYaw = Math.cos(yaw);
     const sinYaw = Math.sin(yaw);
 
@@ -62,11 +84,45 @@ export class CameraController {
       }
     }
 
+    // Decay shake and apply randomized offset (Subagent 73)
+    if (this.shakeIntensity > 0) {
+      const shakeMag = this.shakeIntensity * 0.18;
+      this.tempDesiredPos.x += (Math.random() - 0.5) * 2 * shakeMag;
+      this.tempDesiredPos.y += (Math.random() - 0.5) * 2 * shakeMag;
+      this.tempDesiredPos.z += (Math.random() - 0.5) * 2 * shakeMag;
+      this.shakeIntensity = Math.max(0, this.shakeIntensity - this.shakeDecay * dt);
+    }
+
     // Apply to camera
     this.camera.position.copy(this.tempDesiredPos);
 
     // Look at point ahead along forward ray
     this.tempAimTarget.copy(this.tempPlayerHead).addScaledVector(this.tempForward, 30);
     this.camera.lookAt(this.tempAimTarget);
+  }
+
+  /**
+   * Returns camera aim ray starting from camera position along forward vector (Subagent 06)
+   */
+  getAimRay(): Ray {
+    return {
+      origin: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+      direction: { x: this.tempForward.x, y: this.tempForward.y, z: this.tempForward.z }
+    };
+  }
+
+  /**
+   * Returns current camera forward directional vector (Subagent 06)
+   */
+  getCameraForward(): Vec3 {
+    return { x: this.tempForward.x, y: this.tempForward.y, z: this.tempForward.z };
+  }
+
+  getYaw(): number {
+    return this.currentYaw;
+  }
+
+  getPitch(): number {
+    return this.currentPitch;
   }
 }

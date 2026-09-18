@@ -1,6 +1,8 @@
 import { io, Socket } from 'socket.io-client';
 import {
   GameOverPayload,
+  LobbyPlayerState,
+  LobbyStatePayload,
   MatchStateSnapshot,
   PROTOCOL_EVENTS,
   PaintEvent,
@@ -8,6 +10,8 @@ import {
   PlayerSnapshot,
   ShotEventPayload,
   SnapshotPayload,
+  SpecialEventPayload,
+  SubWeaponEventPayload,
   WelcomePayload
 } from '@ink/shared';
 
@@ -24,6 +28,9 @@ export interface NetworkCallbacks {
   onGameOver: (payload: GameOverPayload) => void;
   onHitFeedback: (data: { targetId: string }) => void;
   onShotEvent: (shot: ShotEventPayload) => void;
+  onLobbyState?: (payload: LobbyStatePayload) => void;
+  onSubWeaponEvent?: (payload: SubWeaponEventPayload) => void;
+  onSpecialEvent?: (payload: SpecialEventPayload) => void;
   onDisconnect: () => void;
   onConnectError: (err: Error) => void;
 }
@@ -40,6 +47,7 @@ export class NetworkClient {
   public currentPing = 0;
   public estimatedServerTime = Date.now();
   public serverTimeOffset = 0;
+  private timeSync = new TimeSynchronizer();
 
   constructor(serverUrl: string, callbacks: NetworkCallbacks) {
     this.callbacks = callbacks;
@@ -109,12 +117,25 @@ export class NetworkClient {
       this.callbacks.onShotEvent(shot);
     });
 
+    this.socket.on(PROTOCOL_EVENTS.S2C_LOBBY_STATE, (payload: LobbyStatePayload) => {
+      this.callbacks.onLobbyState?.(payload);
+    });
+
+    this.socket.on(PROTOCOL_EVENTS.S2C_SUB_WEAPON_EVENT, (payload: SubWeaponEventPayload) => {
+      this.callbacks.onSubWeaponEvent?.(payload);
+    });
+
+    this.socket.on(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, (payload: SpecialEventPayload) => {
+      this.callbacks.onSpecialEvent?.(payload);
+    });
+
     this.socket.on(
       PROTOCOL_EVENTS.S2C_PONG,
       (data: { clientTime: number; serverTime: number }) => {
         const now = Date.now();
-        this.currentPing = Math.max(0, now - data.clientTime);
-        this.serverTimeOffset = data.serverTime + this.currentPing / 2 - now;
+        this.timeSync.update(data.clientTime, data.serverTime, now);
+        this.currentPing = this.timeSync.rtt;
+        this.serverTimeOffset = this.timeSync.getOffset();
       }
     );
 
@@ -125,6 +146,18 @@ export class NetworkClient {
     this.socket.on('connect_error', (err: Error) => {
       this.callbacks.onConnectError(err);
     });
+  }
+
+  sendLobbyUpdate(payload: Partial<LobbyPlayerState>): void {
+    if (this.socket.connected) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_LOBBY_UPDATE, payload);
+    }
+  }
+
+  sendLobbyStart(): void {
+    if (this.socket.connected) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_LOBBY_START);
+    }
   }
 
   queueInput(input: PlayerInput): void {
@@ -147,13 +180,62 @@ export class NetworkClient {
     }, 1000);
   }
 
+  getEstimatedServerTime(clientNow: number = Date.now()): number {
+    return this.timeSync.getEstimatedServerTime(clientNow);
+  }
+
   getServerTime(): number {
-    return Date.now() + this.serverTimeOffset;
+    return this.getEstimatedServerTime();
   }
 
   dispose(): void {
     if (this.pingInterval) clearInterval(this.pingInterval);
     if (this.inputInterval) clearInterval(this.inputInterval);
     this.socket.disconnect();
+  }
+}
+
+/**
+ * Subagent 39: Server time synchronization with exponential moving average (EMA)
+ */
+export class TimeSynchronizer {
+  private offset = 0;
+  private initialized = false;
+  private alpha = 0.2;
+  public rtt = 0;
+
+  constructor(alpha = 0.2) {
+    this.alpha = alpha;
+  }
+
+  /**
+   * Updates estimated server offset using round-trip time:
+   * offset = serverTime - (t0 + RTT / 2)
+   */
+  update(t0: number, serverTime: number, t1: number): number {
+    this.rtt = Math.max(0, t1 - t0);
+    const sampleOffset = serverTime - (t0 + this.rtt / 2);
+
+    if (!this.initialized) {
+      this.offset = sampleOffset;
+      this.initialized = true;
+    } else {
+      this.offset = this.alpha * sampleOffset + (1 - this.alpha) * this.offset;
+    }
+    return this.offset;
+  }
+
+  getOffset(): number {
+    return this.offset;
+  }
+
+  getEstimatedServerTime(clientNow: number = Date.now()): number {
+    return clientNow + this.offset;
+  }
+
+  reset(): void {
+    this.offset = 0;
+    this.initialized = false;
+    this.rtt = 0;
   }
 }

@@ -59,6 +59,18 @@ export function uvToPaintGrid(u: number, v: number, resolution: number): GridCoo
 }
 
 /**
+ * Maps world X, Z to discrete PaintGrid coordinate [0, resolution - 1] (Subagent 12)
+ */
+export function worldToGridCell(x: number, z: number, resolution: number): GridCoord {
+  const { u, v } = worldToUV(x, z);
+  return uvToPaintGrid(u, v, resolution);
+}
+
+// Subagent 12 Function Aliases
+export const uvToCanvasPixel = uvToCanvas;
+export const uvToGridCell = uvToPaintGrid;
+
+/**
  * Deterministically generates splatters surrounding the main paint impact
  */
 export function generateSplatters(
@@ -91,4 +103,33 @@ export function generateSplatters(
   }
 
   return splatters;
+}
+
+/**
+ * Linearly interpolates UV coordinates between (u1, v1) and (u2, v2) with a maximum step size
+ */
+export function interpolateLineUV(
+  u1: number,
+  v1: number,
+  u2: number,
+  v2: number,
+  maxStepUV: number
+): UVCoord[] {
+  const du = u2 - u1;
+  const dv = v2 - v1;
+  const dist = Math.sqrt(du * du + dv * dv);
+  if (dist <= 1e-5 || maxStepUV <= 0) {
+    return [{ u: u2, v: v2 }];
+  }
+
+  const steps = Math.max(1, Math.ceil(dist / maxStepUV));
+  const coords: UVCoord[] = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    coords.push({
+      u: u1 + du * t,
+      v: v1 + dv * t
+    });
+  }
+  return coords;
 }

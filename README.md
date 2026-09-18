@@ -62,7 +62,8 @@ splatoon/
 │   │   ├── protocol.ts        # Typed Socket.io event name registry
 │   │   ├── math.ts            # Mulberry32 PRNG, Raycasting, AABB, Slab method
 │   │   ├── map.ts             # Symmetric arena obstacle definitions & spawn points
-│   │   └── paint.ts           # World-to-UV, UV-to-Canvas, deterministic splatter algorithms
+│   │   ├── paint.ts           # World-to-UV, UV-to-Canvas, deterministic splatter algorithms
+│   │   └── simulation.ts      # Pure form state machine & deterministic movement integration
 │
 ├── server/                    # Node.js authoritative game server
 │   ├── src/
@@ -81,19 +82,31 @@ splatoon/
 │   ├── src/
 │   │   ├── main.ts            # Client bootstrap & global error boundary
 │   │   ├── style.css          # Stylized arcade HUD styling
-│   │   ├── core/              # Game loop, Three.js GameRenderer, Clock, InputManager
+│   │   ├── core/              # Game loop, Three.js GameRenderer, Clock, InputManager, SoundManager
 │   │   ├── world/             # Arena geometry, PaintEngine, ClientCollisionWorld
 │   │   ├── player/            # LocalPlayer prediction, RemotePlayer, PlayerView, CameraController
 │   │   ├── combat/            # VisualWeapon pooled tracer beams, Crosshair hit markers
 │   │   ├── network/           # NetworkClient, SnapshotBuffer (100ms interpolation)
-│   │   └── ui/                # Native HTML/CSS HUD, GameOverScreen, Scoreboard
+│   │   └── ui/                # Native HTML/CSS HUD, GameOverScreen, Scoreboard, LobbyScreen
 │
-└── tests/                     # Automated Vitest test suite
+├── docs/                      # Architectural Audits & Reports
+│   └── audits_61_to_72.md     # In-depth audits for Balance, Bandwidth, Paint, Security, QA
+│
+└── tests/                     # Automated Vitest test suite (15 suites, 80 tests)
+    ├── formStateMachine.test.ts # Subagent 11: Pure form transitions
+    ├── simulationMovement.test.ts # Subagents 08/09: Normalized WASD & 30/60fps invariance
+    ├── inkAndHealth.test.ts   # Subagents 18/19: Depletion, regen delay, 4-shot kill, DoT
+    ├── timeSyncAndInterpolation.test.ts # Subagents 37/39: EMA clock sync & respawn snap
+    ├── paintTextureController.test.ts # Subagent 16: Dirty-flag GPU upload throttling
+    ├── input.test.ts          # Subagent 05: WASD normalization and clamping
     ├── paintGrid.test.ts      # Ground sampling, UV mapping, O(k) score tracking
     ├── splatter.test.ts       # Deterministic Mulberry32 splatter reproducibility
     ├── raycast.test.ts        # Ray-plane, Ray-AABB, nearest hit occlusion
     ├── matchState.test.ts     # State machine transitions and timer accuracy
     ├── combat.test.ts         # 4-shot kill, invulnerability, enemy ink DoT, health regen
+    ├── weapons_and_skills.test.ts # Shooter, Roller, Charger, Slosher, Bombs, Specials
+    ├── reconciliation_and_aiming.test.ts # Two-stage TPS aim, platform grounding, squid jump
+    ├── lobby.test.ts          # Lobby readiness, weapon select, host countdown
     └── integration.test.ts    # End-to-end multi-client Socket.io network integration
 ```
 
