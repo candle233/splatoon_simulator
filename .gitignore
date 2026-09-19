@@ -3,3 +3,5 @@ dist/
 *.log
 .mimosa/
 
+.playwright-mcp/
+tdm-*.png
