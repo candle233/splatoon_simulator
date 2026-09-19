@@ -439,6 +439,10 @@ export function applyI18n(root?: ParentNode): void {
     const key = el.getAttribute('data-i18n-title');
     if (key) el.setAttribute('title', t(key));
   });
+  // Keep every language switcher's highlight in sync with the active language
+  document.querySelectorAll('.lang-btn').forEach((el) => {
+    el.classList.toggle('active', el.getAttribute('data-lang') === current);
+  });
 }
 
 /** Picks the localized name off any shared config carrying name/nameZh/nameJa. */
