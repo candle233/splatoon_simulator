@@ -34,6 +34,17 @@ export enum MatchPhase {
 export type WeaponType = 'shooter' | 'roller' | 'charger' | 'slosher';
 export type SubWeaponType = 'splat_bomb' | 'burst_bomb' | 'curling_bomb';
 export type SpecialWeaponType = 'inkstrike' | 'ink_storm' | 'killer_wail';
+export type GameMode = 'turf_war' | 'splat_zones' | 'team_deathmatch';
+export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink';
+export type SkillId =
+  | 'ink_saver'
+  | 'ink_recovery'
+  | 'run_speed'
+  | 'swim_speed'
+  | 'special_charge'
+  | 'quick_respawn'
+  | 'main_power'
+  | 'defense';
 
 export interface Vec2 {
   x: number;
@@ -88,6 +99,8 @@ export interface PlayerSnapshot {
   specialActive?: boolean;
   chargeLevel?: number;
   name?: string;
+  isBot?: boolean;
+  skills?: SkillId[];
 }
 
 export interface PaintEvent {
@@ -131,12 +144,16 @@ export interface LobbyPlayerState {
   weaponType: WeaponType;
   ready: boolean;
   isHost: boolean;
+  isBot?: boolean;
+  skills?: SkillId[];
 }
 
 export interface LobbyStatePayload {
   players: LobbyPlayerState[];
   countdown: number;
   inMatch: boolean;
+  mode?: GameMode;
+  mapId?: MapId;
 }
 
 export interface MatchScore {
@@ -154,6 +171,7 @@ export interface MatchStateSnapshot {
   serverTime: number;
   pinkScore: number;
   cyanScore: number;
+  mode?: GameMode;
 }
 
 export interface GameOverPayload {
@@ -161,6 +179,7 @@ export interface GameOverPayload {
   pinkCoverage: number;
   cyanCoverage: number;
   restartCountdown: number;
+  mode?: GameMode;
 }
 
 export interface WelcomePayload {
@@ -174,6 +193,14 @@ export interface WelcomePayload {
   totalPaintEvents?: number;
   obstacles: BoxObstacle[];
   lobby?: LobbyStatePayload;
+  mapId?: MapId;
+  mapSize?: number;
+}
+
+/** Host-controlled match setup (mode + map), changeable only while WAITING. */
+export interface MatchConfigPayload {
+  mode?: GameMode;
+  mapId?: MapId;
 }
 
 export interface SnapshotPayload {

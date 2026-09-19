@@ -1,4 +1,4 @@
-import { ARENA_HALF_SIZE, ARENA_SIZE } from './config.js';
+import { ARENA_SIZE } from './config.js';
 import { PRNG, clamp } from './math.js';
 
 export interface UVCoord {
@@ -23,20 +23,26 @@ export interface SplatterCircle {
 }
 
 /**
- * Maps world X, Z to normalized UV in [0, 1]
+ * Maps world X, Z to normalized UV in [0, 1].
+ * `size` defaults to the legacy 100-unit arena; pass the active map's size
+ * when playing on a custom map.
  */
-export function worldToUV(x: number, z: number): UVCoord {
-  const u = clamp((x + ARENA_HALF_SIZE) / ARENA_SIZE, 0, 1);
-  const v = clamp((z + ARENA_HALF_SIZE) / ARENA_SIZE, 0, 1);
+export function worldToUV(x: number, z: number, size: number = ARENA_SIZE): UVCoord {
+  const half = size / 2;
+  const u = clamp((x + half) / size, 0, 1);
+  const v = clamp((z + half) / size, 0, 1);
   return { u, v };
 }
 
 /**
- * Maps UV in [0, 1] to world X, Z coordinates
+ * Maps UV in [0, 1] to world X, Z coordinates.
+ * `size` defaults to the legacy 100-unit arena; pass the active map's size
+ * when playing on a custom map.
  */
-export function uvToWorld(u: number, v: number): { x: number; z: number } {
-  const x = u * ARENA_SIZE - ARENA_HALF_SIZE;
-  const z = v * ARENA_SIZE - ARENA_HALF_SIZE;
+export function uvToWorld(u: number, v: number, size: number = ARENA_SIZE): { x: number; z: number } {
+  const half = size / 2;
+  const x = u * size - half;
+  const z = v * size - half;
   return { x, z };
 }
 
@@ -61,8 +67,8 @@ export function uvToPaintGrid(u: number, v: number, resolution: number): GridCoo
 /**
  * Maps world X, Z to discrete PaintGrid coordinate [0, resolution - 1] (Subagent 12)
  */
-export function worldToGridCell(x: number, z: number, resolution: number): GridCoord {
-  const { u, v } = worldToUV(x, z);
+export function worldToGridCell(x: number, z: number, resolution: number, size: number = ARENA_SIZE): GridCoord {
+  const { u, v } = worldToUV(x, z, size);
   return uvToPaintGrid(u, v, resolution);
 }
 

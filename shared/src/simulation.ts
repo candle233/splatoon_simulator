@@ -127,15 +127,17 @@ export function integrateVerticalKinematics(
 /**
  * Enforces team base spawn barrier protection (Subagent 80)
  * Prevents enemy players from infiltrating the opposing team's spawn platform.
+ * `spawnX` is the |x| of the spawn rows (defaults to the legacy 40).
  */
-export function enforceSpawnBarrier(pos: Vec3, team: Team): Vec3 {
-  // Pink home base protection (|z| < 10, x < -35)
-  if (team === Team.CYAN && pos.x < -35 && Math.abs(pos.z) < 10) {
-    return { ...pos, x: -35 };
+export function enforceSpawnBarrier(pos: Vec3, team: Team, spawnX = 40): Vec3 {
+  const barrierX = spawnX - 5;
+  // Pink home base protection (|z| < 10, x < -barrierX)
+  if (team === Team.CYAN && pos.x < -barrierX && Math.abs(pos.z) < 10) {
+    return { ...pos, x: -barrierX };
   }
-  // Cyan home base protection (|z| < 10, x > 35)
-  if (team === Team.PINK && pos.x > 35 && Math.abs(pos.z) < 10) {
-    return { ...pos, x: 35 };
+  // Cyan home base protection (|z| < 10, x > barrierX)
+  if (team === Team.PINK && pos.x > barrierX && Math.abs(pos.z) < 10) {
+    return { ...pos, x: barrierX };
   }
   return pos;
 }

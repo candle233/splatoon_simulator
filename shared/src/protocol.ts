@@ -4,6 +4,9 @@ export const PROTOCOL_EVENTS = {
   C2S_PING: 'c2s:ping',
   C2S_LOBBY_UPDATE: 'c2s:lobby_update',
   C2S_LOBBY_START: 'c2s:lobby_start',
+  C2S_LOBBY_ADD_BOT: 'c2s:lobby_add_bot',
+  C2S_LOBBY_REMOVE_BOT: 'c2s:lobby_remove_bot',
+  C2S_MATCH_CONFIG: 'c2s:match_config',
 
   // Server to Client
   S2C_WELCOME: 's2c:welcome',
