@@ -43,6 +43,8 @@ export class NetworkClient {
   private pingInterval?: number;
   private inputInterval?: number;
   private latestInputToSend?: PlayerInput;
+  private pendingSubWeapon = false;
+  private pendingSpecial = false;
   private inputRateMs = 33; // ~30Hz input network transmission
 
   public currentPing = 0;
@@ -166,13 +168,28 @@ export class NetworkClient {
   }
 
   queueInput(input: PlayerInput): void {
+    // Sub/special are single-frame edge flags from the input manager; latch them
+    // here so a press always survives the 33ms send batching (the latest-frame
+    // overwrite would otherwise drop most presses before they are sent).
+    if (input.subWeapon) this.pendingSubWeapon = true;
+    if (input.special) this.pendingSpecial = true;
     this.latestInputToSend = input;
   }
 
   private startInputLoop(): void {
     this.inputInterval = window.setInterval(() => {
       if (this.latestInputToSend && this.socket.connected) {
-        this.socket.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, this.latestInputToSend);
+        let out = this.latestInputToSend;
+        if (this.pendingSubWeapon || this.pendingSpecial) {
+          out = {
+            ...out,
+            subWeapon: out.subWeapon || this.pendingSubWeapon,
+            special: out.special || this.pendingSpecial
+          };
+          this.pendingSubWeapon = false;
+          this.pendingSpecial = false;
+        }
+        this.socket.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, out);
       }
     }, this.inputRateMs);
   }

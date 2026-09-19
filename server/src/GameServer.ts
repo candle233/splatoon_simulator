@@ -486,6 +486,11 @@ export class GameServer {
             this.io.emit(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, specRes.specialEvent);
           }
         }
+
+        // Edge flags are one-shot per press; clear them on the stored snapshot so
+        // the next tick (before a newer input arrives) cannot consume them again.
+        input.subWeapon = false;
+        input.special = false;
       }
     }
 
