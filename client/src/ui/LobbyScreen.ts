@@ -258,7 +258,7 @@ export class LobbyScreen {
 
         card.innerHTML = `
           <div class="roster-info">
-            <span class="roster-name">${p.name || 'Inkling'} ${isSelf ? '(You)' : ''}</span>
+            <span class="roster-name">${p.name || 'Inker'} ${isSelf ? '(You)' : ''}</span>
             <span class="roster-sub">${weaponLabel} • [${teamLabel}]</span>
           </div>
           <div class="roster-status">

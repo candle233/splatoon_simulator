@@ -39,6 +39,9 @@ export const ENEMY_INK_DOT = 15.0; // HP/s
 export const RESPAWN_TIME = 4.0; // s
 export const INVULNERABILITY_TIME = 2.0; // s
 
+/** Server stops honoring held keys from an input older than this (client frozen/disconnected). */
+export const INPUT_STALE_MS = 500;
+
 export const COUNTDOWN_DURATION = 3.0; // s
 export const MATCH_DURATION = 180.0; // s
 export const GAME_OVER_DURATION = 8.0; // s
@@ -108,8 +111,8 @@ export interface WeaponStats {
 export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
   shooter: {
     id: 'shooter',
-    name: 'Splattershot',
-    nameZh: '斯普拉射击枪',
+    name: 'Ink Blaster',
+    nameZh: '墨水冲锋枪',
     sub: 'splat_bomb',
     special: 'inkstrike',
     damage: 25,
@@ -122,8 +125,8 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
   },
   roller: {
     id: 'roller',
-    name: 'Splat Roller',
-    nameZh: '斯普拉滚筒',
+    name: 'Ink Roller',
+    nameZh: '涂地滚筒',
     sub: 'curling_bomb',
     special: 'ink_storm',
     damage: 100,
@@ -139,8 +142,8 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
   },
   charger: {
     id: 'charger',
-    name: 'Splat Charger',
-    nameZh: '斯普拉蓄力狙击枪',
+    name: 'Ink Sniper',
+    nameZh: '蓄力墨水狙击枪',
     sub: 'splat_bomb',
     special: 'killer_wail',
     damage: 130,
@@ -154,7 +157,7 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
   },
   slosher: {
     id: 'slosher',
-    name: 'Slosher',
+    name: 'Ink Bucket',
     nameZh: '飞溅泼桶',
     sub: 'burst_bomb',
     special: 'inkstrike',
@@ -184,8 +187,8 @@ export interface SubWeaponStats {
 export const SUB_WEAPON_CONFIGS: Record<SubWeaponType, SubWeaponStats> = {
   splat_bomb: {
     id: 'splat_bomb',
-    name: 'Splat Bomb',
-    nameZh: '斯普拉炸弹',
+    name: 'Ink Bomb',
+    nameZh: '墨水炸弹',
     inkCost: 65,
     throwSpeed: 16,
     fuseTime: 1.2,
@@ -195,7 +198,7 @@ export const SUB_WEAPON_CONFIGS: Record<SubWeaponType, SubWeaponStats> = {
   },
   burst_bomb: {
     id: 'burst_bomb',
-    name: 'Burst Bomb',
+    name: 'Pop Bomb',
     nameZh: '快速炸弹',
     inkCost: 40,
     throwSpeed: 24,
@@ -206,7 +209,7 @@ export const SUB_WEAPON_CONFIGS: Record<SubWeaponType, SubWeaponStats> = {
   },
   curling_bomb: {
     id: 'curling_bomb',
-    name: 'Curling Bomb',
+    name: 'Slider Bomb',
     nameZh: '冰壶炸弹',
     inkCost: 55,
     throwSpeed: 14,
@@ -236,7 +239,7 @@ export interface SpecialStats {
 export const SPECIAL_CONFIGS: Record<SpecialWeaponType, SpecialStats> = {
   inkstrike: {
     id: 'inkstrike',
-    name: 'Inkstrike',
+    name: 'Ink Twister',
     nameZh: '龙卷风墨击',
     duration: 4.0,
     radius: 6.0,
@@ -245,7 +248,7 @@ export const SPECIAL_CONFIGS: Record<SpecialWeaponType, SpecialStats> = {
   },
   ink_storm: {
     id: 'ink_storm',
-    name: 'Ink Storm',
+    name: 'Ink Downpour',
     nameZh: '墨雨云',
     duration: 6.0,
     radius: 5.0,
@@ -255,7 +258,7 @@ export const SPECIAL_CONFIGS: Record<SpecialWeaponType, SpecialStats> = {
   },
   killer_wail: {
     id: 'killer_wail',
-    name: 'Killer Wail 5.1',
+    name: 'Bass Wave Cannon',
     nameZh: '扩音器5.1',
     duration: 3.0,
     radius: 1.6,

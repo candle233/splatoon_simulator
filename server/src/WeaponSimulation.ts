@@ -120,7 +120,7 @@ export class WeaponSimulation {
     } else if (weaponType === 'charger') {
       return this.fireCharger(shooter, allPlayers, now, chargeLevelInput);
     } else if (weaponType === 'slosher') {
-      return this.fireSlosher(shooter, allPlayers, now);
+      return this.fireBucket(shooter, allPlayers, now);
     } else {
       return this.fireShooter(shooter, allPlayers, now, config);
     }
@@ -650,7 +650,7 @@ export class WeaponSimulation {
     return result;
   }
 
-  private fireSlosher(shooter: PlayerState, allPlayers: PlayerState[], now: number): ShotResult {
+  private fireBucket(shooter: PlayerState, allPlayers: PlayerState[], now: number): ShotResult {
     const config = WEAPON_CONFIGS.slosher;
     const elapsed = (now - shooter.lastShotTime) / 1000;
     if (elapsed < 1 / config.fireRate - 0.015) {
@@ -1235,7 +1235,7 @@ export class WeaponSimulation {
             }
           }
         } else {
-          // Circular AoE (Inkstrike / Ink Storm)
+          // Circular AoE (Ink Twister / Ink Downpour)
           const spPaint = this.createPaintEvent(
             spec.team,
             spec.position.x,

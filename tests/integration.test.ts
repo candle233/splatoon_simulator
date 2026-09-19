@@ -95,9 +95,13 @@ describe('Multiplayer Network Integration & Sanity', () => {
     const shooter: Socket = ClientSocket(serverUrl);
     await new Promise<void>((res) => shooter.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()));
 
-    // Shoot downwards towards ground (pitch = -Math.PI / 3)
+    // Shoot downwards towards ground (pitch = -Math.PI / 3).
+    // Send continuously like a real client holding the trigger — the server
+    // neutralizes held keys from inputs older than INPUT_STALE_MS, so a single
+    // stale fire input sent during COUNTDOWN must not fire later.
+    let fireSeq = 10;
     const fireInput: PlayerInput = {
-      seq: 10,
+      seq: fireSeq,
       moveX: 0,
       moveZ: 0,
       yaw: 0,
@@ -108,7 +112,11 @@ describe('Multiplayer Network Integration & Sanity', () => {
       clientTime: Date.now()
     };
 
-    shooter.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, fireInput);
+    const fireInterval = setInterval(() => {
+      fireSeq += 1;
+      shooter.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...fireInput, seq: fireSeq, clientTime: Date.now() });
+    }, 100);
+    shooter.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...fireInput });
 
     // Wait for PAINT_BATCH
     const paintBatch = await new Promise<PaintEvent[]>((resolve) => {
@@ -116,6 +124,7 @@ describe('Multiplayer Network Integration & Sanity', () => {
         resolve(batch);
       });
     });
+    clearInterval(fireInterval);
 
     expect(paintBatch.length).toBeGreaterThan(0);
     const paintEvt = paintBatch[0]!;
@@ -185,15 +194,81 @@ describe('Multiplayer Network Integration & Sanity', () => {
       clientTime: Date.now()
     };
 
-    clientA.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, fireInput);
+    // Continuous fire like a real client holding LMB (stale inputs are neutralized).
+    let shotSeq = 200;
+    const fireInterval = setInterval(() => {
+      shotSeq += 1;
+      clientA.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...fireInput, seq: shotSeq, clientTime: Date.now() });
+    }, 100);
+    clientA.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...fireInput });
 
     const shot = await shotReceivedPromise;
+    clearInterval(fireInterval);
     expect(shot.shooterId).toBe(clientA.id);
     expect(shot.origin).toBeDefined();
     expect(shot.target).toBeDefined();
 
     clientA.disconnect();
     clientB.disconnect();
+  });
+
+  it('Stale input neutralization: player stops moving when client stops sending inputs', async () => {
+    const client: Socket = ClientSocket(serverUrl);
+    await new Promise<void>((res) => client.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()));
+
+    const baseInput = {
+      moveX: 0,
+      moveZ: -1,
+      yaw: 0,
+      pitch: 0,
+      jump: false,
+      squid: false,
+      fire: false,
+      clientTime: Date.now()
+    };
+
+    // Keep sending while WAITING/COUNTDOWN so the match reaches PLAYING.
+    let seq = 300;
+    let phase = MatchPhase.WAITING;
+    const moveToPlaying = setInterval(() => {
+      seq += 1;
+      client.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...baseInput, seq, clientTime: Date.now() });
+    }, 100);
+    const playingReached = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('match never reached PLAYING')), 8000);
+      client.on(PROTOCOL_EVENTS.S2C_SNAPSHOT, (snap: SnapshotPayload) => {
+        if (snap.match.phase === MatchPhase.PLAYING) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+    await playingReached;
+    clearInterval(moveToPlaying);
+
+    // Send one last forward input, then go silent (like a frozen/hidden client).
+    seq += 1;
+    client.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, { ...baseInput, seq, clientTime: Date.now() });
+
+    // Collect ~1.6s of snapshots after the silence starts; movement must cease.
+    await new Promise((r) => setTimeout(r, 1600));
+    const zs: number[] = [];
+    await new Promise<void>((resolve) => {
+      const onSnap = (snap: SnapshotPayload) => {
+        const me = snap.players.find((p) => p.id === client.id);
+        if (me) zs.push(me.z);
+        if (zs.length >= 4) {
+          client.off(PROTOCOL_EVENTS.S2C_SNAPSHOT, onSnap);
+          resolve();
+        }
+      };
+      client.on(PROTOCOL_EVENTS.S2C_SNAPSHOT, onSnap);
+    });
+
+    const maxDrift = Math.max(...zs) - Math.min(...zs);
+    expect(zs.length).toBeGreaterThanOrEqual(4);
+    expect(maxDrift).toBeLessThan(1.0); // stopped, not gliding to the wall
+    client.disconnect();
   });
 });
 

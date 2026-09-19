@@ -251,7 +251,7 @@ export class SoundManager {
     }
   }
 
-  playSlosher(): void {
+  playBucket(): void {
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
 

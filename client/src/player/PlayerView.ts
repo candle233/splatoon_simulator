@@ -247,7 +247,7 @@ export class PlayerView {
     // ==========================================
     this.weaponAnchor.position.set(0.32, 0.85, -0.3);
 
-    // 2.1 Shooter (Splattershot)
+    // 2.1 Shooter (Ink Blaster)
     const shooterBarGeo = new THREE.CylinderGeometry(0.06, 0.09, 0.65, 8);
     this.geometries.push(shooterBarGeo);
     const shooterBar = new THREE.Mesh(shooterBarGeo, darkMat);
@@ -262,7 +262,7 @@ export class PlayerView {
     this.shooterGroup.add(nozzle);
     this.weaponAnchor.add(this.shooterGroup);
 
-    // 2.2 Roller (Splat Roller)
+    // 2.2 Roller (Ink Roller)
     const rollerHandleGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.9, 8);
     this.geometries.push(rollerHandleGeo);
     const rollerHandle = new THREE.Mesh(rollerHandleGeo, darkMat);
@@ -280,7 +280,7 @@ export class PlayerView {
     this.rollerGroup.visible = false;
     this.weaponAnchor.add(this.rollerGroup);
 
-    // 2.3 Charger (Splat Charger)
+    // 2.3 Charger (Ink Sniper)
     const chargerBodyGeo = new THREE.BoxGeometry(0.1, 0.14, 0.5);
     this.geometries.push(chargerBodyGeo);
     const chargerBody = new THREE.Mesh(chargerBodyGeo, darkMat);
@@ -317,7 +317,7 @@ export class PlayerView {
     this.chargerGroup.visible = false;
     this.weaponAnchor.add(this.chargerGroup);
 
-    // 2.4 Slosher (Bucket)
+    // 2.4 Bucket (Ink Bucket)
     const bucketGeo = new THREE.CylinderGeometry(0.26, 0.2, 0.45, 12, 1, true);
     this.geometries.push(bucketGeo);
     const bucketMat = new THREE.MeshStandardMaterial({
@@ -636,7 +636,7 @@ export class PlayerView {
         t.rotation.z = side * 0.2 + Math.sin(this.walkPhase) * 0.06;
       });
 
-      // Physically roll the Splat Roller cylinder
+      // Physically roll the Ink Roller cylinder
       if (this.currentWeapon === 'roller' && this.rollerCylinderMesh) {
         this.rollerCylinderMesh.rotation.x += speed * dt * 5.0;
       }

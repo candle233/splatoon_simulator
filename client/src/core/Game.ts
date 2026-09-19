@@ -86,6 +86,8 @@ export class Game {
   private gameOverEndsAt = 0;
   private lastLocalShotTime = 0;
   private lastDebugUpdateTime = 0;
+  /** Debug-fire window end timestamp (test hook only; the server still validates everything). */
+  private debugFireUntil = 0;
 
   constructor() {
     const canvas = document.getElementById('webgl-canvas') as HTMLCanvasElement;
@@ -208,7 +210,81 @@ export class Game {
 
   start(): void {
     this.isRunning = true;
+    this.installDebugHook();
     requestAnimationFrame(this.renderLoop);
+  }
+
+  /**
+   * Read-only test/automation hook. Exposes simulation state and a debug-fire
+   * request counter; firing still travels through the normal server pipeline
+   * (rate limit, cooldown, ink, raycast, authority all remain server-side).
+   */
+  private installDebugHook(): void {
+    const w = window as unknown as { __inkArena?: Record<string, unknown> };
+    w.__inkArena = {
+      getState: () => {
+        const lp = this.localPlayer;
+        return {
+          id: lp?.id ?? null,
+          team: lp?.team ?? null,
+          phase: this.matchPhase,
+          lobbyVisible: this.lobbyScreen.isVisible(),
+          locked: this.inputManager.isLocked(),
+          alive: lp?.alive ?? false,
+          hp: lp?.hp ?? 0,
+          ink: lp ? Math.round(lp.ink) : 0,
+          mode: lp ? PlayerMode[lp.mode] : null,
+          pos: lp
+            ? {
+                x: Math.round(lp.position.x * 100) / 100,
+                y: Math.round(lp.position.y * 100) / 100,
+                z: Math.round(lp.position.z * 100) / 100
+              }
+            : null,
+          remoteCount: this.remotePlayers.size,
+          remotes: Array.from(this.remotePlayers.entries()).map(([id, rp]) => ({
+            id,
+            team: rp.team,
+            alive: rp.alive,
+            x: Math.round(rp.position.x * 100) / 100,
+            y: Math.round(rp.position.y * 100) / 100,
+            z: Math.round(rp.position.z * 100) / 100
+          })),
+          paintEventsReceived: this.totalPaintEventsReceived,
+          pinkScore: this.pinkScore,
+          cyanScore: this.cyanScore,
+          bufferLen: (this.snapshotBuffer as unknown as { buffer: unknown[] }).buffer.length,
+          serverTime: Math.round(this.networkClient.getServerTime()),
+          remoteRaw: Array.from(this.remotePlayers.entries()).map(([id, rp]) => {
+            const r = rp as unknown as { lastTime: number; lastPos: { x: number; y: number; z: number } };
+            return { id, lastTime: Math.round(r.lastTime * 1000) / 1000, lastPos: r.lastPos };
+          }),
+          probe: (() => {
+            const buf = this.snapshotBuffer as unknown as {
+              buffer: { timestamp: number; players: Map<string, { x: number; z: number }> }[];
+              getInterpolatedState: (id: string, t: number) => unknown;
+            };
+            const firstRemote = this.remotePlayers.keys().next().value as string | undefined;
+            if (!firstRemote) return 'no-remote';
+            const b = buf.buffer;
+            const last = b[b.length - 1];
+            const selfSnap = last ? last.players.get(this.localPlayer?.id ?? '') : null;
+            const remoteSnap = last ? last.players.get(firstRemote) : null;
+            return {
+              bufLen: b.length,
+              lastTs: last ? Math.round(last.timestamp) : null,
+              estNow: Math.round(this.networkClient.getServerTime()),
+              selfServerPos: selfSnap ? { x: selfSnap.x, z: selfSnap.z } : null,
+              remoteServerPos: remoteSnap ? { x: remoteSnap.x, z: remoteSnap.z } : null,
+              result: buf.getInterpolatedState(firstRemote, this.networkClient.getServerTime())
+            };
+          })()
+        };
+      },
+      debugFire: (durationMs = 1500) => {
+        this.debugFireUntil = performance.now() + Math.max(100, Math.min(5000, durationMs));
+      }
+    };
   }
 
   private renderLoop = (): void => {
@@ -268,7 +344,7 @@ export class Game {
             this.soundManager.playRollerFlick();
             this.cameraController.addShake(0.12, 0.12);
           } else if (weaponType === 'slosher') {
-            this.soundManager.playSlosher();
+            this.soundManager.playBucket();
             this.cameraController.addShake(0.1, 0.1);
           } else {
             this.soundManager.playShoot();
@@ -413,6 +489,14 @@ export class Game {
         if (this.localPlayer.specialMeter >= 100) {
           this.soundManager.playSpecialActivate();
         }
+      }
+
+      // Debug hook shots bypass client-side gating but NOT server validation.
+      if (this.debugFireUntil > 0 && performance.now() < this.debugFireUntil) {
+        input.fire = true;
+        input.pitch = -0.9; // debug aim ~52° downward so shots reach the ground
+      } else {
+        this.debugFireUntil = 0;
       }
 
       // Send input to server at controlled rate
@@ -748,7 +832,7 @@ export class Game {
     } else if (shot.weaponType === 'roller') {
       this.soundManager.playRollerFlick();
     } else if (shot.weaponType === 'slosher') {
-      this.soundManager.playSlosher();
+      this.soundManager.playBucket();
     } else {
       this.soundManager.playShoot();
     }

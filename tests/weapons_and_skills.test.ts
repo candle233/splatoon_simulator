@@ -17,7 +17,7 @@ describe('Weapon Arsenal and Skill Simulations', () => {
   });
 
   describe('Primary Weapons', () => {
-    it('Shooter (Splattershot) fires rapid stream, consumes ink, paints turf', () => {
+    it('Shooter (Ink Blaster) fires rapid stream, consumes ink, paints turf', () => {
       const shooter = new PlayerState('p1', Team.PINK, 0, { x: 0, y: 0, z: -5 });
       shooter.weaponType = 'shooter';
       shooter.yaw = Math.PI; // Face +Z
@@ -108,7 +108,7 @@ describe('Weapon Arsenal and Skill Simulations', () => {
       expect(beamEvent?.v).toBeGreaterThan(0.5); // Target is beyond z=0 -> v > 0.50
     });
 
-    it('Slosher: Heavy parabolic arc splash covers wide area', () => {
+    it('Ink Bucket: Heavy parabolic arc splash covers wide area', () => {
       const slosher = new PlayerState('p1', Team.PINK, 0, { x: 0, y: 0, z: -4 });
       slosher.weaponType = 'slosher';
       slosher.yaw = Math.PI;
@@ -124,7 +124,7 @@ describe('Weapon Arsenal and Skill Simulations', () => {
       expect(res.paintEvents[0].radius).toBeCloseTo(WEAPON_CONFIGS.slosher.paintRadius / 100, 3);
     });
 
-    it('Slosher: Parabolic lob clears 1.5m obstacle wall that blocks linear fire', () => {
+    it('Ink Bucket: Parabolic lob clears 1.5m obstacle wall that blocks linear fire', () => {
       // Create world with a 1.5m tall wall at z = 0
       const wallObstacle = {
         position: { x: 0, y: 0.75, z: 0 },
@@ -147,7 +147,7 @@ describe('Weapon Arsenal and Skill Simulations', () => {
       expect(linearHit.hit).toBe(true);
       expect(linearHit.point.z).toBeLessThanOrEqual(0); // Blocked in front of wall
 
-      // Slosher fires from z = -5: parabolic lob clears the 1.5m wall and lands at z > 0
+      // Ink Bucket fires from z = -5: parabolic lob clears the 1.5m wall and lands at z > 0
       const slosher = new PlayerState('p2', Team.PINK, 0, { x: 0, y: 0, z: -5 });
       slosher.weaponType = 'slosher';
       slosher.yaw = Math.PI;
@@ -161,7 +161,7 @@ describe('Weapon Arsenal and Skill Simulations', () => {
   });
 
   describe('Sub-Weapons & Entities', () => {
-    it('Splat Bomb throws, fuses, detonates for lethal 180 area damage', () => {
+    it('Ink Bomb throws, fuses, detonates for lethal 180 area damage', () => {
       const thrower = new PlayerState('p1', Team.PINK, 0, { x: 0, y: 0, z: -2 });
       thrower.weaponType = 'shooter'; // Has splat_bomb
       thrower.yaw = Math.PI; // Face +Z

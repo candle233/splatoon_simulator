@@ -6,6 +6,7 @@ import {
   ARENA_OBSTACLES,
   FIXED_DT,
   GameOverPayload,
+  INPUT_STALE_MS,
   LobbyPlayerState,
   LobbyStatePayload,
   MAX_PAINT_EVENTS_PER_MATCH,
@@ -56,6 +57,7 @@ export class GameServer {
   private readyPlayers: Set<string> = new Set();
   private hostPlayerId?: string;
   private playerLastActiveTime: Map<string, number> = new Map();
+  private playerLastInputAt: Map<string, number> = new Map();
 
   private rateLimiter = new RateLimiter(60, 40);
   private isRunning = false;
@@ -163,6 +165,7 @@ export class GameServer {
       if (!input) return;
 
       this.latestInputs.set(playerId, input);
+      this.playerLastInputAt.set(playerId, Date.now());
 
       if (input.fire || input.moveX !== 0 || input.moveZ !== 0 || input.jump || input.squid) {
         this.playerLastActiveTime.set(playerId, Date.now());
@@ -262,6 +265,7 @@ export class GameServer {
   private handlePlayerDisconnect(playerId: string): void {
     this.players.delete(playerId);
     this.latestInputs.delete(playerId);
+    this.playerLastInputAt.delete(playerId);
     this.readyPlayers.delete(playerId);
     this.playerLastActiveTime.delete(playerId);
     this.rateLimiter.remove(`input:${playerId}`);
@@ -285,6 +289,7 @@ export class GameServer {
     this.tickPaintEvents = [];
     this.tickShotEvents = [];
     this.latestInputs.clear();
+    this.playerLastInputAt.clear();
     this.readyPlayers.clear();
     this.weaponSim.reset();
 
@@ -383,8 +388,24 @@ export class GameServer {
         continue;
       }
 
-      // Retrieve latest client input
-      const input = this.latestInputs.get(player.id);
+      // Retrieve latest client input. If the client stopped sending (background tab,
+      // lag spike, disconnect), neutralize held keys so stale input cannot keep the
+      // player running / firing indefinitely.
+      const receivedInput = this.latestInputs.get(player.id);
+      let input = receivedInput;
+      if (receivedInput) {
+        const lastInputAt = this.playerLastInputAt.get(player.id) ?? 0;
+        if (now - lastInputAt > INPUT_STALE_MS) {
+          input = {
+            ...receivedInput,
+            moveX: 0,
+            moveZ: 0,
+            jump: false,
+            fire: false,
+            squid: false
+          };
+        }
+      }
       if (input) {
         // Simulate movement and ground DoT
         const moveRes = this.movementSim.simulatePlayer(player, input, dt, now);

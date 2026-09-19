@@ -92,7 +92,7 @@ splatoon/
 ├── docs/                      # Architectural Audits & Reports
 │   └── audits_61_to_72.md     # In-depth audits for Balance, Bandwidth, Paint, Security, QA
 │
-└── tests/                     # Automated Vitest test suite (15 suites, 80 tests)
+└── tests/                     # Automated Vitest test suite (16 suites, 88 tests)
     ├── formStateMachine.test.ts # Subagent 11: Pure form transitions
     ├── simulationMovement.test.ts # Subagents 08/09: Normalized WASD & 30/60fps invariance
     ├── inkAndHealth.test.ts   # Subagents 18/19: Depletion, regen delay, 4-shot kill, DoT
@@ -104,7 +104,7 @@ splatoon/
     ├── raycast.test.ts        # Ray-plane, Ray-AABB, nearest hit occlusion
     ├── matchState.test.ts     # State machine transitions and timer accuracy
     ├── combat.test.ts         # 4-shot kill, invulnerability, enemy ink DoT, health regen
-    ├── weapons_and_skills.test.ts # Shooter, Roller, Charger, Slosher, Bombs, Specials
+    ├── weapons_and_skills.test.ts # Shooter, Roller, Charger, Bucket, Bombs, Specials
     ├── reconciliation_and_aiming.test.ts # Two-stage TPS aim, platform grounding, squid jump
     ├── lobby.test.ts          # Lobby readiness, weapon select, host countdown
     └── integration.test.ts    # End-to-end multi-client Socket.io network integration
@@ -164,6 +164,7 @@ npm run build
 The server simulates all movements, raycasts, bullet impacts, damage calculations, and turf painting.
 - The client sends raw input intents (`moveX`, `moveZ`, `yaw`, `pitch`, `jump`, `squid`, `fire`, `seq`).
 - The server validates that inputs are finite numbers, clamps movement vectors and pitch bounds, and validates fire rates ($10\text{ shots/s}$ with a $15\text{ms}$ tick quantization tolerance).
+- Held keys from inputs older than `INPUT_STALE_MS` (500ms) are neutralized, so a frozen or disconnected client cannot keep running or firing on stale input.
 - Clients cannot invent damage, modify HP, teleport, or claim arbitrary paint coordinates.
 
 ### 2. Snapshot Interpolation
