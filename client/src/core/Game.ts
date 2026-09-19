@@ -88,6 +88,7 @@ export class Game {
   private gameOverEndsAt = 0;
   private lastLocalShotTime = 0;
   private lastDebugUpdateTime = 0;
+  private lastRemoteShotSoundAt = 0;
   /** Debug-fire window end timestamp (test hook only; the server still validates everything). */
   private debugFireUntil = 0;
 
@@ -845,6 +846,21 @@ export class Game {
     }
     this.weaponVisual.spawnTracer(shot.origin, shot.target, shot.team, shot.weaponType, shot.chargeLevel);
     this.particleSystem.spawnSplash(shot.target, shot.team, 6, 6.0);
+
+    // Distant firefights stay visible but quiet: only play weapon sounds for
+    // nearby shots, at most one every 130ms, so 8-player chaos doesn't become
+    // a wall of weapon SFX.
+    const lp = this.localPlayer;
+    if (lp) {
+      const dx = shot.origin.x - lp.position.x;
+      const dy = shot.origin.y - lp.position.y;
+      const dz = shot.origin.z - lp.position.z;
+      if (dx * dx + dy * dy + dz * dz > 30 * 30) return;
+      const now = performance.now();
+      if (now - this.lastRemoteShotSoundAt < 130) return;
+      this.lastRemoteShotSoundAt = now;
+    }
+
     if (shot.weaponType === 'charger') {
       this.soundManager.playChargerShot(shot.chargeLevel || 1.0);
     } else if (shot.weaponType === 'roller') {
