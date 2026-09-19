@@ -270,6 +270,7 @@ export class GameServer {
       const requestedTeam = data && data.team === Team.PINK ? Team.PINK : data && data.team === Team.CYAN ? Team.CYAN : undefined;
       const bot = this.addBot(requestedTeam);
       if (bot) {
+        console.log(`[BotMgmt] add by ${playerId} -> ${bot.id} (${bot.name}); total=${this.players.size}`);
         this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_JOINED, bot.toSnapshot());
         this.broadcastLobbyState();
       }
@@ -281,6 +282,7 @@ export class GameServer {
 
       const removed = this.removeBot(data?.botId);
       if (removed) {
+        console.log(`[BotMgmt] remove by ${playerId} -> ${removed.id}`);
         this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, removed.id);
         this.broadcastLobbyState();
       }
@@ -431,6 +433,7 @@ export class GameServer {
   }
 
   private handlePlayerDisconnect(playerId: string): void {
+    console.log(`[BotMgmt] disconnect ${playerId}; playersBefore=${this.players.size}`);
     this.players.delete(playerId);
     this.latestInputs.delete(playerId);
     this.playerLastInputAt.delete(playerId);
@@ -576,6 +579,26 @@ export class GameServer {
     }
 
     const allPlayersList = Array.from(this.players.values());
+
+    // Lobby host handover: an idle host page (stale tab, reload loop) must not
+    // squat the host slot forever — pass it to an active human in WAITING.
+    if (this.match.phase === MatchPhase.WAITING && this.hostPlayerId) {
+      const host = this.players.get(this.hostPlayerId);
+      if (host && !host.isBot) {
+        const hostLastActive = this.playerLastActiveTime.get(host.id) || 0;
+        if (now - hostLastActive > 120000) {
+          const nextHuman = allPlayersList.find((p) => {
+            if (p.isBot || p.id === host.id) return false;
+            return now - (this.playerLastActiveTime.get(p.id) || 0) <= 120000;
+          });
+          if (nextHuman) {
+            console.log(`[BotMgmt] host ${host.id} idle -> transfer to ${nextHuman.id}`);
+            this.hostPlayerId = nextHuman.id;
+            this.broadcastLobbyState();
+          }
+        }
+      }
+    }
 
     // 2. Respawn timers (humans + bots)
     for (const player of allPlayersList) {
