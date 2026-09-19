@@ -1894,3 +1894,91 @@ kbd {
 
 
 
+
+/* ============================================================
+   Live Scoreboard (hold TAB)
+   ============================================================ */
+#scoreboard {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 600;
+  min-width: 420px;
+  max-width: 560px;
+  padding: 18px 22px 14px;
+  background: rgba(10, 12, 22, 0.92);
+  border: 1px solid rgba(0, 255, 255, 0.25);
+  border-radius: 14px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.6), 0 0 18px rgba(255, 0, 127, 0.15);
+  backdrop-filter: blur(6px);
+}
+
+#scoreboard.hidden {
+  display: none;
+}
+
+#scoreboard .sb-title {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-align: center;
+  background: linear-gradient(90deg, #ff007f, #00ffff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 10px;
+}
+
+#scoreboard .sb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: #e8ecf4;
+}
+
+#scoreboard .sb-table th {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #8a93a8;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#scoreboard .sb-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#scoreboard .sb-table tr:last-child td {
+  border-bottom: none;
+}
+
+#scoreboard .sb-row.pink .sb-team {
+  color: #ff007f;
+  font-weight: 800;
+}
+
+#scoreboard .sb-row.cyan .sb-team {
+  color: #00ffff;
+  font-weight: 800;
+}
+
+#scoreboard .sb-name {
+  font-weight: 700;
+}
+
+#scoreboard .sb-table th:nth-child(n + 3),
+#scoreboard .sb-table td:nth-child(n + 3) {
+  text-align: center;
+  width: 48px;
+}
+
+#scoreboard .sb-hint {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #6b7488;
+}

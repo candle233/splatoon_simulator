@@ -32,6 +32,7 @@ import { NetworkClient } from '../network/NetworkClient.js';
 import { SnapshotBuffer } from '../network/SnapshotBuffer.js';
 import { GameOverScreen } from '../ui/GameOverScreen.js';
 import { HUD } from '../ui/HUD.js';
+import { Scoreboard } from '../ui/Scoreboard.js';
 import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
 import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
@@ -59,6 +60,7 @@ export class Game {
   private botController: BotController;
   private botRemotePlayers = new Map<string, RemotePlayer>();
   private gameOverScreen = new GameOverScreen();
+  private scoreboard = new Scoreboard();
   private lobbyScreen: LobbyScreen;
   private inputManager: InputManager;
   private cameraController: CameraController;
@@ -157,7 +159,10 @@ export class Game {
     this.setupPointerLockPrompt();
 
     // Connect to Server
-    const serverUrl = window.location.port === '5173' ? `${window.location.protocol}//${window.location.hostname}:3000` : window.location.origin;
+    // Always connect to the page origin: in dev the Vite proxy forwards
+    // /socket.io to the game server; in production the server serves the
+    // client from the same origin. Works on any dev port.
+    const serverUrl = window.location.origin;
     this.hud.showSyncBanner('Connecting to Ink Arena server...');
 
     this.networkClient = new NetworkClient(serverUrl, {
@@ -204,6 +209,18 @@ export class Game {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyP' && !this.inputManager.isLocked() && !this.lobbyScreen.isVisible()) {
         enterGame();
+      }
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        if (!e.repeat) {
+          this.scoreboard.setVisible(true);
+        }
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        this.scoreboard.setVisible(false);
       }
     });
   }
@@ -784,6 +801,7 @@ export class Game {
 
   private handleSnapshot(payload: SnapshotPayload): void {
     this.snapshotBuffer.addSnapshot(payload.serverTime, payload.players);
+    this.scoreboard.update(payload.players);
 
     // Reconcile Local Player with acknowledged sequence number
     if (this.localPlayer) {
@@ -1009,11 +1027,27 @@ export class Game {
   }
 
   private handleDisconnect(): void {
-    this.hud.showSyncBanner('Connection lost. Reconnecting...');
+    if (this.localPlayer) {
+      // Server-initiated disconnects (e.g. AFK kick) do not auto-retry in
+      // socket.io; a full reload re-joins cleanly with fresh paint history.
+      this.hud.showSyncBanner('Connection lost. Refreshing to rejoin in 3s…');
+      this.scheduleReconnectReload();
+    } else {
+      this.hud.showSyncBanner('Connection lost. Reconnecting...');
+    }
   }
 
   private handleConnectError(err: Error): void {
-    this.hud.showSyncBanner(`Connect error: ${err.message}`);
+    this.hud.showSyncBanner(`Connect error: ${err.message} — retrying…`);
+  }
+
+  private reconnectReloadTimer?: number;
+
+  private scheduleReconnectReload(): void {
+    if (this.reconnectReloadTimer !== undefined) return;
+    this.reconnectReloadTimer = window.setTimeout(() => {
+      window.location.reload();
+    }, 3000);
   }
 
   private spawnPracticeBot(): void {

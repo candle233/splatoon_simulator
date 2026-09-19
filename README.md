@@ -134,10 +134,13 @@ npm install
 ```bash
 npm run dev
 ```
-- **Client**: `http://localhost:5173`
+- **Client**: `http://localhost:5273`
 - **Server**: `http://localhost:3000`
 
-Open `http://localhost:5173` in two or more browser windows or tabs to play multiplayer.
+Open `http://localhost:5273` in two or more browser windows or tabs to play multiplayer.
+The client always connects to its own origin (Vite proxies `/socket.io` to the game
+server in dev), so any client port works — 5173 is avoided by default because it
+falls inside Windows WinNAT reserved port ranges on many machines.
 
 ---
 
