@@ -17,10 +17,11 @@ import {
   WEAPON_CONFIGS,
   WeaponType,
   WelcomePayload,
+  getMapDef,
   getSpawnPosition,
-  uvToWorld,
   worldToUV
 } from '@ink/shared';
+import type { GameMode, MapDef, MapId } from '@ink/shared';
 
 import { VisualWeapon } from '../combat/Weapon.js';
 import { ParticleSystem } from '../combat/ParticleSystem.js';
@@ -36,6 +37,7 @@ import { Scoreboard } from '../ui/Scoreboard.js';
 import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
 import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
+import { TitleScreen } from '../ui/TitleScreen.js';
 import { BotController, BotState } from '../bot/BotController.js';
 import { Arena } from '../world/Arena.js';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
@@ -44,6 +46,16 @@ import { Clock } from './Clock.js';
 import { InputManager } from './InputManager.js';
 import { GameRenderer } from './Renderer.js';
 import { SoundManager } from './SoundManager.js';
+import { t } from '../i18n.js';
+
+/** Small deterministic hash so cosmetics stay stable per player id. */
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
 
 export class Game {
   private renderer: GameRenderer;
@@ -62,6 +74,7 @@ export class Game {
   private gameOverScreen = new GameOverScreen();
   private scoreboard = new Scoreboard();
   private lobbyScreen: LobbyScreen;
+  private titleScreen: TitleScreen;
   private inputManager: InputManager;
   private cameraController: CameraController;
   private soundManager = new SoundManager();
@@ -76,6 +89,8 @@ export class Game {
 
   private inputSeq = 0;
   private matchPhase: MatchPhase = MatchPhase.WAITING;
+  private matchMode: GameMode | undefined;
+  private activeMapDef: MapDef = getMapDef();
   private matchStartAt = 0;
   private matchEndAt = 0;
   private pinkScore = 0;
@@ -99,10 +114,11 @@ export class Game {
     }
 
     this.renderer = new GameRenderer(canvas);
-    this.arena = new Arena(this.paintEngine, this.collisionWorld.getObstacles());
+    this.arena = new Arena(this.paintEngine, this.activeMapDef);
     this.renderer.scene.add(this.arena.group);
     this.renderer.scene.add(this.weaponVisual.group);
     this.renderer.scene.add(this.particleSystem.group);
+    this.renderer.applyTheme(this.activeMapDef.theme);
 
     this.minimap = new Minimap(this.paintEngine);
     this.botController = new BotController(this.paintEngine);
@@ -128,6 +144,7 @@ export class Game {
       onBgmVolumeChange: (vol) => {
         this.soundManager.setBgmVolume(vol);
       },
+      onQualityChange: (q) => this.applyQuality(q),
       onSpawnBot: () => {
         this.spawnPracticeBot();
       },
@@ -142,19 +159,28 @@ export class Game {
     this.renderer.camera.updateProjectionMatrix();
     this.soundManager.setSfxVolume(this.settingsModal.config.sfxVolume);
     this.soundManager.setBgmVolume(this.settingsModal.config.bgmVolume);
+    this.applyQuality(this.settingsModal.config.quality);
+
+    this.titleScreen = new TitleScreen({
+      onPlay: () => {
+        this.titleScreen.hide();
+        this.lobbyScreen.show();
+      },
+      onOpenSettings: () => this.settingsModal.show()
+    });
 
     this.lobbyScreen = new LobbyScreen({
       onLobbyUpdate: (data) => this.networkClient.sendLobbyUpdate(data),
       onLobbyStart: () => this.networkClient.sendLobbyStart(),
       onWeaponChanged: (weapon) => {
-        if (this.localPlayer) {
-          this.localPlayer.weaponType = weapon;
-          this.localPlayer.view.setWeaponType(weapon);
-        }
+        this.setLocalWeapon(weapon);
       },
       onRequestEnterArena: () => {
         this.inputManager.requestPointerLock();
-      }
+      },
+      onMatchConfig: (config) => this.networkClient.sendMatchConfig(config),
+      onAddBot: () => this.networkClient.sendAddBot(),
+      onRemoveBot: () => this.networkClient.sendRemoveBot()
     });
 
     this.setupPointerLockPrompt();
@@ -164,7 +190,7 @@ export class Game {
     // /socket.io to the game server; in production the server serves the
     // client from the same origin. Works on any dev port.
     const serverUrl = window.location.origin;
-    this.hud.showSyncBanner('Connecting to Ink Arena server...');
+    this.hud.showSyncBanner(t('hud.connecting'));
 
     this.networkClient = new NetworkClient(serverUrl, {
       onWelcome: (payload) => this.handleWelcome(payload),
@@ -198,7 +224,7 @@ export class Game {
     const startBtn = document.getElementById('start-button');
 
     const enterGame = () => {
-      if (!this.lobbyScreen.isVisible()) {
+      if (!this.lobbyScreen.isVisible() && !this.titleScreen.isVisible()) {
         this.inputManager.requestPointerLock();
         prompt?.classList.add('hidden');
       }
@@ -208,13 +234,30 @@ export class Game {
     prompt?.addEventListener('click', enterGame);
 
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyP' && !this.inputManager.isLocked() && !this.lobbyScreen.isVisible()) {
+      if (e.code === 'KeyP' && !this.inputManager.isLocked() && !this.lobbyScreen.isVisible() && !this.titleScreen.isVisible()) {
         enterGame();
       }
       if (e.code === 'Tab') {
         e.preventDefault();
         if (!e.repeat) {
           this.scoreboard.setVisible(true);
+        }
+      }
+      // In-match quick weapon switching on 1-4
+      const weaponKeys: Record<string, WeaponType> = {
+        Digit1: 'shooter',
+        Digit2: 'roller',
+        Digit3: 'charger',
+        Digit4: 'slosher'
+      };
+      const weapon = weaponKeys[e.code];
+      if (weapon && !e.repeat && this.localPlayer) {
+        const inGame = !this.lobbyScreen.isVisible() && !this.titleScreen.isVisible();
+        if (inGame && this.inputManager.isLocked()) {
+          this.setLocalWeapon(weapon);
+          this.lobbyScreen.selectedWeapon = weapon;
+          this.networkClient.sendLobbyUpdate({ weaponType: weapon });
+          this.hud.addKillFeedEntry('⚙', Team.NEUTRAL, `${weapon.toUpperCase()}`, this.localPlayer.team, '🔁');
         }
       }
     });
@@ -224,6 +267,17 @@ export class Game {
         this.scoreboard.setVisible(false);
       }
     });
+  }
+
+  private setLocalWeapon(weapon: WeaponType): void {
+    if (!this.localPlayer) return;
+    this.localPlayer.weaponType = weapon;
+    this.localPlayer.view.setWeaponType(weapon);
+  }
+
+  private applyQuality(q: 'low' | 'medium' | 'high' | 'auto'): void {
+    this.renderer.setQualityLevel(q);
+    this.particleSystem.setDensityScale(q === 'low' ? 0.5 : q === 'medium' ? 0.75 : 1);
   }
 
   start(): void {
@@ -319,6 +373,9 @@ export class Game {
     const dt = this.clock.getDelta();
     const now = performance.now();
     const serverTime = this.networkClient.getServerTime();
+
+    // Dynamic resolution (quality = auto)
+    this.renderer.adaptiveTick(this.clock.getFPS(), now);
 
     // 1. Local Player Processing
     if (this.localPlayer) {
@@ -628,7 +685,7 @@ export class Game {
       remainingMatchSec = Math.max(0, (this.matchStartAt - serverTime) / 1000);
     }
 
-    this.hud.updateMatch(this.matchPhase, remainingMatchSec, this.pinkScore, this.cyanScore);
+    this.hud.updateMatch(this.matchPhase, remainingMatchSec, this.pinkScore, this.cyanScore, this.matchMode);
 
     if (this.matchPhase === MatchPhase.GAME_OVER && this.gameOverEndsAt > 0) {
       const nextMatchSec = Math.max(0, (this.gameOverEndsAt - Date.now()) / 1000);
@@ -741,9 +798,12 @@ export class Game {
   };
 
   private handleWelcome(payload: WelcomePayload): void {
-    // 1. Set obstacles
+    // 1. Set obstacles + map
     if (payload.obstacles && payload.obstacles.length > 0) {
       this.collisionWorld.setObstacles(payload.obstacles);
+    }
+    if (payload.mapId) {
+      this.switchLocalMap(payload.mapId);
     }
 
     // 2. Replay all Paint History (Late Join)
@@ -763,15 +823,16 @@ export class Game {
       }
     }
 
-    const spawn = getSpawnPosition(payload.team, 0);
+    const spawn = getSpawnPosition(payload.team, 0, this.activeMapDef.spawnX);
     this.localPlayer = new LocalPlayer(
       payload.playerId,
       payload.team,
       spawn,
       this.collisionWorld
     );
-    this.localPlayer.weaponType = this.lobbyScreen.selectedWeapon;
-    this.localPlayer.view.setWeaponType(this.lobbyScreen.selectedWeapon);
+    // Restore the persisted weapon choice (fixes weapon reset on refresh)
+    this.setLocalWeapon(this.lobbyScreen.selectedWeapon);
+    this.localPlayer.view.applyCosmeticVariant(hashId(payload.playerId));
     this.renderer.scene.add(this.localPlayer.view.group);
 
     // 4. Instantiate existing Remote Players
@@ -788,9 +849,20 @@ export class Game {
       this.hud.hideSyncBanner();
     } else {
       this.hud.showSyncBanner(
-        `Synchronizing arena... (${this.totalPaintEventsReceived}/${this.expectedTotalPaintEvents})`
+        t('hud.syncing', { n: this.totalPaintEventsReceived, m: this.expectedTotalPaintEvents })
       );
     }
+  }
+
+  /** Rebuilds arena visuals + collision + minimap for a (possibly new) map. */
+  private switchLocalMap(mapId: MapId): void {
+    const mapDef = getMapDef(mapId);
+    if (mapDef.id === this.activeMapDef.id) return;
+    this.activeMapDef = mapDef;
+    this.arena.rebuild(mapDef);
+    this.collisionWorld.setObstacles(mapDef.obstacles, mapDef.size);
+    this.minimap.setSize(mapDef.size);
+    this.renderer.applyTheme(mapDef.theme);
   }
 
   private handlePaintHistoryChunk(events: PaintEvent[]): void {
@@ -801,7 +873,7 @@ export class Game {
       this.hud.hideSyncBanner();
     } else {
       this.hud.showSyncBanner(
-        `Synchronizing arena... (${this.totalPaintEventsReceived}/${this.expectedTotalPaintEvents})`
+        t('hud.syncing', { n: this.totalPaintEventsReceived, m: this.expectedTotalPaintEvents })
       );
     }
   }
@@ -880,6 +952,12 @@ export class Game {
 
   private handleLobbyState(state: LobbyStatePayload): void {
     this.lobbyScreen.updateLobbyState(state);
+    if (state.mapId) {
+      this.switchLocalMap(state.mapId);
+    }
+    if (state.mode) {
+      this.matchMode = state.mode;
+    }
     for (const p of state.players) {
       this.playerMeta.set(p.id, { name: p.name, team: p.team });
       const remote = this.remotePlayers.get(p.id);
@@ -920,6 +998,7 @@ export class Game {
       remote.setName(snap.name);
       this.playerMeta.set(snap.id, { name: snap.name, team: snap.team });
     }
+    remote.view.applyCosmeticVariant(hashId(snap.id));
     this.remotePlayers.set(snap.id, remote);
     this.renderer.scene.add(remote.view.group);
   }
@@ -990,6 +1069,7 @@ export class Game {
   private handleMatchState(state: MatchStateSnapshot): void {
     const prevPhase = this.matchPhase;
     this.matchPhase = state.phase;
+    this.matchMode = state.mode;
     this.matchStartAt = state.matchStartAt;
     this.matchEndAt = state.matchEndAt;
     this.pinkScore = state.pinkScore;
@@ -1006,11 +1086,14 @@ export class Game {
       }
     }
 
-    // Auto-hide lobby and lock mouse when entering match
+    // Auto-hide lobby/title and lock mouse when entering match
     if (state.phase === MatchPhase.COUNTDOWN || state.phase === MatchPhase.PLAYING) {
       if (this.lobbyScreen.isVisible()) {
         this.lobbyScreen.hide();
         this.inputManager.requestPointerLock();
+      }
+      if (this.titleScreen.isVisible()) {
+        this.titleScreen.hide();
       }
     }
 
@@ -1018,7 +1101,6 @@ export class Game {
     if (state.phase === MatchPhase.WAITING && !this.lobbyScreen.isVisible() && prevPhase === MatchPhase.GAME_OVER) {
       this.lobbyScreen.show();
     }
-
     // If restarted
     if (prevPhase === MatchPhase.GAME_OVER && state.phase === MatchPhase.COUNTDOWN) {
       this.gameOverScreen.hide();
@@ -1052,15 +1134,15 @@ export class Game {
     if (this.localPlayer) {
       // Server-initiated disconnects (e.g. AFK kick) do not auto-retry in
       // socket.io; a full reload re-joins cleanly with fresh paint history.
-      this.hud.showSyncBanner('Connection lost. Refreshing to rejoin in 3s…');
+      this.hud.showSyncBanner(t('hud.lost'));
       this.scheduleReconnectReload();
     } else {
-      this.hud.showSyncBanner('Connection lost. Reconnecting...');
+      this.hud.showSyncBanner(t('hud.lost'));
     }
   }
 
   private handleConnectError(err: Error): void {
-    this.hud.showSyncBanner(`Connect error: ${err.message} — retrying…`);
+    this.hud.showSyncBanner(t('hud.errPrefix', { msg: err.message }));
   }
 
   private reconnectReloadTimer?: number;
@@ -1081,6 +1163,7 @@ export class Game {
     const bot = this.botController.spawnBot(botTeam, botWeapon);
     const remoteBot = new RemotePlayer(bot.id, bot.team, bot.weaponType);
     remoteBot.setName(`🤖 ${bot.name}`);
+    remoteBot.view.applyCosmeticVariant(hashId(bot.id));
     this.renderer.scene.add(remoteBot.view.group);
     this.botRemotePlayers.set(bot.id, remoteBot);
 

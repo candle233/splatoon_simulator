@@ -55,6 +55,7 @@ export class PlayerView {
   private nameplateSprite?: THREE.Sprite;
   private nameplateTexture?: THREE.CanvasTexture;
   private playerName = '';
+  private cosmeticsApplied = false;
 
   constructor(team: Team) {
     this.teamColorHex = team === Team.PINK ? 0xff007f : 0x00ffff;
@@ -1055,6 +1056,67 @@ export class PlayerView {
     if (this.chargerLaserMesh) {
       this.chargerLaserMesh.visible =
         this.currentWeapon === 'charger' && this.currentMode === PlayerMode.HUMANOID;
+    }
+  }
+
+  /**
+   * Adds a deterministic cosmetic headgear variant (cap / goggles / dorsal
+   * fin) so characters on the field do not all look identical. Call once
+   * after construction; the variant is derived from the player id.
+   */
+  applyCosmeticVariant(variant: number): void {
+    if (this.cosmeticsApplied) return;
+    this.cosmeticsApplied = true;
+
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xffc63a,
+      roughness: 0.35,
+      metalness: 0.55,
+      emissive: 0x332200
+    });
+    this.materials.push(goldMat);
+
+    const style = ((variant % 3) + 3) % 3;
+    if (style === 0) {
+      // Baseball cap: dome + brim facing forward
+      const domeGeo = new THREE.SphereGeometry(0.315, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+      this.geometries.push(domeGeo);
+      const dome = new THREE.Mesh(domeGeo, goldMat);
+      dome.position.set(0, 0.1, 0);
+      dome.castShadow = true;
+      this.headGroup.add(dome);
+
+      const brimGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.03, 16, 1, false, 0, Math.PI);
+      this.geometries.push(brimGeo);
+      const brim = new THREE.Mesh(brimGeo, goldMat);
+      brim.rotation.x = Math.PI / 2;
+      brim.rotation.z = Math.PI;
+      brim.position.set(0, 0.11, -0.18);
+      brim.scale.z = 0.55;
+      this.headGroup.add(brim);
+    } else if (style === 1) {
+      // Tactical goggles: extra lens + strap over the default visor
+      const goggleGeo = new THREE.BoxGeometry(0.4, 0.1, 0.06);
+      this.geometries.push(goggleGeo);
+      const goggle = new THREE.Mesh(goggleGeo, goldMat);
+      goggle.position.set(0, 0.16, -0.27);
+      this.headGroup.add(goggle);
+
+      const strapGeo = new THREE.TorusGeometry(0.31, 0.03, 6, 18, Math.PI);
+      this.geometries.push(strapGeo);
+      const strap = new THREE.Mesh(strapGeo, goldMat);
+      strap.rotation.x = -Math.PI / 2;
+      strap.position.set(0, 0.05, 0);
+      this.headGroup.add(strap);
+    } else {
+      // Squid dorsal fin on the back of the head
+      const finGeo = new THREE.ConeGeometry(0.09, 0.34, 4);
+      this.geometries.push(finGeo);
+      const fin = new THREE.Mesh(finGeo, goldMat);
+      fin.position.set(0, 0.3, 0.16);
+      fin.rotation.x = -0.5;
+      fin.castShadow = true;
+      this.headGroup.add(fin);
     }
   }
 

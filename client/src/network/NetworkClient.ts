@@ -171,6 +171,24 @@ export class NetworkClient {
     }
   }
 
+  sendMatchConfig(config: { mode?: string; mapId?: string }): void {
+    if (this.socket.connected) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_MATCH_CONFIG, config);
+    }
+  }
+
+  sendAddBot(team?: number): void {
+    if (this.socket.connected) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_LOBBY_ADD_BOT, team ? { team } : {});
+    }
+  }
+
+  sendRemoveBot(): void {
+    if (this.socket.connected) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_LOBBY_REMOVE_BOT, {});
+    }
+  }
+
   queueInput(input: PlayerInput): void {
     // Sub/special are single-frame edge flags from the input manager; latch them
     // here so a press always survives the 33ms send batching (the latest-frame

@@ -1,11 +1,14 @@
 import {
   MatchPhase,
+  MODE_CONFIGS,
   PlayerMode,
   SUB_WEAPON_CONFIGS,
   Team,
   WEAPON_CONFIGS,
   WeaponType
 } from '@ink/shared';
+import type { GameMode } from '@ink/shared';
+import { locName, t } from '../i18n.js';
 
 export class HUD {
   private timerEl: HTMLElement | null;
@@ -108,7 +111,7 @@ export class HUD {
     this.dbgPaintCountEl = document.getElementById('dbg-paint-count');
   }
 
-  updateMatch(phase: MatchPhase, remainingSec: number, pinkPct: number, cyanPct: number): void {
+  updateMatch(phase: MatchPhase, remainingSec: number, pinkScore: number, cyanScore: number, mode?: GameMode): void {
     if (this.timerEl) {
       const mins = Math.floor(Math.max(0, remainingSec) / 60);
       const secs = Math.floor(Math.max(0, remainingSec) % 60);
@@ -118,16 +121,16 @@ export class HUD {
     if (this.phaseEl) {
       switch (phase) {
         case MatchPhase.WAITING:
-          this.phaseEl.textContent = 'WAITING FOR PLAYERS';
+          this.phaseEl.textContent = t('hud.waiting');
           break;
         case MatchPhase.COUNTDOWN:
-          this.phaseEl.textContent = 'READY...';
+          this.phaseEl.textContent = t('hud.countdown');
           break;
         case MatchPhase.PLAYING:
-          this.phaseEl.textContent = 'TURF WAR';
+          this.phaseEl.textContent = mode ? locName(MODE_CONFIGS[mode]) : 'TURF WAR';
           break;
         case MatchPhase.GAME_OVER:
-          this.phaseEl.textContent = 'TIME UP!';
+          this.phaseEl.textContent = t('hud.timeUp');
           break;
       }
     }
@@ -142,12 +145,17 @@ export class HUD {
       this.countdownSplashEl?.classList.add('hidden');
     }
 
-    // Turf coverage bars
-    if (this.pinkScoreEl) this.pinkScoreEl.textContent = `${pinkPct.toFixed(1)}%`;
-    if (this.cyanScoreEl) this.cyanScoreEl.textContent = `${cyanPct.toFixed(1)}%`;
+    // Score display: turf shows coverage %, zones/tdm show integer points/kills
+    const isTurf = !mode || mode === 'turf_war';
+    if (this.pinkScoreEl) {
+      this.pinkScoreEl.textContent = isTurf ? `${pinkScore.toFixed(1)}%` : `${Math.round(pinkScore)}`;
+    }
+    if (this.cyanScoreEl) {
+      this.cyanScoreEl.textContent = isTurf ? `${cyanScore.toFixed(1)}%` : `${Math.round(cyanScore)}`;
+    }
 
-    if (this.pinkBarEl) this.pinkBarEl.style.width = `${pinkPct}%`;
-    if (this.cyanBarEl) this.cyanBarEl.style.width = `${cyanPct}%`;
+    if (this.pinkBarEl) this.pinkBarEl.style.width = `${Math.min(100, pinkScore)}%`;
+    if (this.cyanBarEl) this.cyanBarEl.style.width = `${Math.min(100, cyanScore)}%`;
   }
 
   updatePlayerStatus(hp: number, ink: number, mode: PlayerMode, team: Team): void {
@@ -170,10 +178,10 @@ export class HUD {
 
     if (this.modeTagEl) {
       if (mode === PlayerMode.SUBMERGED) {
-        this.modeTagEl.textContent = 'SWIMMING';
+        this.modeTagEl.textContent = t('hud.swimming');
         this.modeTagEl.className = 'mode-tag submerged';
       } else {
-        this.modeTagEl.textContent = 'HUMANOID';
+        this.modeTagEl.textContent = t('hud.humanoid');
         this.modeTagEl.className = 'mode-tag humanoid';
       }
     }
@@ -249,10 +257,10 @@ export class HUD {
     }
 
     if (this.hudWeaponNameEl) {
-      this.hudWeaponNameEl.textContent = config.name;
+      this.hudWeaponNameEl.textContent = locName(config);
     }
     if (this.hudSubNameEl) {
-      this.hudSubNameEl.textContent = subConfig.name;
+      this.hudSubNameEl.textContent = locName(subConfig);
     }
     if (this.hudSubCostEl) {
       this.hudSubCostEl.textContent = `(${subConfig.inkCost}%)`;
@@ -300,6 +308,10 @@ export class HUD {
     this.deathScreenEl?.classList.remove('hidden');
     if (this.respawnCountdownEl) {
       this.respawnCountdownEl.textContent = `${Math.max(0, Math.ceil(respawnCountdownSec))}`;
+    }
+    const msgEl = document.getElementById('respawn-msg');
+    if (msgEl) {
+      msgEl.textContent = t('hud.respawnIn', { s: Math.max(0, Math.ceil(respawnCountdownSec)) });
     }
   }
 

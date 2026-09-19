@@ -1,8 +1,13 @@
+import { applyI18n, t } from '../i18n.js';
+
+export type QualityLevel = 'low' | 'medium' | 'high' | 'auto';
+
 export interface SettingsConfig {
   mouseSensitivity: number; // 0.5 to 3.0, default 1.0
   fov: number; // 60 to 100, default 75
   sfxVolume: number; // 0 to 1, default 0.8
   bgmVolume: number; // 0 to 1, default 0.6
+  quality: QualityLevel; // default 'high'
 }
 
 export interface SettingsCallbacks {
@@ -10,14 +15,21 @@ export interface SettingsCallbacks {
   onFovChange: (val: number) => void;
   onSfxVolumeChange: (val: number) => void;
   onBgmVolumeChange: (val: number) => void;
+  onQualityChange?: (val: QualityLevel) => void;
   onSpawnBot?: () => void;
   onClearBots?: () => void;
 }
 
+const QUALITY_LABEL_KEY: Record<QualityLevel, string> = {
+  low: 'settings.qLow',
+  medium: 'settings.qMed',
+  high: 'settings.qHigh',
+  auto: 'settings.qAuto'
+};
+
 export class SettingsModal {
   private modalEl: HTMLElement;
   private openBtn: HTMLElement | null;
-  private closeBtn: HTMLElement | null;
 
   private sensSlider: HTMLInputElement;
   private sensValEl: HTMLElement;
@@ -27,6 +39,7 @@ export class SettingsModal {
   private sfxValEl: HTMLElement;
   private bgmSlider: HTMLInputElement;
   private bgmValEl: HTMLElement;
+  private qualityBtns: NodeListOf<HTMLElement>;
 
   private spawnBotBtn: HTMLButtonElement | null;
   private clearBotsBtn: HTMLButtonElement | null;
@@ -49,13 +62,13 @@ export class SettingsModal {
       el.innerHTML = `
         <div class="settings-card">
           <div class="settings-header">
-            <h2>GAME SETTINGS</h2>
+            <h2 data-i18n="settings.title">GAME SETTINGS</h2>
             <button id="btn-close-settings" class="btn-close">&times;</button>
           </div>
           <div class="settings-body">
             <div class="setting-group">
               <div class="setting-label-row">
-                <span>Mouse Sensitivity</span>
+                <span data-i18n="settings.sens">Mouse Sensitivity</span>
                 <span id="val-sens">${this.config.mouseSensitivity.toFixed(1)}x</span>
               </div>
               <input id="slider-sens" type="range" min="0.2" max="3.0" step="0.1" value="${this.config.mouseSensitivity}" />
@@ -63,7 +76,7 @@ export class SettingsModal {
 
             <div class="setting-group">
               <div class="setting-label-row">
-                <span>Field of View (FOV)</span>
+                <span data-i18n="settings.fov">Field of View (FOV)</span>
                 <span id="val-fov">${this.config.fov}°</span>
               </div>
               <input id="slider-fov" type="range" min="60" max="100" step="1" value="${this.config.fov}" />
@@ -71,7 +84,7 @@ export class SettingsModal {
 
             <div class="setting-group">
               <div class="setting-label-row">
-                <span>SFX Volume</span>
+                <span data-i18n="settings.sfx">SFX Volume</span>
                 <span id="val-sfx">${Math.round(this.config.sfxVolume * 100)}%</span>
               </div>
               <input id="slider-sfx" type="range" min="0" max="1" step="0.05" value="${this.config.sfxVolume}" />
@@ -79,30 +92,43 @@ export class SettingsModal {
 
             <div class="setting-group">
               <div class="setting-label-row">
-                <span>BGM Music Volume</span>
+                <span data-i18n="settings.bgm">BGM Volume</span>
                 <span id="val-bgm">${Math.round(this.config.bgmVolume * 100)}%</span>
               </div>
               <input id="slider-bgm" type="range" min="0" max="1" step="0.05" value="${this.config.bgmVolume}" />
+            </div>
+
+            <div class="setting-group">
+              <div class="setting-label-row">
+                <span data-i18n="settings.quality">Graphics Quality</span>
+              </div>
+              <div class="quality-btn-row" id="quality-btn-row">
+                <button class="quality-btn" data-quality="low">LOW</button>
+                <button class="quality-btn" data-quality="medium">MED</button>
+                <button class="quality-btn" data-quality="high">HIGH</button>
+                <button class="quality-btn" data-quality="auto">AUTO</button>
+              </div>
             </div>
 
             <hr class="settings-divider" />
 
             <div class="setting-group">
               <div class="setting-label-row">
-                <span>Offline Practice Bots</span>
+                <span data-i18n="settings.bots">Offline Practice Bots</span>
               </div>
               <div class="bot-btn-row">
-                <button id="btn-spawn-bot" class="btn-setting-action">🤖 Add Practice Bot</button>
-                <button id="btn-clear-bots" class="btn-setting-action danger">Clear Bots</button>
+                <button id="btn-spawn-bot" class="btn-setting-action" data-i18n="settings.addBot">🤖 Add Practice Bot</button>
+                <button id="btn-clear-bots" class="btn-setting-action danger" data-i18n="settings.clearBots">Clear Bots</button>
               </div>
             </div>
           </div>
           <div class="settings-footer">
-            <button id="btn-save-settings" class="btn-primary">DONE</button>
+            <button id="btn-save-settings" class="btn-primary" data-i18n="settings.done">DONE</button>
           </div>
         </div>
       `;
       document.getElementById('game-container')?.appendChild(el);
+      applyI18n(el);
     }
     this.modalEl = el;
 
@@ -118,9 +144,6 @@ export class SettingsModal {
     }
     this.openBtn = gear;
 
-    this.closeBtn = document.getElementById('btn-close-settings');
-    const saveBtn = document.getElementById('btn-save-settings');
-
     this.sensSlider = document.getElementById('slider-sens') as HTMLInputElement;
     this.sensValEl = document.getElementById('val-sens') as HTMLElement;
     this.fovSlider = document.getElementById('slider-fov') as HTMLInputElement;
@@ -129,12 +152,16 @@ export class SettingsModal {
     this.sfxValEl = document.getElementById('val-sfx') as HTMLElement;
     this.bgmSlider = document.getElementById('slider-bgm') as HTMLInputElement;
     this.bgmValEl = document.getElementById('val-bgm') as HTMLElement;
+    this.qualityBtns = document.querySelectorAll('.quality-btn');
 
     this.spawnBotBtn = document.getElementById('btn-spawn-bot') as HTMLButtonElement | null;
     this.clearBotsBtn = document.getElementById('btn-clear-bots') as HTMLButtonElement | null;
 
     this.setupListeners();
-    saveBtn?.addEventListener('click', () => this.hide());
+    document.getElementById('btn-save-settings')?.addEventListener('click', () => this.hide());
+    this.highlightQuality();
+
+    window.addEventListener('ink:langchange', () => this.refreshI18n());
   }
 
   private loadSettings(): SettingsConfig {
@@ -142,7 +169,8 @@ export class SettingsModal {
       mouseSensitivity: 1.0,
       fov: 75,
       sfxVolume: 0.8,
-      bgmVolume: 0.6
+      bgmVolume: 0.6,
+      quality: 'high'
     };
     try {
       const raw = localStorage.getItem('ink_arena_settings');
@@ -163,9 +191,15 @@ export class SettingsModal {
     }
   }
 
+  private highlightQuality(): void {
+    this.qualityBtns.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-quality') === this.config.quality);
+    });
+  }
+
   private setupListeners(): void {
     this.openBtn?.addEventListener('click', () => this.show());
-    this.closeBtn?.addEventListener('click', () => this.hide());
+    document.getElementById('btn-close-settings')?.addEventListener('click', () => this.hide());
 
     // Key 'KeyO' opens settings
     window.addEventListener('keydown', (e) => {
@@ -206,6 +240,17 @@ export class SettingsModal {
       this.saveSettings();
     });
 
+    this.qualityBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const q = btn.getAttribute('data-quality') as QualityLevel | null;
+        if (!q) return;
+        this.config.quality = q;
+        this.highlightQuality();
+        this.callbacks.onQualityChange?.(q);
+        this.saveSettings();
+      });
+    });
+
     this.spawnBotBtn?.addEventListener('click', () => {
       this.callbacks.onSpawnBot?.();
     });
@@ -213,6 +258,12 @@ export class SettingsModal {
     this.clearBotsBtn?.addEventListener('click', () => {
       this.callbacks.onClearBots?.();
     });
+  }
+
+  /** Refresh localized labels (called after a language switch). */
+  refreshI18n(): void {
+    applyI18n(this.modalEl);
+    this.highlightQuality();
   }
 
   show(): void {
@@ -235,3 +286,5 @@ export class SettingsModal {
     return !this.modalEl.classList.contains('hidden');
   }
 }
+
+export { QUALITY_LABEL_KEY };

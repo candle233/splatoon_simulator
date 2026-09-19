@@ -51,7 +51,7 @@ export class Scoreboard {
 
       const name = document.createElement('td');
       name.className = 'sb-name';
-      name.textContent = p.name || 'Inker';
+      name.textContent = `${p.isBot ? '🤖 ' : ''}${p.name || 'Inker'}`;
       tr.appendChild(name);
 
       const team = document.createElement('td');

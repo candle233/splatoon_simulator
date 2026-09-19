@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -38,7 +38,7 @@
 
           <div id="timer-container">
             <span id="match-timer">3:00</span>
-            <span id="match-phase-label">COUNTDOWN</span>
+            <span id="match-phase-label">READY</span>
           </div>
 
           <div id="team-squids-cyan" class="team-squids"></div>
@@ -54,14 +54,14 @@
           <div id="turf-bar-cyan" class="turf-bar-fill"></div>
         </div>
 
-        <!-- Kill Feed (Subagent 78) -->
+        <!-- Kill Feed -->
         <div id="kill-feed"></div>
 
         <!-- Bottom Left: Health & Status -->
         <div id="bottom-left">
           <div class="status-card">
             <div class="label-row">
-              <span class="stat-title">HP</span>
+              <span class="stat-title" data-i18n="hud.hp">HP</span>
               <span id="hp-value">100</span>
             </div>
             <div class="meter-bar">
@@ -89,6 +89,7 @@
                 </div>
               </div>
             </div>
+            <div id="weapon-switch-hint" class="weapon-switch-hint" data-i18n="hud.weaponSwitchHint">Press 1-4 to switch weapons</div>
           </div>
         </div>
 
@@ -97,25 +98,25 @@
           <!-- Special Gauge -->
           <div class="status-card special-card">
             <div class="label-row">
-              <span class="stat-title">SPECIAL METER</span>
+              <span class="stat-title" data-i18n="hud.specialMeter">SPECIAL METER</span>
               <span id="special-value">0%</span>
             </div>
             <div class="meter-bar special-meter">
               <div id="special-bar-fill"></div>
             </div>
-            <div id="special-ready-banner" class="hidden">[E] SPECIAL READY!</div>
+            <div id="special-ready-banner" class="hidden" data-i18n="hud.specialReady">[E] SPECIAL READY!</div>
           </div>
 
           <!-- Ink Tank -->
           <div class="status-card">
             <div class="label-row">
-              <span class="stat-title">INK TANK</span>
+              <span class="stat-title" data-i18n="hud.inkTank">INK TANK</span>
               <span id="ink-value">100%</span>
             </div>
             <div class="meter-bar ink-meter">
               <div id="ink-bar-fill"></div>
             </div>
-            <div id="ink-hint">HOLD SHIFT TO SWIM IN OWN INK</div>
+            <div id="ink-hint" data-i18n="hud.shiftHint">HOLD SHIFT TO SWIM IN OWN INK</div>
           </div>
         </div>
       </div>
@@ -123,24 +124,29 @@
       <!-- Death / Respawn Overlay -->
       <div id="death-screen" class="screen-overlay hidden">
         <div class="death-content">
-          <h2 class="splatted-title">SPLATTED!</h2>
-          <p class="respawn-msg">Respawning in <span id="respawn-countdown">4</span>s...</p>
+          <h2 class="splatted-title" data-i18n="hud.splatted">SPLATTED!</h2>
+          <p class="respawn-msg" id="respawn-msg">Respawning in 4s…</p>
         </div>
       </div>
 
       <!-- Live Scoreboard (hold TAB) -->
       <div id="scoreboard" class="hidden">
-        <div class="sb-title">SCOREBOARD</div>
+        <div class="sb-title" data-i18n="hud.sbTitle">SCOREBOARD</div>
         <table class="sb-table">
           <thead>
-            <tr><th>PLAYER</th><th>TEAM</th><th>K</th><th>D</th></tr>
+            <tr>
+              <th data-i18n="hud.sbPlayer">PLAYER</th>
+              <th data-i18n="hud.sbTeam">TEAM</th>
+              <th data-i18n="hud.sbK">K</th>
+              <th data-i18n="hud.sbD">D</th>
+            </tr>
           </thead>
           <tbody id="scoreboard-body"></tbody>
         </table>
-        <div class="sb-hint">Hold TAB to view</div>
+        <div class="sb-hint" data-i18n="hud.sbHint">Hold TAB to view</div>
       </div>
 
-      <!-- Match Countdown Splash (e.g. 3, 2, 1, GO!) -->
+      <!-- Match Countdown Splash -->
       <div id="countdown-splash" class="screen-overlay hidden">
         <div id="countdown-number">3</div>
       </div>
@@ -148,39 +154,66 @@
       <!-- Game Over Banner & Summary -->
       <div id="game-over-screen" class="screen-overlay hidden">
         <div class="game-over-card">
+          <div id="game-over-mode" class="game-over-mode hidden">TURF WAR</div>
           <h1 id="winner-banner">MATCH OVER</h1>
           <div class="final-scores">
             <div class="final-score-column pink">
-              <span class="score-team">TEAM PINK</span>
+              <span class="score-team">PINK</span>
               <span id="final-pink-pct" class="score-pct">0.0%</span>
+              <span id="final-pink-label" class="score-label">COVERAGE</span>
             </div>
             <div class="score-vs">VS</div>
             <div class="final-score-column cyan">
-              <span class="score-team">TEAM CYAN</span>
+              <span class="score-team">CYAN</span>
               <span id="final-cyan-pct" class="score-pct">0.0%</span>
+              <span id="final-cyan-label" class="score-label">COVERAGE</span>
             </div>
           </div>
-          <p id="next-match-timer">Next match in 8s...</p>
-          <button id="btn-return-lobby" class="btn-secondary">RETURN TO LOBBY</button>
+          <p id="next-match-timer">Next match in 8s…</p>
+          <button id="btn-return-lobby" class="btn-secondary" data-i18n="lobby.return">RETURN TO LOBBY</button>
         </div>
       </div>
 
       <!-- Connection / Sync Banner -->
       <div id="sync-banner" class="sync-overlay hidden">
         <div class="sync-spinner"></div>
-        <p id="sync-text">Synchronizing arena...</p>
+        <p id="sync-text">Synchronizing arena…</p>
       </div>
 
-      <!-- Multiplayer Lobby Screen -->
-      <div id="lobby-screen" class="screen-overlay">
+      <!-- ==================== TITLE / MAIN MENU ==================== -->
+      <div id="title-screen" class="screen-overlay title-screen">
+        <div class="title-blobs"></div>
+        <div class="title-content">
+          <div class="title-logo">
+            <span class="title-logo-ink pink">INK</span>
+            <span class="title-logo-ink cyan">ARENA</span>
+          </div>
+          <p class="title-tagline" data-i18n="title.tagline">3D Multiplayer Turf War</p>
+
+          <div class="title-menu">
+            <button id="btn-title-play" class="btn-title-play" data-i18n="title.play">ENTER LOBBY</button>
+            <div class="title-menu-row">
+              <button id="btn-title-codex" class="btn-title-secondary" data-i18n="title.codex">CODEX</button>
+              <button id="btn-title-settings" class="btn-title-secondary" data-i18n="title.settings">SETTINGS</button>
+            </div>
+          </div>
+
+          <div id="title-lang-switch" class="lang-switch"></div>
+          <p id="title-version" class="title-version">INK ARENA v1.1</p>
+        </div>
+      </div>
+
+      <!-- ==================== MULTIPLAYER LOBBY ==================== -->
+      <div id="lobby-screen" class="screen-overlay hidden">
         <div class="lobby-card">
           <header class="lobby-header">
             <div class="header-left">
-              <h1>INK ARENA</h1>
-              <span class="lobby-badge">TURF WAR BATTLE LOBBY</span>
+              <h1><span class="logo-pink">INK</span> <span class="logo-cyan">ARENA</span></h1>
+              <span class="lobby-badge" data-i18n="lobby.badge">TURF WAR BATTLE LOBBY</span>
             </div>
             <div class="header-right">
-              <button id="btn-open-codex" class="btn-codex">📖 装备与角色图鉴 (CODEX)</button>
+              <div id="lang-switch" class="lang-switch"></div>
+              <button id="btn-open-codex" class="btn-codex">📖 <span data-i18n="lobby.codexBtn">Codex</span></button>
             </div>
           </header>
 
@@ -189,16 +222,18 @@
             <div class="lobby-col loadout-col">
               <div class="profile-section">
                 <div class="profile-avatar-wrapper">
-                  <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" />
+                  <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" title="" data-i18n-title="lobby.avatarUpload" />
                   <span id="profile-avatar-tag" class="profile-avatar-tag">AUTO</span>
+                  <input id="avatar-file-input" type="file" accept="image/*" class="hidden" />
                 </div>
                 <div class="profile-inputs">
-                  <label for="player-name-input">Inker Name:</label>
-                  <input id="player-name-input" type="text" maxlength="16" placeholder="Enter your name" />
+                  <label for="player-name-input" data-i18n="lobby.name">Inker Name:</label>
+                  <input id="player-name-input" type="text" maxlength="16" data-i18n-placeholder="lobby.namePlaceholder" placeholder="Enter your name" />
+                  <span class="avatar-hint" data-i18n="lobby.avatarUpload">Click avatar to upload</span>
                 </div>
               </div>
 
-              <h3>SELECT WEAPON LOADOUT</h3>
+              <h3 data-i18n="lobby.selectWeapon">SELECT WEAPON LOADOUT</h3>
               <div class="weapon-grid">
                 <div class="weapon-option selected" data-weapon="shooter">
                   <div class="weapon-card-thumb">
@@ -207,9 +242,9 @@
                   <div class="weapon-card-info">
                     <div class="opt-header">
                       <span class="opt-name">Ink Blaster</span>
-                      <span class="opt-zh">墨水冲锋枪</span>
+                      <span class="opt-zh">インクブラスター</span>
                     </div>
-                    <div class="opt-details">Rapid Blaster • Balanced Range & Fire Rate</div>
+                    <div class="opt-details">Balanced automatic ink rifle.</div>
                     <div class="opt-skills">
                       <span class="badge-sub">Sub: Ink Bomb</span>
                       <span class="badge-spec">Special: Ink Twister</span>
@@ -224,9 +259,9 @@
                   <div class="weapon-card-info">
                     <div class="opt-header">
                       <span class="opt-name">Ink Roller</span>
-                      <span class="opt-zh">涂地滚筒</span>
+                      <span class="opt-zh">インクローラー</span>
                     </div>
-                    <div class="opt-details">Melee Juggernaut • Hold to Roll & Crush, Tap to Flick</div>
+                    <div class="opt-details">Melee juggernaut roller.</div>
                     <div class="opt-skills">
                       <span class="badge-sub">Sub: Slider Bomb</span>
                       <span class="badge-spec">Special: Ink Downpour</span>
@@ -241,9 +276,9 @@
                   <div class="weapon-card-info">
                     <div class="opt-header">
                       <span class="opt-name">Ink Sniper</span>
-                      <span class="opt-zh">蓄力墨水狙击枪</span>
+                      <span class="opt-zh">インクスナイパー</span>
                     </div>
-                    <div class="opt-details">Sniper Rifle • Hold to Charge Lethal Piercing Laser</div>
+                    <div class="opt-details">Long-range charged laser.</div>
                     <div class="opt-skills">
                       <span class="badge-sub">Sub: Ink Bomb</span>
                       <span class="badge-spec">Special: Bass Wave Cannon</span>
@@ -258,9 +293,9 @@
                   <div class="weapon-card-info">
                     <div class="opt-header">
                       <span class="opt-name">Ink Bucket</span>
-                      <span class="opt-zh">飞溅泼桶</span>
+                      <span class="opt-zh">インクバケツ</span>
                     </div>
-                    <div class="opt-details">High Arc Bucket • Splash Over Obstacles & Walls</div>
+                    <div class="opt-details">High-arc bucket splash.</div>
                     <div class="opt-skills">
                       <span class="badge-sub">Sub: Pop Bomb</span>
                       <span class="badge-spec">Special: Ink Twister</span>
@@ -269,37 +304,57 @@
                 </div>
               </div>
 
+              <!-- Skills -->
+              <h3>
+                <span data-i18n="lobby.skills">Select Skills</span>
+                <span id="skill-count" class="skill-count-badge">0/3</span>
+              </h3>
+              <div id="skill-grid" class="skill-grid"><!-- generated --></div>
+              <p class="section-hint" data-i18n="lobby.skillsHint">Passive perks for the whole match</p>
+
               <!-- Team Picker -->
-              <h3>TEAM ASSIGNMENT</h3>
+              <h3 data-i18n="lobby.team">TEAM ASSIGNMENT</h3>
               <div class="team-picker">
-                <button id="btn-team-auto" class="team-btn active" data-team="auto">Auto-Balance</button>
-                <button id="btn-team-pink" class="team-btn pink" data-team="pink">Team Pink</button>
-                <button id="btn-team-cyan" class="team-btn cyan" data-team="cyan">Team Cyan</button>
+                <button id="btn-team-auto" class="team-btn active" data-team="auto" data-i18n="lobby.auto">Auto-Balance</button>
+                <button id="btn-team-pink" class="team-btn pink" data-team="pink" data-i18n="lobby.pink">Team Pink</button>
+                <button id="btn-team-cyan" class="team-btn cyan" data-team="cyan" data-i18n="lobby.cyan">Team Cyan</button>
               </div>
             </div>
 
             <!-- Right Column: Room Status & Players -->
             <div class="lobby-col room-col">
               <div class="room-status-bar">
-                <h3>CONNECTED PLAYERS (<span id="lobby-player-count">1</span>/8)</h3>
-                <span id="lobby-countdown-timer" class="hidden">Match in 3s...</span>
+                <h3><span data-i18n="lobby.players">CONNECTED PLAYERS</span> (<span id="lobby-player-count">1</span>/8)</h3>
+                <span id="lobby-countdown-timer" class="hidden">Match in 3s…</span>
               </div>
 
-              <div id="lobby-player-list" class="player-roster">
-                <!-- Dynamically populated roster -->
+              <div id="lobby-player-list" class="player-roster"><!-- generated --></div>
+
+              <!-- Match setup: mode + map (host only) -->
+              <h3 data-i18n="lobby.mode">GAME MODE</h3>
+              <div id="mode-grid" class="mode-grid"><!-- generated --></div>
+
+              <h3 data-i18n="lobby.map">ARENA MAP</h3>
+              <div id="map-grid" class="map-grid"><!-- generated --></div>
+
+              <div class="bot-controls">
+                <span class="bot-label" data-i18n="lobby.bots">BOTS</span>
+                <button id="btn-lobby-add-bot" class="btn-bot" data-i18n="lobby.addBot">＋ Add Bot</button>
+                <button id="btn-lobby-remove-bot" class="btn-bot danger" data-i18n="lobby.removeBot">－ Remove Bot</button>
               </div>
 
               <div class="controls-guide mini">
-                <div class="ctrl-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span>Move</span></div>
-                <div class="ctrl-row"><kbd>LMB</kbd> <span>Fire / Roll</span></div>
-                <div class="ctrl-row"><kbd>RMB / Q</kbd> <span>Sub-weapon Bomb</span></div>
-                <div class="ctrl-row"><kbd>E / MMB</kbd> <span>Special Ultimate</span></div>
-                <div class="ctrl-row"><kbd>Shift</kbd> <span>Swim in ink</span></div>
+                <div class="ctrl-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span data-i18n="lobby.ctrlMove">Move</span></div>
+                <div class="ctrl-row"><kbd>LMB</kbd> <span data-i18n="lobby.ctrlFire">Fire / Roll</span></div>
+                <div class="ctrl-row"><kbd>RMB / Q</kbd> <span data-i18n="lobby.ctrlSub">Sub-weapon Bomb</span></div>
+                <div class="ctrl-row"><kbd>E / MMB</kbd> <span data-i18n="lobby.ctrlSpecial">Special Ultimate</span></div>
+                <div class="ctrl-row"><kbd>Shift</kbd> <span data-i18n="lobby.ctrlSwim">Swim in ink</span></div>
+                <div class="ctrl-row"><kbd>1-4</kbd> <span data-i18n="hud.weaponSwitchHint">Switch weapons</span></div>
               </div>
 
               <div class="lobby-action-row">
-                <button id="btn-lobby-ready" class="btn-ready">READY!</button>
-                <button id="btn-lobby-start" class="btn-play">START MATCH NOW</button>
+                <button id="btn-lobby-ready" class="btn-ready" data-i18n="lobby.ready">READY!</button>
+                <button id="btn-lobby-start" class="btn-play" data-i18n="lobby.start">START MATCH NOW</button>
               </div>
             </div>
           </div>
@@ -309,9 +364,9 @@
       <!-- Pointer Lock Starter Prompt -->
       <div id="pointer-lock-prompt" class="screen-overlay hidden">
         <div class="prompt-box">
-          <h2>CLICK TO ENTER ARENA</h2>
-          <p class="subtitle">Press ESC to pause, F3 for debug stats</p>
-          <button id="start-button" class="btn-play">RESUME GAME</button>
+          <h2 data-i18n="hud.clickEnter">CLICK TO ENTER ARENA</h2>
+          <p class="subtitle" data-i18n="hud.escHint">Press ESC to pause, F3 for debug stats</p>
+          <button id="start-button" class="btn-play" data-i18n="hud.resume">RESUME GAME</button>
         </div>
       </div>
 
@@ -329,346 +384,19 @@
         <div>Paint Events: <span id="dbg-paint-count">0</span></div>
       </div>
 
-      <!-- Illustrated Codex & Art Gallery Modal -->
+      <!-- Illustrated Codex & Art Gallery Modal (content rendered by CodexData.ts) -->
       <div id="codex-modal" class="screen-overlay hidden">
         <div class="codex-card">
           <header class="codex-header">
             <div class="codex-title-group">
-              <h2 class="codex-title">🦑 INK ARENA 角色与装备图鉴</h2>
-              <span class="codex-subtitle">ILLUSTRATED CODEX & ART CONCEPT GALLERY</span>
+              <h2 class="codex-title">🦑 <span data-i18n="codex.title">Character & Gear Codex</span></h2>
+              <span class="codex-subtitle" data-i18n="codex.subtitle">ILLUSTRATED CODEX & ART GALLERY</span>
             </div>
-            <button id="btn-close-codex" class="btn-close-modal">✕ 关闭</button>
+            <button id="btn-close-codex" class="btn-close-modal" data-i18n="codex.close">✕ Close</button>
           </header>
 
-          <nav class="codex-nav">
-            <button class="codex-tab-btn active" data-tab="characters">角色与形态 (4)</button>
-            <button class="codex-tab-btn" data-tab="weapons">主要武器 (4)</button>
-            <button class="codex-tab-btn" data-tab="subs-specials">次要与特殊武器 (4)</button>
-            <button class="codex-tab-btn" data-tab="gear">潮流战术装备 (3)</button>
-            <button class="codex-tab-btn" data-tab="scenery">赛场与场景 (3)</button>
-          </nav>
-
-          <div class="codex-body">
-            <!-- Tab 1: Characters -->
-            <div id="codex-tab-characters" class="codex-pane active">
-              <div class="codex-grid">
-                <div class="codex-item" data-full="/assets/characters/inkling_pink.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/characters/inkling_pink.jpg" alt="Team Pink Hero" />
-                    <span class="codex-badge pink">TEAM PINK</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>霓虹粉战队墨水战士 (Pink Hero Inker)</h4>
-                    <p class="codex-desc">活跃于街区涂地赛场的先锋射手，标志性的荧光洋红色触手与灵巧战术步法，擅长快速压制战线与突破敌方防御。</p>
-                    <div class="codex-tags">
-                      <span>形态: 人形</span>
-                      <span>主武器: 墨水冲锋枪</span>
-                      <span>移动力: ★★★★★</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/characters/inkling_cyan.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/characters/inkling_cyan.jpg" alt="Team Cyan Hero" />
-                    <span class="codex-badge cyan">TEAM CYAN</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>电光青战队墨水战士 (Cyan Hero Inker)</h4>
-                    <p class="codex-desc">战术沉稳的技术型射手，头戴全包覆降噪电竞耳机与机能风连帽冲锋衣，凭借极高的预判能力在战场游刃有余。</p>
-                    <div class="codex-tags">
-                      <span>形态: 人形</span>
-                      <span>主武器: 蓄力狙击 / 射击枪</span>
-                      <span>专注度: ★★★★★</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/characters/squid_morph.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/characters/squid_morph.jpg" alt="Squid Morph" />
-                    <span class="codex-badge purple">TRANSFORMATION</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>乌贼潜行形态 (Squid Morph)</h4>
-                    <p class="codex-desc">墨水战士的流体变形能力，按住Shift键潜入己方颜色的墨汁水面。移动速度剧增至1.8倍（10.8 u/s），且墨汁储罐充能速度提升300%。</p>
-                    <div class="codex-tags">
-                      <span>极速游动: 10.8 u/s</span>
-                      <span>墨水回充: 30%/s</span>
-                      <span>高度隐蔽</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item wide-card" data-full="/assets/characters/inkling_duel_clash.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/characters/inkling_duel_clash.jpg" alt="Turf War Clash" />
-                    <span class="codex-badge gold">KEY ART</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>街区锦标赛巅峰对决 (Championship Clash)</h4>
-                    <p class="codex-desc">涂地竞技场中心立交桥上空的终极交锋，粉与青两道绚烂水炮在半空碰撞绽开漫天飞溅的彩色墨雨，展现最高水准的热血博弈。</p>
-                    <div class="codex-tags">
-                      <span>赛场热斗</span>
-                      <span>空中对决</span>
-                      <span>4v4 终局争夺</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Tab 2: Weapons -->
-            <div id="codex-tab-weapons" class="codex-pane">
-              <div class="codex-grid">
-                <div class="codex-item" data-full="/assets/weapons/splattershot.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/splattershot.jpg" alt="Ink Blaster" />
-                    <span class="codex-badge shooter">SHOOTER</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>墨水冲锋枪 (Ink Blaster)</h4>
-                    <p class="codex-desc">全面而经典的墨汁自动步枪。拥有最稳定的射程、均匀的泼墨散布与极佳的单发杀伤，是全战场泛用性最高的核心装备。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">威力: 25 HP</div>
-                      <div class="stat-pill">射程: 48m</div>
-                      <div class="stat-pill">射速: 10/s</div>
-                      <div class="stat-pill">墨耗: 2%</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/splat_roller.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/splat_roller.jpg" alt="Ink Roller" />
-                    <span class="codex-badge roller">ROLLER</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>涂地滚筒 (Ink Roller)</h4>
-                    <p class="codex-desc">近战涂地重装霸主。长按开火推行碾压地面，所过之处留下一道3.4米宽的团队墨路并造成致命120伤害；点按可横向大幅甩墨。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">碾压: 120 HP</div>
-                      <div class="stat-pill">甩墨: 100 HP</div>
-                      <div class="stat-pill">碾宽: 3.4m</div>
-                      <div class="stat-pill">近战特化</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/splat_charger.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/splat_charger.jpg" alt="Ink Sniper" />
-                    <span class="codex-badge charger">CHARGER</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>蓄力墨水狙击枪 (Ink Sniper)</h4>
-                    <p class="codex-desc">超远距离高压狙击武器。长按充能1.0秒后松开，射出一道贯穿65米战场的炽热激光墨线，满蓄造成130点必杀超量伤害。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">满蓄: 130 HP</div>
-                      <div class="stat-pill">射程: 65m</div>
-                      <div class="stat-pill">蓄力: 1.0s</div>
-                      <div class="stat-pill">一击必杀</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/slosher.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/slosher.jpg" alt="Ink Bucket" />
-                    <span class="codex-badge slosher">SLOSHER</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>飞溅泼桶 (Ink Bucket)</h4>
-                    <p class="codex-desc">高抛物线重型泼墨桶。能够利用仰角将大量墨水直接倾泻到高台及障碍物后方，单次泼溅半径达3.5米，阵地争夺神器。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">伤害: 60 HP</div>
-                      <div class="stat-pill">射程: 26m</div>
-                      <div class="stat-pill">涂抹: 3.5m</div>
-                      <div class="stat-pill">跨越掩体</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Tab 3: Subs & Specials -->
-            <div id="codex-tab-subs-specials" class="codex-pane">
-              <div class="codex-grid">
-                <div class="codex-item" data-full="/assets/weapons/splat_bomb.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/splat_bomb.jpg" alt="Ink Bomb" />
-                    <span class="codex-badge sub">SUB WEAPON</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>墨水炸弹 (Ink Bomb)</h4>
-                    <p class="codex-desc">四面体三角金字塔型墨汁手雷。投掷着陆后启动1.2秒延迟引信，产生半径5米的巨型墨汁爆破，核心区域造成160点致命伤害。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">威力: 160 HP</div>
-                      <div class="stat-pill">墨耗: 65%</div>
-                      <div class="stat-pill">范围: 5.0m</div>
-                      <div class="stat-pill">引信: 1.2s</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/curling_bomb.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/curling_bomb.jpg" alt="Slider Bomb" />
-                    <span class="codex-badge sub">SUB WEAPON</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>冰壶自走炸弹 (Slider Bomb)</h4>
-                    <p class="codex-desc">贴地高速滑行的智能机器人炸弹。在地面滑行时自动铺设一条持续的团队安全泳道并在碰撞障碍物时弹性变向，2.5秒后爆破。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">威力: 150 HP</div>
-                      <div class="stat-pill">墨耗: 55%</div>
-                      <div class="stat-pill">滑道: 1.6m宽</div>
-                      <div class="stat-pill">障碍反弹</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/killer_wail.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/killer_wail.jpg" alt="Bass Wave Cannon" />
-                    <span class="codex-badge special">SPECIAL ULTIMATE</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>扩音器5.1声波激光炮 (Bass Wave Cannon)</h4>
-                    <p class="codex-desc">高科技反重力悬浮扬声器阵列。启动后召唤激光扬声器环绕自身，发射多重持续3秒、穿透所有坚固墙壁与掩体的毁灭性声波激光束。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">秒伤: 120 DPS</div>
-                      <div class="stat-pill">持续: 3.0s</div>
-                      <div class="stat-pill">全地形穿透</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/weapons/inkstrike.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/weapons/inkstrike.jpg" alt="Ink Twister" />
-                    <span class="codex-badge special">SPECIAL ULTIMATE</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>龙卷风墨击发射器 (Ink Twister)</h4>
-                    <p class="codex-desc">战术级重型导弹系统。锁定目标区域后发射墨旋风火箭，着陆点瞬间生成持续4秒、半径6米的滔天墨汁龙卷，封锁战略咽喉。</p>
-                    <div class="codex-stats">
-                      <div class="stat-pill">秒伤: 80 DPS</div>
-                      <div class="stat-pill">半径: 6.0m</div>
-                      <div class="stat-pill">持续: 4.0s</div>
-                      <div class="stat-pill">强力控场</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Tab 4: Gear -->
-            <div id="codex-tab-gear" class="codex-pane">
-              <div class="codex-grid">
-                <div class="codex-item" data-full="/assets/gear/ink_tank.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/gear/ink_tank.jpg" alt="Ink Tank" />
-                    <span class="codex-badge gear">BACKPACK</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>高容量发光墨汁背罐 (High-Capacity Ink Tank)</h4>
-                    <p class="codex-desc">墨水战士出战的生命线。采用加固防爆树脂玻璃筒身与黄铜减压调压阀，实时显示0-10刻度墨量存量，配有快速解脱战术尼龙背带。</p>
-                    <div class="codex-tags">
-                      <span>品牌: Cuttlefish Gear</span>
-                      <span>容积: 100 单位</span>
-                      <span>防爆抗压</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/gear/headset_visor.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/gear/headset_visor.jpg" alt="DJ Headset & Visor" />
-                    <span class="codex-badge gear">HEADGEAR</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>潮流降噪耳机与战术目镜 (Studio Headset & Visor)</h4>
-                    <p class="codex-desc">融合街头嘻哈与电竞赛事的高性能穿戴装备。耳罩带荧光发光乌贼徽标，配备集成全息HUD微显镜片的防风护目镜，实时反馈墨迹分布。</p>
-                    <div class="codex-tags">
-                      <span>品牌: SquidForce</span>
-                      <span>全息HUD准心</span>
-                      <span>主动降噪</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item" data-full="/assets/gear/street_sneakers.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/gear/street_sneakers.jpg" alt="Street Sneakers" />
-                    <span class="codex-badge gear">FOOTWEAR</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>撞色高帮气垫滑板鞋 (Neon Turf Skate Sneakers)</h4>
-                    <p class="codex-desc">专为墨水滑行与高台跳跃设计的潮流运动鞋。双色撞色皮革鞋身，大底配备注入流动墨汁的全掌避震气囊与高防滑纹路，耐磨抗滑。</p>
-                    <div class="codex-tags">
-                      <span>品牌: Splash Lab</span>
-                      <span>流动墨汁气垫</span>
-                      <span>高抓地力鞋底</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Tab 5: Scenery -->
-            <div id="codex-tab-scenery" class="codex-pane">
-              <div class="codex-grid">
-                <div class="codex-item wide-card" data-full="/assets/backgrounds/arena_battlefield.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/backgrounds/arena_battlefield.jpg" alt="Cargo Docks Arena" />
-                    <span class="codex-badge scene">BATTLEGROUND</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>码头货柜涂地竞技场 (Cargo Docks Arena)</h4>
-                    <p class="codex-desc">建于海港集装箱枢纽的专业涂地赛场。错落有致的多层钢制集装箱群与滑板弧形坡道构成极具层次感的战术对抗空间，墨迹飞溅全场。</p>
-                    <div class="codex-tags">
-                      <span>规格: 100m x 100m</span>
-                      <span>地形: 多层集装箱 & 坡道</span>
-                      <span>天气: 晴朗竞技</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item wide-card" data-full="/assets/backgrounds/lobby_plaza.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/backgrounds/lobby_plaza.jpg" alt="Underground Plaza" />
-                    <span class="codex-badge scene">LOBBY PLAZA</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>赛区更衣室与地下街区 (Underground Locker Plaza)</h4>
-                    <p class="codex-desc">赛前选手整装待发的大本营。排布整齐的金属储物柜、各色涂鸦砖墙与闪烁的霓虹灯牌交相辉映，大型LED荧幕实时轮播当前排位积分榜。</p>
-                    <div class="codex-tags">
-                      <span>街区潮流文化</span>
-                      <span>战队整备中心</span>
-                      <span>天梯积分展板</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="codex-item wide-card" data-full="/assets/backgrounds/victory_stage.jpg">
-                  <div class="codex-thumb-wrap">
-                    <img src="/assets/backgrounds/victory_stage.jpg" alt="Victory Stage" />
-                    <span class="codex-badge scene">VICTORY STAGE</span>
-                  </div>
-                  <div class="codex-info">
-                    <h4>全球锦标赛冠军颁奖舞台 (Victory Tournament Stage)</h4>
-                    <p class="codex-desc">终场哨声响起时的最高荣誉圣殿。金色碎屑与彩色墨水礼花漫天飞舞，强力射灯与欢呼的墨水战士观众见证获胜战队的荣耀举杯时刻。</p>
-                    <div class="codex-tags">
-                      <span>冠军领奖台</span>
-                      <span>全息彩花礼炮</span>
-                      <span>万众欢呼盛典</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <nav class="codex-nav"><!-- tabs generated --></nav>
+          <div id="codex-body" class="codex-body"><!-- panes generated --></div>
 
           <!-- Lightbox / Fullscreen Image Viewer -->
           <div id="codex-lightbox" class="codex-lightbox hidden">

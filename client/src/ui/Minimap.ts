@@ -1,4 +1,4 @@
-import { ARENA_SIZE, ARENA_HALF_SIZE, BoxObstacle, Team, Vec3 } from '@ink/shared';
+import { ARENA_SIZE, BoxObstacle, Team, Vec3 } from '@ink/shared';
 import { PaintEngine } from '../world/PaintEngine.js';
 
 export interface MinimapPlayerData {
@@ -17,6 +17,7 @@ export class Minimap {
   private visible = true;
   private lastDrawTime = 0;
   private drawInterval = 80; // ~12 fps radar refresh for optimal performance
+  private mapSize = ARENA_SIZE;
 
   constructor(paintEngine: PaintEngine) {
     this.paintEngine = paintEngine;
@@ -66,6 +67,11 @@ export class Minimap {
     else this.container.classList.add('hidden');
   }
 
+  /** Sets the active map edge length so radar coordinates stay correct. */
+  setSize(size: number): void {
+    if (size > 0) this.mapSize = size;
+  }
+
   update(
     localPlayer: MinimapPlayerData,
     remotePlayers: MinimapPlayerData[],
@@ -98,10 +104,10 @@ export class Minimap {
     ctx.lineWidth = 1;
 
     for (const obs of obstacles) {
-      const u = (obs.position.x - obs.size.x / 2 + ARENA_HALF_SIZE) / ARENA_SIZE;
-      const v = (obs.position.z - obs.size.z / 2 + ARENA_HALF_SIZE) / ARENA_SIZE;
-      const ow = (obs.size.x / ARENA_SIZE) * w;
-      const oh = (obs.size.z / ARENA_SIZE) * h;
+      const u = (obs.position.x - obs.size.x / 2 + this.mapSize / 2) / this.mapSize;
+      const v = (obs.position.z - obs.size.z / 2 + this.mapSize / 2) / this.mapSize;
+      const ow = (obs.size.x / this.mapSize) * w;
+      const oh = (obs.size.z / this.mapSize) * h;
 
       ctx.fillRect(u * w, v * h, ow, oh);
       ctx.strokeRect(u * w, v * h, ow, oh);
@@ -109,8 +115,8 @@ export class Minimap {
 
     // 4. Draw Spawns
     // Pink Spawn at (-40, 0)
-    const pinkU = (-40 + ARENA_HALF_SIZE) / ARENA_SIZE;
-    const pinkV = (0 + ARENA_HALF_SIZE) / ARENA_SIZE;
+    const pinkU = (-(this.mapSize * 0.4) + this.mapSize / 2) / this.mapSize;
+    const pinkV = (0 + this.mapSize / 2) / this.mapSize;
     ctx.beginPath();
     ctx.arc(pinkU * w, pinkV * h, 7, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255, 0, 127, 0.4)';
@@ -119,8 +125,8 @@ export class Minimap {
     ctx.stroke();
 
     // Cyan Spawn at (40, 0)
-    const cyanU = (40 + ARENA_HALF_SIZE) / ARENA_SIZE;
-    const cyanV = (0 + ARENA_HALF_SIZE) / ARENA_SIZE;
+    const cyanU = (this.mapSize * 0.4 + this.mapSize / 2) / this.mapSize;
+    const cyanV = (0 + this.mapSize / 2) / this.mapSize;
     ctx.beginPath();
     ctx.arc(cyanU * w, cyanV * h, 7, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0, 255, 255, 0.4)';
@@ -131,8 +137,8 @@ export class Minimap {
     // 5. Draw Remote Players
     for (const rp of remotePlayers) {
       if (!rp.alive) continue;
-      const ru = (rp.position.x + ARENA_HALF_SIZE) / ARENA_SIZE;
-      const rv = (rp.position.z + ARENA_HALF_SIZE) / ARENA_SIZE;
+      const ru = (rp.position.x + this.mapSize / 2) / this.mapSize;
+      const rv = (rp.position.z + this.mapSize / 2) / this.mapSize;
       const px = ru * w;
       const py = rv * h;
 
@@ -147,8 +153,8 @@ export class Minimap {
 
     // 6. Draw Local Player with Direction Arrow
     if (localPlayer.alive) {
-      const lu = (localPlayer.position.x + ARENA_HALF_SIZE) / ARENA_SIZE;
-      const lv = (localPlayer.position.z + ARENA_HALF_SIZE) / ARENA_SIZE;
+      const lu = (localPlayer.position.x + this.mapSize / 2) / this.mapSize;
+      const lv = (localPlayer.position.z + this.mapSize / 2) / this.mapSize;
       const lx = lu * w;
       const ly = lv * h;
 

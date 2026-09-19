@@ -1,5 +1,21 @@
 import * as THREE from 'three';
 
+export interface QualityProfile {
+  /** Max device pixel ratio used for rendering. */
+  pixelRatioCap: number;
+  shadows: boolean;
+  shadowMapSize: number;
+  /** Dynamic resolution scaling on FPS dips (quality=auto). */
+  adaptive: boolean;
+}
+
+const QUALITY_PROFILES = {
+  low: { pixelRatioCap: 0.75, shadows: false, shadowMapSize: 512, adaptive: false },
+  medium: { pixelRatioCap: 1.0, shadows: true, shadowMapSize: 1024, adaptive: false },
+  high: { pixelRatioCap: 2.0, shadows: true, shadowMapSize: 2048, adaptive: false },
+  auto: { pixelRatioCap: 2.0, shadows: true, shadowMapSize: 2048, adaptive: true }
+} as const satisfies Record<string, QualityProfile>;
+
 export class GameRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly renderer: THREE.WebGLRenderer;
@@ -8,6 +24,13 @@ export class GameRenderer {
 
   private dirLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
+  private baseDirIntensity: number;
+
+  private quality: QualityProfile = { ...QUALITY_PROFILES.high };
+  /** Runtime resolution scale (dynamic resolution lowers this under load). */
+  private resScale = 1;
+  private fpsHistory: number[] = [];
+  private lastAdaptAt = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -33,7 +56,7 @@ export class GameRenderer {
       65,
       window.innerWidth / window.innerHeight,
       0.1,
-      200
+      260
     );
 
     // Lighting setup
@@ -41,13 +64,14 @@ export class GameRenderer {
     this.scene.add(this.hemiLight);
 
     this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.35);
+    this.baseDirIntensity = this.dirLight.intensity;
     this.dirLight.position.set(40, 65, 30);
     this.dirLight.castShadow = true;
     this.dirLight.shadow.mapSize.width = 2048;
     this.dirLight.shadow.mapSize.height = 2048;
     this.dirLight.shadow.camera.near = 1;
-    this.dirLight.shadow.camera.far = 160;
-    const d = 58;
+    this.dirLight.shadow.camera.far = 200;
+    const d = 72;
     this.dirLight.shadow.camera.left = -d;
     this.dirLight.shadow.camera.right = d;
     this.dirLight.shadow.camera.top = d;
@@ -63,13 +87,58 @@ export class GameRenderer {
     window.addEventListener('resize', this.onResize);
   }
 
+  /** Applies a named quality level from the settings modal. */
+  setQualityLevel(level: 'low' | 'medium' | 'high' | 'auto'): void {
+    const profile = QUALITY_PROFILES[level] ?? QUALITY_PROFILES.high;
+    this.quality = { ...profile };
+    this.resScale = 1;
+    this.renderer.shadowMap.enabled = profile.shadows;
+    this.dirLight.castShadow = profile.shadows;
+    if (profile.shadows) {
+      this.dirLight.shadow.mapSize.width = profile.shadowMapSize;
+      this.dirLight.shadow.mapSize.height = profile.shadowMapSize;
+      this.dirLight.shadow.map?.dispose();
+      this.dirLight.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+    }
+    this.applyPixelRatio();
+  }
+
+  private applyPixelRatio(): void {
+    const cap = Math.min(window.devicePixelRatio, this.quality.pixelRatioCap) * this.resScale;
+    this.renderer.setPixelRatio(Math.max(0.5, cap));
+  }
+
+  /**
+   * Dynamic resolution controller (quality=auto). Feed it the current FPS
+   * once per frame; it scales the render resolution down under sustained
+   * load and back up when there is headroom.
+   */
+  adaptiveTick(fps: number, nowMs: number): void {
+    if (!this.quality.adaptive) return;
+    this.fpsHistory.push(fps);
+    if (this.fpsHistory.length > 90) this.fpsHistory.shift();
+    if (nowMs - this.lastAdaptAt < 2000) return;
+    this.lastAdaptAt = nowMs;
+
+    const avg = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
+    if (avg < 45 && this.resScale > 0.7) {
+      this.resScale = Math.max(0.7, this.resScale - 0.15);
+      this.applyPixelRatio();
+      this.fpsHistory.length = 0;
+    } else if (avg > 57 && this.resScale < 1) {
+      this.resScale = Math.min(1, this.resScale + 0.1);
+      this.applyPixelRatio();
+      this.fpsHistory.length = 0;
+    }
+  }
+
   private onResize = (): void => {
     const width = window.innerWidth;
     const height = window.innerHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.applyPixelRatio();
   };
 
   render(): void {
@@ -79,5 +148,18 @@ export class GameRenderer {
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.renderer.dispose();
+  }
+
+  /** Theme support: lets maps retint the global lighting. */
+  applyTheme(theme: { sky: number; fogColor: number; fogDensity: number; sunColor: number; sunIntensity: number; hemiSky: number; hemiGround: number }): void {
+    (this.scene.background as THREE.Color).setHex(theme.sky);
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.setHex(theme.fogColor);
+      this.scene.fog.density = theme.fogDensity;
+    }
+    this.dirLight.color.setHex(theme.sunColor);
+    this.dirLight.intensity = theme.sunIntensity * (this.baseDirIntensity / 1.35);
+    this.hemiLight.color.setHex(theme.hemiSky);
+    this.hemiLight.groundColor.setHex(theme.hemiGround);
   }
 }

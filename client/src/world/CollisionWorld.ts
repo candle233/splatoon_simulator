@@ -10,13 +10,15 @@ import {
 
 export class ClientCollisionWorld {
   private obstacles: BoxObstacle[];
+  private halfSize = ARENA_HALF_SIZE;
 
   constructor(obstacles = ARENA_OBSTACLES) {
     this.obstacles = obstacles;
   }
 
-  setObstacles(obstacles: BoxObstacle[]): void {
+  setObstacles(obstacles: BoxObstacle[], mapSize = this.halfSize * 2): void {
     this.obstacles = obstacles;
+    this.halfSize = mapSize / 2;
   }
 
   getObstacles(): BoxObstacle[] {
@@ -54,7 +56,7 @@ export class ClientCollisionWorld {
     }
 
     // Check vs ground
-    const ground = intersectRayGroundPlane(ray, 0.2, ARENA_HALF_SIZE);
+    const ground = intersectRayGroundPlane(ray, 0.2, this.halfSize);
     if (ground && ground.t > 0 && ground.t < closest) {
       closest = ground.t;
       hitAny = true;
@@ -82,7 +84,7 @@ export class ClientCollisionWorld {
     };
 
     // 1. Ray vs Ground Plane (y = 0)
-    const groundHit = intersectRayGroundPlane(ray, 0, ARENA_HALF_SIZE);
+    const groundHit = intersectRayGroundPlane(ray, 0, this.halfSize);
     if (groundHit && groundHit.t > 0 && groundHit.t < closestDist) {
       closestDist = groundHit.t;
       hitResult = {
@@ -140,7 +142,7 @@ export class ClientCollisionWorld {
     let currY = newPos.y;
     let currZ = newPos.z;
 
-    const bound = ARENA_HALF_SIZE - radius;
+    const bound = this.halfSize - radius;
     currX = Math.max(-bound, Math.min(bound, currX));
     currZ = Math.max(-bound, Math.min(bound, currZ));
 

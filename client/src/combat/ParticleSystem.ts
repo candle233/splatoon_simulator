@@ -17,9 +17,19 @@ export class ParticleSystem {
   private poolSize = 160;
   private particles: Particle[] = [];
   private sharedGeo = new THREE.SphereGeometry(1, 8, 8);
+  /** 0..1 multiplier on spawn counts (graphics quality setting). */
+  private densityScale = 1;
 
   constructor() {
     this.initPool();
+  }
+
+  setDensityScale(scale: number): void {
+    this.densityScale = Math.max(0.25, Math.min(1, scale));
+  }
+
+  private scaled(count: number): number {
+    return Math.max(1, Math.round(count * this.densityScale));
   }
 
   private initPool(): void {
@@ -54,6 +64,7 @@ export class ParticleSystem {
   spawnSplash(pos: Vec3, team: Team, count = 8, speed = 7.0, baseRadius = 0.14): void {
     const colorHex = team === Team.PINK ? 0xff007f : 0x00ffff;
     let spawned = 0;
+    count = this.scaled(count);
 
     for (const p of this.particles) {
       if (p.active) continue;
@@ -95,6 +106,7 @@ export class ParticleSystem {
   spawnMuzzleSpray(muzzlePos: Vec3, forwardDir: Vec3, team: Team, count = 3): void {
     const colorHex = team === Team.PINK ? 0xff007f : 0x00ffff;
     let spawned = 0;
+    count = this.scaled(count);
 
     for (const p of this.particles) {
       if (p.active) continue;
