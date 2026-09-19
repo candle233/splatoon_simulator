@@ -73,6 +73,15 @@ export class Arena {
       if (!child) break;
       this.group.remove(child);
     }
+    // Release obstacle geometry/materials before dropping the references
+    for (const mesh of this.obstacleMeshes) {
+      mesh.geometry.dispose();
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((m) => m.dispose());
+      } else {
+        mesh.material.dispose();
+      }
+    }
     this.obstacleMeshes = [];
     for (const geo of this.detailGeometries) geo.dispose();
     for (const mat of this.detailMaterials) mat.dispose();
