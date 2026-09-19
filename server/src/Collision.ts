@@ -16,6 +16,7 @@ import { PlayerState } from './PlayerState.js';
 
 export class CollisionWorld {
   private obstacles: BoxObstacle[];
+  private halfSize = ARENA_HALF_SIZE;
 
   constructor(obstacles = ARENA_OBSTACLES) {
     this.obstacles = obstacles;
@@ -23,6 +24,16 @@ export class CollisionWorld {
 
   getObstacles(): BoxObstacle[] {
     return this.obstacles;
+  }
+
+  /** Swaps the obstacle set and arena bounds (map change while in lobby). */
+  setObstacles(obstacles: BoxObstacle[], mapSize = this.halfSize * 2): void {
+    this.obstacles = obstacles;
+    this.halfSize = mapSize / 2;
+  }
+
+  getHalfSize(): number {
+    return this.halfSize;
   }
 
   /**
@@ -42,7 +53,7 @@ export class CollisionWorld {
     let currZ = newPos.z;
 
     // 1. Arena boundary collision
-    const boundLimit = ARENA_HALF_SIZE - radius;
+    const boundLimit = this.halfSize - radius;
     currX = Math.max(-boundLimit, Math.min(boundLimit, currX));
     currZ = Math.max(-boundLimit, Math.min(boundLimit, currZ));
 
@@ -161,7 +172,7 @@ export class CollisionWorld {
       }
     }
 
-    const ground = intersectRayGroundPlane(ray, 0.2, ARENA_HALF_SIZE);
+    const ground = intersectRayGroundPlane(ray, 0.2, this.halfSize);
     if (ground && ground.t > 0 && ground.t < closest) {
       closest = ground.t;
       hitAny = true;
@@ -192,7 +203,7 @@ export class CollisionWorld {
     };
 
     // 1. Ray vs Ground Plane (y = 0)
-    const groundHit = intersectRayGroundPlane(ray, 0, ARENA_HALF_SIZE);
+    const groundHit = intersectRayGroundPlane(ray, 0, this.halfSize);
     if (groundHit && groundHit.t > 0 && groundHit.t < closestDist) {
       closestDist = groundHit.t;
       hitResult = {

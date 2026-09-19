@@ -20,10 +20,17 @@ import { PlayerState } from './PlayerState.js';
 export class MovementSimulation {
   private collisionWorld: CollisionWorld;
   private paintGrid: PaintGrid;
+  private mapSize = 100;
 
   constructor(collisionWorld: CollisionWorld, paintGrid: PaintGrid) {
     this.collisionWorld = collisionWorld;
     this.paintGrid = paintGrid;
+  }
+
+  setMapSize(size: number): void {
+    if (size > 0) {
+      this.mapSize = size;
+    }
   }
 
   simulatePlayer(
@@ -114,7 +121,7 @@ export class MovementSimulation {
 
     const res = this.collisionWorld.resolvePlayerMovement(player, prevPos, newPos, radius, height);
     player.grounded = res.grounded;
-    player.position = enforceSpawnBarrier(player.position, player.team);
+    player.position = enforceSpawnBarrier(player.position, player.team, this.mapSize * 0.4);
 
     return { diedByEnemyInk: false };
   }

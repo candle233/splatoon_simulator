@@ -1,5 +1,4 @@
 import {
-  ARENA_HALF_SIZE,
   ARENA_SIZE,
   CONTINUOUS_PAINT_MAX_DIST_UV,
   DEATH_PAINT_RADIUS_WORLD,
@@ -23,6 +22,7 @@ import {
   WEAPON_RANGE,
   WEAPON_SPREAD,
   WeaponType,
+  skillMultiplier,
   vec3Normalize,
   worldToUV
 } from '@ink/shared';
@@ -73,6 +73,8 @@ export class WeaponSimulation {
   private nextPaintEventId = 1;
   private nextEntityId = 1;
   private lastCreatedNewlyPainted = 0;
+  /** Active map edge length; used for UV mapping of paint events. */
+  private mapSize = ARENA_SIZE;
 
   private activeSubWeapons: ActiveSubWeapon[] = [];
   private activeSpecials: ActiveSpecial[] = [];
@@ -80,6 +82,12 @@ export class WeaponSimulation {
   constructor(collisionWorld: CollisionWorld, paintGrid: PaintGrid) {
     this.collisionWorld = collisionWorld;
     this.paintGrid = paintGrid;
+  }
+
+  setMapSize(size: number): void {
+    if (size > 0) {
+      this.mapSize = size;
+    }
   }
 
   reset(): void {
@@ -90,10 +98,26 @@ export class WeaponSimulation {
     this.activeSpecials = [];
   }
 
+  /** Main-weapon ink cost after the ink_saver gear skill (kept fractional). */
+  private mainInkCost(player: PlayerState, base: number): number {
+    return Math.max(0, base * skillMultiplier(player.skills, 'ink_saver'));
+  }
+
+  /** Main-weapon damage after the main_power gear skill. */
+  private mainDamage(player: PlayerState, base: number): number {
+    return base * skillMultiplier(player.skills, 'main_power');
+  }
+
+  /** Damage actually applied after the victim's defense gear skill. */
+  private applyTargetDamage(target: PlayerState, raw: number, now: number): void {
+    target.hp -= raw * skillMultiplier(target.skills, 'defense');
+    target.lastDamageTime = now;
+  }
+
   private awardSpecialForPaint(player: PlayerState, newlyPaintedCells: number): void {
     if (newlyPaintedCells <= 0 || !player.alive) return;
     const res = this.paintGrid.resolution;
-    const totalArenaArea = ARENA_SIZE * ARENA_SIZE;
+    const totalArenaArea = this.mapSize * this.mapSize;
     const turfPoints = newlyPaintedCells * (totalArenaArea / (res * res));
     const meterGain = (turfPoints / SPECIAL_POINTS_NEEDED) * SPECIAL_METER_MAX;
     this.awardSpecialMeter(player, meterGain);
@@ -138,11 +162,12 @@ export class WeaponSimulation {
       return { fired: false, paintEvents: [] };
     }
 
-    if (shooter.ink < config.inkCost) {
+    const shotCost = this.mainInkCost(shooter, config.inkCost);
+    if (shooter.ink < shotCost) {
       return { fired: false, paintEvents: [] };
     }
 
-    shooter.ink -= config.inkCost;
+    shooter.ink -= shotCost;
     shooter.lastShotTime = now;
     shooter.lastFiredTime = now;
 
@@ -283,8 +308,7 @@ export class WeaponSimulation {
       const target = allPlayers.find((p) => p.id === hit.hitPlayerId);
       if (target && target.alive && !target.isInvulnerable(now)) {
         result.hitPlayerId = target.id;
-        target.hp -= config.damage;
-        target.lastDamageTime = now;
+        this.applyTargetDamage(target, this.mainDamage(shooter, config.damage), now);
 
         if (target.hp <= 0) {
           target.hp = 0;
@@ -416,8 +440,7 @@ export class WeaponSimulation {
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist <= 1.8 && Math.abs(target.position.y - shooter.position.y) < 2.0) {
           result.hitPlayerId = target.id;
-          target.hp -= (config.rollDamage || 120);
-          target.lastDamageTime = now;
+          this.applyTargetDamage(target, this.mainDamage(shooter, config.rollDamage || 120), now);
 
           if (target.hp <= 0) {
             target.hp = 0;
@@ -449,21 +472,22 @@ export class WeaponSimulation {
         return { fired: false, paintEvents: [] };
       }
 
-      if (shooter.ink < config.inkCost) {
-        return { fired: false, paintEvents: [] };
-      }
+    const flickCost = this.mainInkCost(shooter, config.inkCost);
+    if (shooter.ink < flickCost) {
+      return { fired: false, paintEvents: [] };
+    }
 
-      shooter.ink -= config.inkCost;
-      shooter.lastShotTime = now;
-      shooter.lastFiredTime = now;
-      shooter.lastPaintU = undefined;
-      shooter.lastPaintV = undefined;
+    shooter.ink -= flickCost;
+    shooter.lastShotTime = now;
+    shooter.lastFiredTime = now;
+    shooter.lastPaintU = undefined;
+    shooter.lastPaintV = undefined;
 
-      const origin: Vec3 = {
-        x: shooter.position.x,
-        y: shooter.position.y + 1.2,
-        z: shooter.position.z
-      };
+    const origin: Vec3 = {
+      x: shooter.position.x,
+      y: shooter.position.y + 1.2,
+      z: shooter.position.z
+    };
 
       const result: ShotResult = {
         fired: true,
@@ -493,9 +517,8 @@ export class WeaponSimulation {
           if (target && target.alive && !target.isInvulnerable(now)) {
             result.hitPlayerId = target.id;
             const distRatio = Math.min(1.0, hit.distance / config.range);
-            const dmg = Math.round(config.damage * (1.0 - distRatio * 0.4)); // 100 dmg close, 60 dmg far
-            target.hp -= dmg;
-            target.lastDamageTime = now;
+            const dmg = Math.round(this.mainDamage(shooter, config.damage) * (1.0 - distRatio * 0.4)); // 100 dmg close, 60 dmg far
+            this.applyTargetDamage(target, dmg, now);
 
             if (target.hp <= 0) {
               target.hp = 0;
@@ -544,12 +567,12 @@ export class WeaponSimulation {
     const config = WEAPON_CONFIGS.charger;
     const charge = Math.max(0.2, Math.min(1.0, chargeLevelInput));
 
-    const inkCost = Math.round(config.inkCost * charge);
-    if (shooter.ink < inkCost) {
+    const chargeCost = Math.round(this.mainInkCost(shooter, config.inkCost) * charge);
+    if (shooter.ink < chargeCost) {
       return { fired: false, paintEvents: [] };
     }
 
-    shooter.ink -= inkCost;
+    shooter.ink -= chargeCost;
     shooter.lastShotTime = now;
     shooter.lastFiredTime = now;
     shooter.chargeLevel = 0;
@@ -601,14 +624,13 @@ export class WeaponSimulation {
       chargeLevel: charge
     };
 
-    const damage = Math.round(config.damage * charge); // Full charge = 130 (one shot splat!)
+    const chargeDamage = Math.round(this.mainDamage(shooter, config.damage) * charge); // Full charge = 130 (one shot splat!)
 
     if (hit.hit && hit.hitPlayerId) {
       const target = allPlayers.find((p) => p.id === hit.hitPlayerId);
       if (target && target.alive && !target.isInvulnerable(now)) {
         result.hitPlayerId = target.id;
-        target.hp -= damage;
-        target.lastDamageTime = now;
+        this.applyTargetDamage(target, chargeDamage, now);
 
         if (target.hp <= 0) {
           target.hp = 0;
@@ -632,8 +654,8 @@ export class WeaponSimulation {
     }
 
     // Paint continuous beam line on the ground!
-    const startUv = worldToUV(muzzleOrigin.x, muzzleOrigin.z);
-    const endUv = worldToUV(hitPoint.x, hitPoint.z);
+    const startUv = worldToUV(muzzleOrigin.x, muzzleOrigin.z, this.mapSize);
+    const endUv = worldToUV(hitPoint.x, hitPoint.z, this.mapSize);
     const beamPaint = this.createPaintEvent(
       shooter.team,
       hitPoint.x,
@@ -642,7 +664,7 @@ export class WeaponSimulation {
       seed,
       startUv.u,
       startUv.v,
-      (config.range + 10) / ARENA_SIZE
+      (config.range + 10) / this.mapSize
     );
     result.paintEvents.push(beamPaint);
     this.awardSpecialForPaint(shooter, this.lastCreatedNewlyPainted);
@@ -657,11 +679,12 @@ export class WeaponSimulation {
       return { fired: false, paintEvents: [] };
     }
 
-    if (shooter.ink < config.inkCost) {
+    const shotCost = this.mainInkCost(shooter, config.inkCost);
+    if (shooter.ink < shotCost) {
       return { fired: false, paintEvents: [] };
     }
 
-    shooter.ink -= config.inkCost;
+    shooter.ink -= shotCost;
     shooter.lastShotTime = now;
     shooter.lastFiredTime = now;
     shooter.lastPaintU = undefined;
@@ -780,8 +803,7 @@ export class WeaponSimulation {
 
     if (damagedPlayer && damagedPlayer.alive && !damagedPlayer.isInvulnerable(now)) {
       result.hitPlayerId = damagedPlayer.id;
-      damagedPlayer.hp -= config.damage;
-      damagedPlayer.lastDamageTime = now;
+      this.applyTargetDamage(damagedPlayer, this.mainDamage(shooter, config.damage), now);
 
       if (damagedPlayer.hp <= 0) {
         damagedPlayer.hp = 0;
@@ -1018,13 +1040,13 @@ export class WeaponSimulation {
         sub.position.z += sub.velocity.z * dt;
 
         // Bounce off arena walls
-        if (Math.abs(sub.position.x) >= ARENA_HALF_SIZE - 1.5) {
+        if (Math.abs(sub.position.x) >= this.mapSize / 2 - 1.5) {
           sub.velocity.x = -sub.velocity.x;
-          sub.position.x = Math.sign(sub.position.x) * (ARENA_HALF_SIZE - 1.5);
+          sub.position.x = Math.sign(sub.position.x) * (this.mapSize / 2 - 1.5);
         }
-        if (Math.abs(sub.position.z) >= ARENA_HALF_SIZE - 1.5) {
+        if (Math.abs(sub.position.z) >= this.mapSize / 2 - 1.5) {
           sub.velocity.z = -sub.velocity.z;
-          sub.position.z = Math.sign(sub.position.z) * (ARENA_HALF_SIZE - 1.5);
+          sub.position.z = Math.sign(sub.position.z) * (this.mapSize / 2 - 1.5);
         }
 
         // Leave continuous paint trail
@@ -1295,7 +1317,8 @@ export class WeaponSimulation {
   }
 
   public awardSpecialMeter(player: PlayerState, points: number): void {
-    player.specialMeter = Math.min(SPECIAL_METER_MAX, player.specialMeter + points);
+    const gain = points * skillMultiplier(player.skills, 'special_charge');
+    player.specialMeter = Math.min(SPECIAL_METER_MAX, player.specialMeter + gain);
   }
 
   createDeathPaintByEnemyInk(victim: PlayerState, now: number = Date.now()): PaintEvent {
@@ -1320,8 +1343,8 @@ export class WeaponSimulation {
     prevV?: number,
     maxDistUV: number = CONTINUOUS_PAINT_MAX_DIST_UV
   ): PaintEvent {
-    const { u, v } = worldToUV(worldX, worldZ);
-    const radiusUV = radiusWorld / ARENA_SIZE;
+    const { u, v } = worldToUV(worldX, worldZ, this.mapSize);
+    const radiusUV = radiusWorld / this.mapSize;
 
     let validPrevU = prevU;
     let validPrevV = prevV;

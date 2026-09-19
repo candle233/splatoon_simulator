@@ -7,6 +7,7 @@ import {
   uvToPaintGrid,
   worldToUV
 } from '@ink/shared';
+import type { ZoneRect } from '@ink/shared';
 
 export class PaintGrid {
   readonly resolution: number;
@@ -16,12 +17,24 @@ export class PaintGrid {
   private pinkCount = 0;
   private cyanCount = 0;
   private neutralCount: number;
+  /** Active map edge length for world<->UV conversion. */
+  private mapSize = 100;
 
   constructor(resolution = PAINT_GRID_RES) {
     this.resolution = resolution;
     this.totalCells = resolution * resolution;
     this.grid = new Uint8Array(this.totalCells);
     this.neutralCount = this.totalCells;
+  }
+
+  setMapSize(size: number): void {
+    if (size > 0) {
+      this.mapSize = size;
+    }
+  }
+
+  getMapSize(): number {
+    return this.mapSize;
   }
 
   reset(): void {
@@ -32,7 +45,7 @@ export class PaintGrid {
   }
 
   getInkAt(worldX: number, worldZ: number): Team {
-    const { u, v } = worldToUV(worldX, worldZ);
+    const { u, v } = worldToUV(worldX, worldZ, this.mapSize);
     const { gx, gy } = uvToPaintGrid(u, v, this.resolution);
     const idx = gy * this.resolution + gx;
     return (this.grid[idx] ?? Team.NEUTRAL) as Team;
@@ -130,5 +143,34 @@ export class PaintGrid {
       pinkPercentage: pinkPct,
       cyanPercentage: cyanPct
     };
+  }
+
+  /**
+   * Counts team-owned cells inside a world-space rectangle (Splat Zones).
+   * Neutral / unpainted cells are excluded from `total`.
+   */
+  getZoneControl(rect: ZoneRect): { pink: number; cyan: number; total: number } {
+    const half = this.mapSize / 2;
+    const uMin = Math.max(0, (rect.x - rect.w / 2 + half) / this.mapSize);
+    const uMax = Math.min(1, (rect.x + rect.w / 2 + half) / this.mapSize);
+    const vMin = Math.max(0, (rect.z - rect.d / 2 + half) / this.mapSize);
+    const vMax = Math.min(1, (rect.z + rect.d / 2 + half) / this.mapSize);
+
+    const gxMin = Math.floor(uMin * this.resolution);
+    const gxMax = Math.ceil(uMax * this.resolution) - 1;
+    const gyMin = Math.floor(vMin * this.resolution);
+    const gyMax = Math.ceil(vMax * this.resolution) - 1;
+
+    let pink = 0;
+    let cyan = 0;
+    for (let gy = gyMin; gy <= gyMax; gy++) {
+      const rowOffset = gy * this.resolution;
+      for (let gx = gxMin; gx <= gxMax; gx++) {
+        const cell = this.grid[rowOffset + gx];
+        if (cell === Team.PINK) pink++;
+        else if (cell === Team.CYAN) cyan++;
+      }
+    }
+    return { pink, cyan, total: pink + cyan };
   }
 }

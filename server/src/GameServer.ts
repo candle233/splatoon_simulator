@@ -3,12 +3,12 @@ import express from 'express';
 import cors from 'cors';
 import { Server, Socket } from 'socket.io';
 import {
-  ARENA_OBSTACLES,
   FIXED_DT,
   GameOverPayload,
   INPUT_STALE_MS,
   LobbyPlayerState,
   LobbyStatePayload,
+  MAX_BOTS,
   MAX_PAINT_EVENTS_PER_MATCH,
   MAX_PLAYERS,
   MatchPhase,
@@ -17,18 +17,22 @@ import {
   PROTOCOL_VERSION,
   PaintEvent,
   PlayerInput,
-  PlayerMode,
   RESPAWN_TIME,
   ShotEventPayload,
   SnapshotPayload,
-  TICK_RATE,
   Team,
   WeaponType,
   WelcomePayload,
-  getSpawnPosition
+  getMapDef,
+  getSpawnPosition,
+  isValidGameMode,
+  isValidMapId,
+  sanitizeSkills
 } from '@ink/shared';
+import type { GameMode, MapId } from '@ink/shared';
 
 import { CollisionWorld } from './Collision.js';
+import { BotAI } from './BotAI.js';
 import { Match } from './Match.js';
 import { MovementSimulation } from './MovementSimulation.js';
 import { PaintGrid } from './PaintGrid.js';
@@ -37,18 +41,23 @@ import { RateLimiter } from './RateLimiter.js';
 import { WeaponSimulation } from './WeaponSimulation.js';
 import { sanitizePlayerInput } from './validation.js';
 
+const BOT_WEAPONS: WeaponType[] = ['shooter', 'roller', 'charger', 'slosher'];
+
 export class GameServer {
   private app = express();
   private httpServer: HttpServer;
   private io: Server;
 
-  private collisionWorld = new CollisionWorld(ARENA_OBSTACLES);
+  private collisionWorld = new CollisionWorld(getMapDef().obstacles);
   private paintGrid = new PaintGrid();
   private movementSim: MovementSimulation;
   private weaponSim: WeaponSimulation;
   private match: Match;
+  private botAI = new BotAI();
 
   private players: Map<string, PlayerState> = new Map();
+  /** Bot ids in the order they were added (for host removal). */
+  private botOrder: string[] = [];
   private latestInputs: Map<string, PlayerInput> = new Map();
   private paintHistory: PaintEvent[] = [];
   private tickPaintEvents: PaintEvent[] = [];
@@ -59,6 +68,9 @@ export class GameServer {
   private playerLastActiveTime: Map<string, number> = new Map();
   private playerLastInputAt: Map<string, number> = new Map();
 
+  private mapId: MapId = getMapDef().id;
+  private mapSize = getMapDef().size;
+
   private rateLimiter = new RateLimiter(60, 40);
   private isRunning = false;
   private loopInterval?: NodeJS.Timeout;
@@ -66,7 +78,14 @@ export class GameServer {
   constructor() {
     this.app.use(cors());
     this.app.get('/health', (_req, res) => {
-      res.json({ status: 'ok', players: this.players.size, phase: this.match.phase });
+      res.json({
+        status: 'ok',
+        players: this.players.size,
+        bots: this.botOrder.length,
+        phase: this.match.phase,
+        mode: this.match.mode,
+        map: this.mapId
+      });
     });
 
     this.httpServer = createServer(this.app);
@@ -81,8 +100,15 @@ export class GameServer {
     this.weaponSim = new WeaponSimulation(this.collisionWorld, this.paintGrid);
     this.match = new Match(this.paintGrid, () => this.handleMatchReset());
     this.match.autoStart = false;
+    this.applyMapSize();
 
     this.setupSocketHandlers();
+  }
+
+  private applyMapSize(): void {
+    this.paintGrid.setMapSize(this.mapSize);
+    this.movementSim.setMapSize(this.mapSize);
+    this.weaponSim.setMapSize(this.mapSize);
   }
 
   private setupSocketHandlers(): void {
@@ -100,7 +126,7 @@ export class GameServer {
 
     const playerId = socket.id;
 
-    // Team balancing
+    // Team balancing (bots count toward occupancy)
     let pinkCount = 0;
     let cyanCount = 0;
     for (const p of this.players.values()) {
@@ -118,7 +144,7 @@ export class GameServer {
     }
 
     const slotIndex = assignedTeam === Team.PINK ? pinkCount : cyanCount;
-    const spawnPos = getSpawnPosition(assignedTeam, slotIndex);
+    const spawnPos = getSpawnPosition(assignedTeam, slotIndex, this.activeMap().spawnX);
     const player = new PlayerState(playerId, assignedTeam, slotIndex, spawnPos);
     this.players.set(playerId, player);
 
@@ -140,7 +166,9 @@ export class GameServer {
       paintHistory: this.paintHistory.slice(0, PAINT_HISTORY_CHUNK_SIZE),
       totalPaintEvents: this.paintHistory.length,
       obstacles: this.collisionWorld.getObstacles(),
-      lobby: this.getLobbyState()
+      lobby: this.getLobbyState(),
+      mapId: this.mapId,
+      mapSize: this.mapSize
     };
 
     socket.emit(PROTOCOL_EVENTS.S2C_WELCOME, welcomePayload);
@@ -179,7 +207,7 @@ export class GameServer {
       }
     });
 
-    socket.on(PROTOCOL_EVENTS.C2S_LOBBY_UPDATE, (data: { name?: string; team?: Team; weaponType?: WeaponType; ready?: boolean }) => {
+    socket.on(PROTOCOL_EVENTS.C2S_LOBBY_UPDATE, (data: Record<string, unknown>) => {
       if (!data || typeof data !== 'object') return;
       const p = this.players.get(playerId);
       if (!p) return;
@@ -194,13 +222,16 @@ export class GameServer {
           for (const other of this.players.values()) {
             if (other.id !== p.id && other.team === p.team) teamCount++;
           }
-          (p as any).slotIndex = teamCount;
-          const newSpawn = getSpawnPosition(p.team, teamCount);
+          (p as unknown as { slotIndex: number }).slotIndex = teamCount;
+          const newSpawn = getSpawnPosition(p.team, teamCount, this.activeMap().spawnX);
           p.position = { ...newSpawn };
         }
       }
-      if (data.weaponType && ['shooter', 'roller', 'charger', 'slosher'].includes(data.weaponType)) {
-        p.weaponType = data.weaponType;
+      if (typeof data.weaponType === 'string' && ['shooter', 'roller', 'charger', 'slosher'].includes(data.weaponType)) {
+        p.weaponType = data.weaponType as WeaponType;
+      }
+      if ('skills' in data) {
+        p.skills = sanitizeSkills(data.skills);
       }
       if (typeof data.ready === 'boolean') {
         if (data.ready) {
@@ -229,6 +260,52 @@ export class GameServer {
       }
     });
 
+    // Host-only bot management
+    socket.on(PROTOCOL_EVENTS.C2S_LOBBY_ADD_BOT, (data?: { team?: number }) => {
+      if (playerId !== this.hostPlayerId) return;
+      if (this.match.phase !== MatchPhase.WAITING) return;
+      if (this.botOrder.length >= MAX_BOTS) return;
+      if (this.players.size >= MAX_PLAYERS) return;
+
+      const requestedTeam = data && data.team === Team.PINK ? Team.PINK : data && data.team === Team.CYAN ? Team.CYAN : undefined;
+      const bot = this.addBot(requestedTeam);
+      if (bot) {
+        this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_JOINED, bot.toSnapshot());
+        this.broadcastLobbyState();
+      }
+    });
+
+    socket.on(PROTOCOL_EVENTS.C2S_LOBBY_REMOVE_BOT, (data?: { botId?: string }) => {
+      if (playerId !== this.hostPlayerId) return;
+      if (this.match.phase !== MatchPhase.WAITING) return;
+
+      const removed = this.removeBot(data?.botId);
+      if (removed) {
+        this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, removed.id);
+        this.broadcastLobbyState();
+      }
+    });
+
+    // Host-only match configuration (mode + map), WAITING phase only
+    socket.on(PROTOCOL_EVENTS.C2S_MATCH_CONFIG, (data: { mode?: unknown; mapId?: unknown }) => {
+      if (playerId !== this.hostPlayerId) return;
+      if (this.match.phase !== MatchPhase.WAITING) return;
+      if (!data || typeof data !== 'object') return;
+
+      const mode = isValidGameMode(data.mode) ? data.mode : undefined;
+      const mapId = isValidMapId(data.mapId) ? data.mapId : undefined;
+      if (!mode && !mapId) return;
+
+      const mapChanged = mapId !== undefined && mapId !== this.mapId;
+      if (mapChanged) {
+        this.switchMap(mapId as MapId);
+      }
+      this.match.setConfig(mode, mapChanged ? undefined : mapId);
+
+      this.io.emit(PROTOCOL_EVENTS.S2C_MATCH_STATE, this.match.getSnapshot(Date.now()));
+      this.broadcastLobbyState();
+    });
+
     socket.on(PROTOCOL_EVENTS.C2S_PING, (clientTimestamp: unknown) => {
       if (!this.rateLimiter.consume(`ping:${playerId}`, 1)) return;
       socket.emit(PROTOCOL_EVENTS.S2C_PONG, {
@@ -242,6 +319,90 @@ export class GameServer {
     });
   }
 
+  private activeMap() {
+    return getMapDef(this.mapId);
+  }
+
+  /** Swaps the active map: obstacles, bounds, paint state and spawn positions. */
+  private switchMap(mapId: MapId): void {
+    this.mapId = mapId;
+    const mapDef = getMapDef(mapId);
+    this.mapSize = mapDef.size;
+    this.collisionWorld.setObstacles(mapDef.obstacles, mapDef.size);
+    this.applyMapSize();
+    this.paintGrid.reset();
+    this.paintHistory = [];
+    this.tickPaintEvents = [];
+    this.tickShotEvents = [];
+    this.weaponSim.reset();
+
+    const now = Date.now();
+    let pinkIdx = 0;
+    let cyanIdx = 0;
+    for (const player of this.players.values()) {
+      const slot = player.team === Team.PINK ? pinkIdx++ : cyanIdx++;
+      (player as unknown as { slotIndex: number }).slotIndex = slot;
+      const spawn = getSpawnPosition(player.team, slot, mapDef.spawnX);
+      player.respawn(spawn, now, 0);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Bot management
+  // ---------------------------------------------------------------------
+
+  addBot(requestedTeam?: Team, weaponType?: WeaponType): PlayerState | null {
+    if (this.players.size >= MAX_PLAYERS || this.botOrder.length >= MAX_BOTS) {
+      return null;
+    }
+
+    let pinkCount = 0;
+    let cyanCount = 0;
+    for (const p of this.players.values()) {
+      if (p.team === Team.PINK) pinkCount++;
+      else if (p.team === Team.CYAN) cyanCount++;
+    }
+
+    let team: Team;
+    if (requestedTeam === Team.PINK || requestedTeam === Team.CYAN) {
+      team = requestedTeam;
+    } else {
+      team = pinkCount <= cyanCount ? Team.PINK : Team.CYAN;
+    }
+
+    const slotIndex = team === Team.PINK ? pinkCount : cyanCount;
+    const spawnPos = getSpawnPosition(team, slotIndex, this.activeMap().spawnX);
+    const identity = this.botAI.nextIdentity();
+    const bot = new PlayerState(identity.id, team, slotIndex, spawnPos, identity.name);
+    bot.isBot = true;
+    bot.weaponType =
+      weaponType && BOT_WEAPONS.includes(weaponType)
+        ? weaponType
+        : (BOT_WEAPONS[Math.floor(Math.random() * BOT_WEAPONS.length)] ?? 'shooter');
+    this.players.set(bot.id, bot);
+    this.botOrder.push(bot.id);
+    return bot;
+  }
+
+  removeBot(botId?: string): PlayerState | null {
+    let targetId: string | undefined;
+    if (botId && this.botOrder.includes(botId)) {
+      targetId = botId;
+    } else {
+      targetId = this.botOrder[this.botOrder.length - 1];
+    }
+    if (!targetId) return null;
+
+    const bot = this.players.get(targetId);
+    if (!bot) return null;
+
+    this.players.delete(targetId);
+    this.botOrder = this.botOrder.filter((id) => id !== targetId);
+    this.botAI.forget(targetId);
+    this.readyPlayers.delete(targetId);
+    return bot;
+  }
+
   private getLobbyState(): LobbyStatePayload {
     const players: LobbyPlayerState[] = Array.from(this.players.values()).map((p) => ({
       id: p.id,
@@ -249,12 +410,19 @@ export class GameServer {
       team: p.team,
       weaponType: p.weaponType,
       ready: this.readyPlayers.has(p.id),
-      isHost: p.id === this.hostPlayerId
+      isHost: p.id === this.hostPlayerId,
+      isBot: p.isBot || undefined,
+      skills: p.skills.length > 0 ? p.skills : undefined
     }));
     return {
       players,
-      countdown: this.match.phase === MatchPhase.COUNTDOWN ? Math.max(0, Math.ceil((this.match.matchStartAt - Date.now()) / 1000)) : 0,
-      inMatch: this.match.phase === MatchPhase.PLAYING || this.match.phase === MatchPhase.COUNTDOWN
+      countdown:
+        this.match.phase === MatchPhase.COUNTDOWN
+          ? Math.max(0, Math.ceil((this.match.matchStartAt - Date.now()) / 1000))
+          : 0,
+      inMatch: this.match.phase === MatchPhase.PLAYING || this.match.phase === MatchPhase.COUNTDOWN,
+      mode: this.match.mode,
+      mapId: this.mapId
     };
   }
 
@@ -272,11 +440,34 @@ export class GameServer {
     this.rateLimiter.remove(`ping:${playerId}`);
 
     if (this.hostPlayerId === playerId) {
-      this.hostPlayerId = this.players.keys().next().value;
+      this.hostPlayerId = Array.from(this.players.keys()).find((id) => !this.players.get(id)?.isBot);
+      if (!this.hostPlayerId) {
+        this.hostPlayerId = this.players.keys().next().value;
+      }
     }
 
     this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, playerId);
     this.broadcastLobbyState();
+
+    // Any human left? Otherwise tear down the bot match.
+    const humansLeft = Array.from(this.players.values()).some((p) => !p.isBot);
+    if (!humansLeft && this.botOrder.length > 0) {
+      for (const botId of [...this.botOrder]) {
+        this.players.delete(botId);
+        this.botAI.forget(botId);
+        this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, botId);
+      }
+      this.botOrder = [];
+    }
+
+    // The host may have been removed above (left, or cleared with the bots);
+    // clear the pointer so the next human to join becomes the host.
+    if (!this.hostPlayerId || !this.players.has(this.hostPlayerId)) {
+      this.hostPlayerId = Array.from(this.players.keys()).find((id) => !this.players.get(id)?.isBot);
+      if (!this.hostPlayerId) {
+        this.hostPlayerId = undefined;
+      }
+    }
 
     if (this.players.size === 0) {
       this.match.update(0, Date.now());
@@ -293,10 +484,10 @@ export class GameServer {
     this.readyPlayers.clear();
     this.weaponSim.reset();
 
-    // Respawn all players at base
+    // Respawn all players (humans + bots) at base
     const now = Date.now();
     for (const player of this.players.values()) {
-      const spawnPos = getSpawnPosition(player.team, player.slotIndex);
+      const spawnPos = getSpawnPosition(player.team, player.slotIndex, this.activeMap().spawnX);
       player.respawn(spawnPos, now, 0);
     }
     this.broadcastLobbyState();
@@ -348,7 +539,15 @@ export class GameServer {
   private fixedUpdate(dt: number): void {
     const now = Date.now();
 
-    // 1. Update Match State Machine
+    // 1. Update Match State Machine (with live TDM kill scores)
+    let pinkKills = 0;
+    let cyanKills = 0;
+    for (const p of this.players.values()) {
+      if (p.team === Team.PINK) pinkKills += p.kills;
+      else if (p.team === Team.CYAN) cyanKills += p.kills;
+    }
+    this.match.setTeamKills(pinkKills, cyanKills);
+
     const matchUpdate = this.match.update(this.players.size, now);
     if (matchUpdate.phaseChanged) {
       this.io.emit(PROTOCOL_EVENTS.S2C_MATCH_STATE, this.match.getSnapshot(now));
@@ -358,143 +557,90 @@ export class GameServer {
       }
     }
 
-    const allPlayersList = Array.from(this.players.values());
-
-    // 2. Simulate Players
-    for (const player of allPlayersList) {
-      if (!player.alive) {
-        // Check respawn timer
-        if (player.respawnAt > 0 && now >= player.respawnAt) {
-          const spawn = getSpawnPosition(player.team, player.slotIndex);
-          player.respawn(spawn, now);
-          this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_RESPAWNED, player.toSnapshot());
-        }
-        continue;
-      }
-
-      // If in COUNTDOWN or GAME_OVER, freeze player movement & firing
-      if (this.match.phase === MatchPhase.COUNTDOWN || this.match.phase === MatchPhase.GAME_OVER) {
-        continue;
-      }
-
-      // Check AFK timeout during active match (Subagent 84)
-      const lastActive = this.playerLastActiveTime.get(player.id) || now;
-      if (this.match.phase === MatchPhase.PLAYING && now - lastActive > 120000) {
-        const sock = this.io.sockets.sockets.get(player.id);
-        if (sock) {
-          sock.emit('error', 'Kicked for inactivity (AFK)');
-          sock.disconnect(true);
-        }
-        continue;
-      }
-
-      // Retrieve latest client input. If the client stopped sending (background tab,
-      // lag spike, disconnect), neutralize held keys so stale input cannot keep the
-      // player running / firing indefinitely.
-      const receivedInput = this.latestInputs.get(player.id);
-      let input = receivedInput;
-      if (receivedInput) {
-        const lastInputAt = this.playerLastInputAt.get(player.id) ?? 0;
-        if (now - lastInputAt > INPUT_STALE_MS) {
-          input = {
-            ...receivedInput,
-            moveX: 0,
-            moveZ: 0,
-            jump: false,
-            fire: false,
-            squid: false
-          };
-        }
-      }
-      if (input) {
-        // Simulate movement and ground DoT
-        const moveRes = this.movementSim.simulatePlayer(player, input, dt, now);
-        if (moveRes.diedByEnemyInk) {
-          player.respawnAt = now + RESPAWN_TIME * 1000;
-          const deathPaint = this.weaponSim.createDeathPaintByEnemyInk(player, now);
-          this.recordPaintEvent(deathPaint);
-          this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_DIED, {
-            victimId: player.id,
-            killerId: undefined,
-            respawnAt: player.respawnAt
-          });
-          continue;
-        }
-
-        // Process Weapon Firing
-        if (input.fire && this.match.phase === MatchPhase.PLAYING) {
-          const isRolling = input.fire && (input.moveX !== 0 || input.moveZ !== 0);
-          const wasFireHeld = player.fireHeld;
-          player.fireHeld = true;
-
-          if (player.weaponType === 'roller' && !isRolling && wasFireHeld) {
-            // Roller held down while stationary; suppress repeated flick swings
-          } else {
-            const shotResult = this.weaponSim.processFire(player, allPlayersList, now, input.chargeLevel, isRolling);
-            if (shotResult.fired) {
-              if (shotResult.origin && shotResult.target) {
-                this.tickShotEvents.push({
-                  shooterId: player.id,
-                  origin: shotResult.origin,
-                  target: shotResult.target,
-                  team: player.team,
-                  weaponType: player.weaponType,
-                  chargeLevel: shotResult.chargeLevel
-                });
-              }
-
-              for (const pe of shotResult.paintEvents) {
-                this.recordPaintEvent(pe);
-              }
-
-              if (shotResult.hitPlayerId) {
-                const shooterSocket = this.io.sockets.sockets.get(player.id);
-                shooterSocket?.emit(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, {
-                  targetId: shotResult.hitPlayerId
-                });
-              }
-
-              if (shotResult.killedPlayerId) {
-                const victim = this.players.get(shotResult.killedPlayerId);
-                if (victim) {
-                  victim.respawnAt = now + RESPAWN_TIME * 1000;
-                  this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_DIED, {
-                    victimId: victim.id,
-                    killerId: player.id,
-                    respawnAt: victim.respawnAt
-                  });
-                }
-              }
-            }
-          }
-        } else {
-          player.fireHeld = false;
-        }
-
-        // Process Sub Weapon
-        if (input.subWeapon && this.match.phase === MatchPhase.PLAYING) {
-          const subRes = this.weaponSim.processSubWeapon(player, allPlayersList, now);
-          if (subRes.spawned && subRes.subEvent) {
-            this.io.emit(PROTOCOL_EVENTS.S2C_SUB_WEAPON_EVENT, subRes.subEvent);
-          }
-        }
-
-        // Process Special Weapon
-        if (input.special && this.match.phase === MatchPhase.PLAYING) {
-          const specRes = this.weaponSim.processSpecial(player, allPlayersList, now);
-          if (specRes.activated && specRes.specialEvent) {
-            this.io.emit(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, specRes.specialEvent);
-          }
-        }
-
-        // Edge flags are one-shot per press; clear them on the stored snapshot so
-        // the next tick (before a newer input arrives) cannot consume them again.
-        input.subWeapon = false;
-        input.special = false;
+    // Splat Zones: award control points at 1 Hz (rate-limited inside Match)
+    if (this.match.phase === MatchPhase.PLAYING && this.match.mode === 'splat_zones') {
+      this.match.tickZone(this.paintGrid.getZoneControl(this.activeMap().zone), now);
+      if ((this.match.phase as MatchPhase) === MatchPhase.GAME_OVER) {
+        // tickZone may end the match on a score limit
+        const zonePts = this.match.getZonePoints();
+        this.io.emit(PROTOCOL_EVENTS.S2C_MATCH_STATE, this.match.getSnapshot(now));
+        this.io.emit(PROTOCOL_EVENTS.S2C_GAME_OVER, {
+          winner: zonePts.pink > zonePts.cyan ? Team.PINK : zonePts.cyan > zonePts.pink ? Team.CYAN : 'DRAW',
+          pinkCoverage: zonePts.pink,
+          cyanCoverage: zonePts.cyan,
+          restartCountdown: 8,
+          mode: this.match.mode
+        } satisfies GameOverPayload);
+        this.broadcastLobbyState();
       }
     }
 
-    // 2.5 Simulate Active Sub-weapons & Specials
+    const allPlayersList = Array.from(this.players.values());
+
+    // 2. Respawn timers (humans + bots)
+    for (const player of allPlayersList) {
+      if (!player.alive && player.respawnAt > 0 && now >= player.respawnAt) {
+        const spawn = getSpawnPosition(player.team, player.slotIndex, this.activeMap().spawnX);
+        player.respawn(spawn, now, RESPAWN_TIME * player.skillMult('quick_respawn'));
+        this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_RESPAWNED, player.toSnapshot());
+      }
+    }
+
+    // 3. Simulate players during WAITING (lobby free roam) and PLAYING
+    if (this.match.phase === MatchPhase.PLAYING || this.match.phase === MatchPhase.WAITING) {
+      for (const player of allPlayersList) {
+        if (!player.alive) continue;
+
+        if (player.isBot) {
+          if (this.match.phase !== MatchPhase.PLAYING) continue;
+          const botInput = this.botAI.think(
+            player,
+            allPlayersList,
+            this.collisionWorld,
+            this.paintGrid,
+            this.mapSize,
+            now
+          );
+          this.processPlayerTick(player, botInput, dt, now);
+          continue;
+        }
+
+        // AFK timeout during active match (humans only)
+        const lastActive = this.playerLastActiveTime.get(player.id) || now;
+        if (this.match.phase === MatchPhase.PLAYING && now - lastActive > 120000) {
+          const sock = this.io.sockets.sockets.get(player.id);
+          if (sock) {
+            sock.emit('error', 'Kicked for inactivity (AFK)');
+            sock.disconnect(true);
+          }
+          continue;
+        }
+
+        // Retrieve latest client input. If the client stopped sending (background tab,
+        // lag spike, disconnect), neutralize held keys so stale input cannot keep the
+        // player running / firing indefinitely.
+        const receivedInput = this.latestInputs.get(player.id);
+        let input = receivedInput;
+        if (receivedInput) {
+          const lastInputAt = this.playerLastInputAt.get(player.id) ?? 0;
+          if (now - lastInputAt > INPUT_STALE_MS) {
+            input = {
+              ...receivedInput,
+              moveX: 0,
+              moveZ: 0,
+              jump: false,
+              fire: false,
+              squid: false
+            };
+          }
+        }
+        if (input) {
+          this.processPlayerTick(player, input, dt, now);
+        }
+      }
+    }
+
+    // 3.5 Simulate Active Sub-weapons & Specials
     if (this.match.phase === MatchPhase.PLAYING) {
       const entityUpdates = this.weaponSim.updateEntities(allPlayersList, dt, now);
       for (const pe of entityUpdates.paintEvents) {
@@ -515,7 +661,7 @@ export class GameServer {
       for (const death of entityUpdates.deaths) {
         const victim = this.players.get(death.victimId);
         if (victim) {
-          victim.respawnAt = now + RESPAWN_TIME * 1000;
+          victim.respawnAt = now + RESPAWN_TIME * 1000 * victim.skillMult('quick_respawn');
           this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_DIED, {
             victimId: victim.id,
             killerId: death.killerId,
@@ -525,7 +671,7 @@ export class GameServer {
       }
     }
 
-    // 3. Broadcast Paint Batch & Shot Events
+    // 4. Broadcast Paint Batch & Shot Events
     if (this.tickPaintEvents.length > 0) {
       this.io.emit(PROTOCOL_EVENTS.S2C_PAINT_BATCH, this.tickPaintEvents);
       this.tickPaintEvents = [];
@@ -538,7 +684,7 @@ export class GameServer {
       this.tickShotEvents = [];
     }
 
-    // 4. Broadcast Snapshot at 20Hz
+    // 5. Broadcast Snapshot at 20Hz
     const lastProcessedInputSeq: Record<string, number> = {};
     for (const player of allPlayersList) {
       lastProcessedInputSeq[player.id] = player.lastProcessedInputSeq;
@@ -552,6 +698,99 @@ export class GameServer {
     };
 
     this.io.emit(PROTOCOL_EVENTS.S2C_SNAPSHOT, snapshotPayload);
+  }
+
+  /**
+   * Shared per-tick pipeline for humans and bots: movement, weapon fire,
+   * sub weapons and specials. Emits death / hit / shot / paint events.
+   */
+  private processPlayerTick(player: PlayerState, input: PlayerInput, dt: number, now: number): void {
+    const allPlayersList = Array.from(this.players.values());
+
+    // Simulate movement and ground DoT
+    const moveRes = this.movementSim.simulatePlayer(player, input, dt, now);
+    if (moveRes.diedByEnemyInk) {
+      player.respawnAt = now + RESPAWN_TIME * 1000 * player.skillMult('quick_respawn');
+      const deathPaint = this.weaponSim.createDeathPaintByEnemyInk(player, now);
+      this.recordPaintEvent(deathPaint);
+      this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_DIED, {
+        victimId: player.id,
+        killerId: undefined,
+        respawnAt: player.respawnAt
+      });
+      return;
+    }
+
+    // Process Weapon Firing
+    if (input.fire && this.match.phase === MatchPhase.PLAYING) {
+      const isRolling = input.fire && (input.moveX !== 0 || input.moveZ !== 0);
+      const wasFireHeld = player.fireHeld;
+      player.fireHeld = true;
+
+      if (player.weaponType === 'roller' && !isRolling && wasFireHeld) {
+        // Roller held down while stationary; suppress repeated flick swings
+      } else {
+        const shotResult = this.weaponSim.processFire(player, allPlayersList, now, input.chargeLevel, isRolling);
+        if (shotResult.fired) {
+          if (shotResult.origin && shotResult.target) {
+            this.tickShotEvents.push({
+              shooterId: player.id,
+              origin: shotResult.origin,
+              target: shotResult.target,
+              team: player.team,
+              weaponType: player.weaponType,
+              chargeLevel: shotResult.chargeLevel
+            });
+          }
+
+          for (const pe of shotResult.paintEvents) {
+            this.recordPaintEvent(pe);
+          }
+
+          if (shotResult.hitPlayerId) {
+            const shooterSocket = this.io.sockets.sockets.get(player.id);
+            shooterSocket?.emit(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, {
+              targetId: shotResult.hitPlayerId
+            });
+          }
+
+          if (shotResult.killedPlayerId) {
+            const victim = this.players.get(shotResult.killedPlayerId);
+            if (victim) {
+              victim.respawnAt = now + RESPAWN_TIME * 1000 * victim.skillMult('quick_respawn');
+              this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_DIED, {
+                victimId: victim.id,
+                killerId: player.id,
+                respawnAt: victim.respawnAt
+              });
+            }
+          }
+        }
+      }
+    } else {
+      player.fireHeld = false;
+    }
+
+    // Process Sub Weapon
+    if (input.subWeapon && this.match.phase === MatchPhase.PLAYING) {
+      const subRes = this.weaponSim.processSubWeapon(player, allPlayersList, now);
+      if (subRes.spawned && subRes.subEvent) {
+        this.io.emit(PROTOCOL_EVENTS.S2C_SUB_WEAPON_EVENT, subRes.subEvent);
+      }
+    }
+
+    // Process Special Weapon
+    if (input.special && this.match.phase === MatchPhase.PLAYING) {
+      const specRes = this.weaponSim.processSpecial(player, allPlayersList, now);
+      if (specRes.activated && specRes.specialEvent) {
+        this.io.emit(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, specRes.specialEvent);
+      }
+    }
+
+    // Edge flags are one-shot per press; clear them on the stored snapshot so
+    // the next tick (before a newer input arrives) cannot consume them again.
+    input.subWeapon = false;
+    input.special = false;
   }
 
   private recordPaintEvent(event: PaintEvent): void {

@@ -11,8 +11,10 @@ import {
   PlayerSnapshot,
   Team,
   Vec3,
-  WeaponType
+  WeaponType,
+  skillMultiplier
 } from '@ink/shared';
+import type { SkillId } from '@ink/shared';
 
 export class PlayerState {
   readonly id: string;
@@ -24,6 +26,10 @@ export class PlayerState {
   specialActive = false;
   specialEndsAt = 0;
   chargeLevel = 0;
+  /** Server-side bots are real players simulated by BotAI each tick. */
+  isBot = false;
+  /** Equipped gear skills; multipliers apply to movement, ink, damage, respawn. */
+  skills: SkillId[] = [];
 
   position: Vec3;
   velocity: Vec3;
@@ -69,6 +75,16 @@ export class PlayerState {
     return now < this.invulnerableUntil;
   }
 
+  /** Multiplier from this player's equipped skills for the given skill id. */
+  skillMult(id: SkillId): number {
+    return skillMultiplier(this.skills, id);
+  }
+
+  /** Effective respawn delay in seconds after gear skills. */
+  respawnDelaySec(base: number): number {
+    return base * this.skillMult('quick_respawn');
+  }
+
   respawn(spawnPos: Vec3, now: number = Date.now(), invulnDurationSec = 2.0): void {
     this.position = { ...spawnPos };
     this.velocity = { x: 0, y: 0, z: 0 };
@@ -104,7 +120,8 @@ export class PlayerState {
     if (!this.alive || this.ink >= MAX_INK) return;
     if (now - this.lastFiredTime < INK_REGEN_DELAY * 1000) return;
 
-    const rate = isSquidInOwnInk ? INK_REGEN_SQUID : INK_REGEN_NORMAL;
+    const base = isSquidInOwnInk ? INK_REGEN_SQUID : INK_REGEN_NORMAL;
+    const rate = base * this.skillMult('ink_recovery');
     this.ink = Math.min(MAX_INK, this.ink + rate * dt);
   }
 
@@ -182,7 +199,9 @@ export class PlayerState {
       mode: this.mode,
       invulnerable: this.isInvulnerable(),
       kills: this.kills,
-      deaths: this.deaths
+      deaths: this.deaths,
+      isBot: this.isBot || undefined,
+      skills: this.skills.length > 0 ? this.skills : undefined
     };
   }
 }
