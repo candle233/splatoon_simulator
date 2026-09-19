@@ -293,11 +293,24 @@ export class PlayerView {
 
     // Left Arm (pivot at shoulder)
     this.leftArm.position.set(-0.38, 1.15, 0);
-    const armGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.5, 8);
+    const armGeo = new THREE.CapsuleGeometry(0.07, 0.36, 4, 8);
     this.geometries.push(armGeo);
     const leftArmMesh = new THREE.Mesh(armGeo, darkMat);
     leftArmMesh.position.y = -0.22;
     this.leftArm.add(leftArmMesh);
+
+    const shoulderPadGeo = new THREE.SphereGeometry(0.13, 10, 10);
+    this.geometries.push(shoulderPadGeo);
+    const handGeo = new THREE.SphereGeometry(0.075, 8, 8);
+    this.geometries.push(handGeo);
+
+    const leftShoulder = new THREE.Mesh(shoulderPadGeo, bodyMat);
+    leftShoulder.position.y = 0.02;
+    this.leftArm.add(leftShoulder);
+
+    const leftHand = new THREE.Mesh(handGeo, darkMat);
+    leftHand.position.y = -0.47;
+    this.leftArm.add(leftHand);
     this.humanoidGroup.add(this.leftArm);
 
     // Right Arm (pivot at shoulder)
@@ -305,34 +318,62 @@ export class PlayerView {
     const rightArmMesh = new THREE.Mesh(armGeo, darkMat);
     rightArmMesh.position.y = -0.22;
     this.rightArm.add(rightArmMesh);
+
+    const rightShoulder = new THREE.Mesh(shoulderPadGeo, bodyMat);
+    rightShoulder.position.y = 0.02;
+    this.rightArm.add(rightShoulder);
+
+    const rightHand = new THREE.Mesh(handGeo, darkMat);
+    rightHand.position.y = -0.47;
+    this.rightArm.add(rightHand);
     this.humanoidGroup.add(this.rightArm);
 
     // Left Leg (pivot at hip)
-    this.leftLeg.position.set(-0.16, 0.55, 0);
-    const legGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.55, 8);
+    this.leftLeg.position.set(-0.16, 0.57, 0);
+    const legGeo = new THREE.CapsuleGeometry(0.09, 0.37, 4, 8);
     this.geometries.push(legGeo);
     const leftLegMesh = new THREE.Mesh(legGeo, darkMat);
     leftLegMesh.position.y = -0.25;
     leftLegMesh.castShadow = true;
     this.leftLeg.add(leftLegMesh);
 
+    const kneePadGeo = new THREE.SphereGeometry(0.075, 8, 8);
+    this.geometries.push(kneePadGeo);
+    const leftKnee = new THREE.Mesh(kneePadGeo, bodyMat);
+    leftKnee.position.set(0, -0.33, -0.04);
+    this.leftLeg.add(leftKnee);
+
     const bootGeo = new THREE.BoxGeometry(0.16, 0.12, 0.25);
     this.geometries.push(bootGeo);
     const leftBoot = new THREE.Mesh(bootGeo, bodyMat);
-    leftBoot.position.set(0, -0.5, -0.05);
+    leftBoot.position.set(0, -0.49, -0.05);
     this.leftLeg.add(leftBoot);
+
+    const soleGeo = new THREE.BoxGeometry(0.19, 0.045, 0.29);
+    this.geometries.push(soleGeo);
+    const leftSole = new THREE.Mesh(soleGeo, darkMat);
+    leftSole.position.set(0, -0.555, -0.05);
+    this.leftLeg.add(leftSole);
     this.humanoidGroup.add(this.leftLeg);
 
     // Right Leg (pivot at hip)
-    this.rightLeg.position.set(0.16, 0.55, 0);
+    this.rightLeg.position.set(0.16, 0.57, 0);
     const rightLegMesh = new THREE.Mesh(legGeo, darkMat);
     rightLegMesh.position.y = -0.25;
     rightLegMesh.castShadow = true;
     this.rightLeg.add(rightLegMesh);
 
+    const rightKnee = new THREE.Mesh(kneePadGeo, bodyMat);
+    rightKnee.position.set(0, -0.33, -0.04);
+    this.rightLeg.add(rightKnee);
+
     const rightBoot = new THREE.Mesh(bootGeo, bodyMat);
-    rightBoot.position.set(0, -0.5, -0.05);
+    rightBoot.position.set(0, -0.49, -0.05);
     this.rightLeg.add(rightBoot);
+
+    const rightSole = new THREE.Mesh(soleGeo, darkMat);
+    rightSole.position.set(0, -0.555, -0.05);
+    this.rightLeg.add(rightSole);
     this.humanoidGroup.add(this.rightLeg);
 
     // ==========================================
@@ -341,18 +382,66 @@ export class PlayerView {
     this.weaponAnchor.position.set(0.32, 0.85, -0.3);
 
     // 2.1 Shooter (Ink Blaster)
-    const shooterBarGeo = new THREE.CylinderGeometry(0.06, 0.09, 0.65, 8);
+    const shooterBarGeo = new THREE.CylinderGeometry(0.06, 0.09, 0.65, 10);
     this.geometries.push(shooterBarGeo);
     const shooterBar = new THREE.Mesh(shooterBarGeo, darkMat);
     shooterBar.rotation.x = Math.PI / 2;
     this.shooterGroup.add(shooterBar);
 
-    const nozzleGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.18, 8);
+    const nozzleGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.18, 10);
     this.geometries.push(nozzleGeo);
     const nozzle = new THREE.Mesh(nozzleGeo, bodyMat);
     nozzle.rotation.x = Math.PI / 2;
     nozzle.position.z = -0.38;
     this.shooterGroup.add(nozzle);
+
+    // Muzzle bore
+    const shooterBoreGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.02, 10);
+    this.geometries.push(shooterBoreGeo);
+    const shooterBore = new THREE.Mesh(shooterBoreGeo, accentMat);
+    shooterBore.rotation.x = Math.PI / 2;
+    shooterBore.position.z = -0.475;
+    this.shooterGroup.add(shooterBore);
+
+    // Receiver body
+    const shooterBodyGeo = new THREE.BoxGeometry(0.15, 0.17, 0.3);
+    this.geometries.push(shooterBodyGeo);
+    const shooterBody = new THREE.Mesh(shooterBodyGeo, bodyMat);
+    shooterBody.position.z = 0.2;
+    this.shooterGroup.add(shooterBody);
+
+    // Top ink cartridge (glass + liquid)
+    const shooterTankGlassGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.17, 10);
+    const shooterTankInkGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.14, 10);
+    this.geometries.push(shooterTankGlassGeo, shooterTankInkGeo);
+    const shooterTankGlass = new THREE.Mesh(shooterTankGlassGeo, glassMat);
+    shooterTankGlass.position.set(0, 0.15, 0.12);
+    const shooterTankInk = new THREE.Mesh(shooterTankInkGeo, liquidMat);
+    shooterTankInk.position.set(0, 0.15, 0.12);
+    this.shooterGroup.add(shooterTankGlass, shooterTankInk);
+
+    // Front sight
+    const shooterSightGeo = new THREE.BoxGeometry(0.025, 0.06, 0.1);
+    this.geometries.push(shooterSightGeo);
+    const shooterSight = new THREE.Mesh(shooterSightGeo, darkMat);
+    shooterSight.position.set(0, 0.1, -0.2);
+    this.shooterGroup.add(shooterSight);
+
+    // Grip + trigger guard
+    const shooterGripGeo = new THREE.BoxGeometry(0.07, 0.2, 0.09);
+    this.geometries.push(shooterGripGeo);
+    const shooterGrip = new THREE.Mesh(shooterGripGeo, darkMat);
+    shooterGrip.position.set(0, -0.14, 0.24);
+    shooterGrip.rotation.x = 0.4;
+    this.shooterGroup.add(shooterGrip);
+
+    const shooterGuardGeo = new THREE.TorusGeometry(0.05, 0.012, 6, 14);
+    this.geometries.push(shooterGuardGeo);
+    const shooterGuard = new THREE.Mesh(shooterGuardGeo, darkMat);
+    shooterGuard.rotation.y = Math.PI / 2;
+    shooterGuard.position.set(0, -0.07, 0.12);
+    this.shooterGroup.add(shooterGuard);
+
     this.weaponAnchor.add(this.shooterGroup);
 
     // 2.2 Roller (Ink Roller)
@@ -363,13 +452,46 @@ export class PlayerView {
     rollerHandle.position.set(0, 0, -0.1);
     this.rollerGroup.add(rollerHandle);
 
-    const rollerCylinderGeo = new THREE.CylinderGeometry(0.24, 0.24, 1.4, 14);
+    // Handle crossbar grip
+    const rollerGripGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.34, 8);
+    this.geometries.push(rollerGripGeo);
+    const rollerGrip = new THREE.Mesh(rollerGripGeo, bodyMat);
+    rollerGrip.rotation.z = Math.PI / 2;
+    rollerGrip.position.set(0, 0.4, 0.11);
+    this.rollerGroup.add(rollerGrip);
+
+    const rollerCylinderGeo = new THREE.CylinderGeometry(0.24, 0.24, 1.4, 16);
     this.geometries.push(rollerCylinderGeo);
     const rollerCylinder = new THREE.Mesh(rollerCylinderGeo, bodyMat);
     rollerCylinder.rotation.z = Math.PI / 2;
     rollerCylinder.position.set(0, -0.35, -0.6);
     this.rollerCylinderMesh = rollerCylinder;
     this.rollerGroup.add(rollerCylinder);
+
+    // Axle + end caps
+    const rollerAxleGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.52, 8);
+    const rollerCapGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 12);
+    this.geometries.push(rollerAxleGeo, rollerCapGeo);
+    const rollerAxle = new THREE.Mesh(rollerAxleGeo, darkMat);
+    rollerAxle.rotation.z = Math.PI / 2;
+    rollerAxle.position.set(0, -0.35, -0.6);
+    this.rollerGroup.add(rollerAxle);
+    for (let side = -1; side <= 1; side += 2) {
+      const cap = new THREE.Mesh(rollerCapGeo, darkMat);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(side * 0.72, -0.35, -0.6);
+      this.rollerGroup.add(cap);
+    }
+
+    // Tread ribs
+    const rollerRibGeo = new THREE.TorusGeometry(0.245, 0.02, 6, 20);
+    this.geometries.push(rollerRibGeo);
+    for (const ribX of [-0.45, 0, 0.45]) {
+      const rib = new THREE.Mesh(rollerRibGeo, darkMat);
+      rib.rotation.y = Math.PI / 2;
+      rib.position.set(ribX, -0.35, -0.6);
+      this.rollerGroup.add(rib);
+    }
     this.rollerGroup.visible = false;
     this.weaponAnchor.add(this.rollerGroup);
 
@@ -379,12 +501,49 @@ export class PlayerView {
     const chargerBody = new THREE.Mesh(chargerBodyGeo, darkMat);
     this.chargerGroup.add(chargerBody);
 
-    const chargerBarrelGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 8);
+    // Stock + grip
+    const chargerStockGeo = new THREE.BoxGeometry(0.08, 0.13, 0.24);
+    this.geometries.push(chargerStockGeo);
+    const chargerStock = new THREE.Mesh(chargerStockGeo, bodyMat);
+    chargerStock.position.set(0, -0.02, 0.35);
+    this.chargerGroup.add(chargerStock);
+
+    const chargerGripGeo = new THREE.BoxGeometry(0.06, 0.17, 0.08);
+    this.geometries.push(chargerGripGeo);
+    const chargerGrip = new THREE.Mesh(chargerGripGeo, darkMat);
+    chargerGrip.position.set(0, -0.13, 0.12);
+    chargerGrip.rotation.x = 0.35;
+    this.chargerGroup.add(chargerGrip);
+
+    const chargerBarrelGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 10);
     this.geometries.push(chargerBarrelGeo);
     const chargerBarrel = new THREE.Mesh(chargerBarrelGeo, bodyMat);
     chargerBarrel.rotation.x = Math.PI / 2;
     chargerBarrel.position.z = -0.7;
     this.chargerGroup.add(chargerBarrel);
+
+    // Barrel shroud rings + energy coil
+    const chargerRingGeo = new THREE.TorusGeometry(0.045, 0.014, 6, 14);
+    this.geometries.push(chargerRingGeo);
+    for (const ringZ of [-0.5, -0.9]) {
+      const ring = new THREE.Mesh(chargerRingGeo, bodyMat);
+      ring.position.set(0, 0, ringZ);
+      this.chargerGroup.add(ring);
+    }
+
+    const chargerCoilGeo = new THREE.TorusGeometry(0.08, 0.02, 6, 16);
+    this.geometries.push(chargerCoilGeo);
+    const chargerCoil = new THREE.Mesh(chargerCoilGeo, accentMat);
+    chargerCoil.position.set(0, 0, -0.28);
+    this.chargerGroup.add(chargerCoil);
+
+    // Muzzle brake
+    const chargerMuzzleGeo = new THREE.CylinderGeometry(0.042, 0.05, 0.07, 8);
+    this.geometries.push(chargerMuzzleGeo);
+    const chargerMuzzle = new THREE.Mesh(chargerMuzzleGeo, darkMat);
+    chargerMuzzle.rotation.x = Math.PI / 2;
+    chargerMuzzle.position.z = -1.31;
+    this.chargerGroup.add(chargerMuzzle);
 
     const scopeGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8);
     this.geometries.push(scopeGeo);
@@ -392,6 +551,14 @@ export class PlayerView {
     scope.rotation.x = Math.PI / 2;
     scope.position.set(0, 0.12, -0.1);
     this.chargerGroup.add(scope);
+
+    // Scope lens
+    const chargerLensGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.02, 10);
+    this.geometries.push(chargerLensGeo);
+    const chargerLens = new THREE.Mesh(chargerLensGeo, visorMat);
+    chargerLens.rotation.x = Math.PI / 2;
+    chargerLens.position.set(0, 0.12, -0.26);
+    this.chargerGroup.add(chargerLens);
 
     // Charger laser sight beam
     const laserGeo = new THREE.CylinderGeometry(0.005, 0.005, 25, 6);
@@ -423,6 +590,35 @@ export class PlayerView {
     bucketMesh.rotation.x = 0.3;
     bucketMesh.position.set(0, -0.1, -0.3);
     this.slosherGroup.add(bucketMesh);
+
+    // Bucket rim, carry handle and ink load (children inherit the tilt)
+    const bucketRimGeo = new THREE.TorusGeometry(0.265, 0.02, 8, 20);
+    this.geometries.push(bucketRimGeo);
+    const bucketRim = new THREE.Mesh(bucketRimGeo, darkMat);
+    bucketRim.rotation.x = Math.PI / 2;
+    bucketRim.position.y = 0.225;
+    bucketMesh.add(bucketRim);
+
+    const bucketHandleGeo = new THREE.TorusGeometry(0.15, 0.018, 6, 16, Math.PI);
+    this.geometries.push(bucketHandleGeo);
+    const bucketHandle = new THREE.Mesh(bucketHandleGeo, darkMat);
+    bucketHandle.position.y = 0.225;
+    bucketMesh.add(bucketHandle);
+
+    const bucketInkGeo = new THREE.CylinderGeometry(0.21, 0.17, 0.08, 14);
+    this.geometries.push(bucketInkGeo);
+    const bucketInk = new THREE.Mesh(bucketInkGeo, liquidMat);
+    bucketInk.position.y = 0.08;
+    bucketMesh.add(bucketInk);
+
+    // Swing shaft from the hand to the bucket
+    const slosherShaftGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.62, 8);
+    this.geometries.push(slosherShaftGeo);
+    const slosherShaft = new THREE.Mesh(slosherShaftGeo, darkMat);
+    slosherShaft.rotation.x = 1.2;
+    slosherShaft.position.set(0, 0.05, -0.14);
+    this.slosherGroup.add(slosherShaft);
+
     this.slosherGroup.visible = false;
     this.weaponAnchor.add(this.slosherGroup);
 
@@ -468,6 +664,17 @@ export class PlayerView {
     this.squidDomeMesh.position.set(0, 0.08, 0);
     this.squidDomeMesh.castShadow = true;
     this.submergedGroup.add(this.squidDomeMesh);
+
+    // Swim fins on the dome sides
+    const finGeo = new THREE.BoxGeometry(0.045, 0.14, 0.24);
+    this.geometries.push(finGeo);
+    for (let side = -1; side <= 1; side += 2) {
+      const fin = new THREE.Mesh(finGeo, bodyMat);
+      fin.position.set(side * 0.26, 0.14, 0.08);
+      fin.rotation.z = side * -0.5;
+      fin.rotation.x = 0.25;
+      this.submergedGroup.add(fin);
+    }
 
     // Squid Eyes
     const squidEyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -724,9 +931,9 @@ export class PlayerView {
       // Dynamic cephalopod hair/tentacle sway
       const tentacleSway = Math.sin(this.walkPhase * 2) * 0.12 - speed * 0.04;
       this.squidTentacles.forEach((t, idx) => {
-        const side = idx === 0 ? -1 : 1;
-        t.rotation.x = -0.3 + tentacleSway;
-        t.rotation.z = side * 0.2 + Math.sin(this.walkPhase) * 0.06;
+        const side = idx % 2 === 0 ? -1 : 1;
+        t.rotation.x = (this.tentacleBaseX[idx] ?? -0.3) + tentacleSway;
+        t.rotation.z = side * 0.22 + Math.sin(this.walkPhase) * 0.06;
       });
 
       // Physically roll the Ink Roller cylinder
@@ -746,9 +953,9 @@ export class PlayerView {
       this.torsoGroup.rotation.z = 0;
 
       this.squidTentacles.forEach((t, idx) => {
-        const side = idx === 0 ? -1 : 1;
-        t.rotation.x = -0.3 + Math.sin(performance.now() * 0.003) * 0.04;
-        t.rotation.z = side * 0.2;
+        const side = idx % 2 === 0 ? -1 : 1;
+        t.rotation.x = (this.tentacleBaseX[idx] ?? -0.3) + Math.sin(performance.now() * 0.003) * 0.04;
+        t.rotation.z = side * 0.22;
       });
     }
 

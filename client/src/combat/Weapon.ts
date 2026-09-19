@@ -32,6 +32,7 @@ interface VisualSpecial {
 
 interface VisualExplosion {
   mesh: THREE.Mesh;
+  ring?: THREE.Mesh;
   startTime: number;
   duration: number;
   targetScale: number;
@@ -150,17 +151,49 @@ export class VisualWeapon {
       const discMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.2, metalness: 0.5 });
       const disc = new THREE.Mesh(discGeo, discMat);
       group.add(disc);
+
+      // Encircling stripe + top carry handle
+      const curlStripeGeo = new THREE.TorusGeometry(0.36, 0.03, 6, 18);
+      const curlStripeMat = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.6 });
+      const curlStripe = new THREE.Mesh(curlStripeGeo, curlStripeMat);
+      curlStripe.rotation.x = Math.PI / 2;
+      group.add(curlStripe);
+
+      const curlHandleGeo = new THREE.TorusGeometry(0.12, 0.03, 6, 14, Math.PI);
+      const curlHandle = new THREE.Mesh(curlHandleGeo, curlStripeMat);
+      curlHandle.position.y = 0.1;
+      group.add(curlHandle);
     } else if (event.type === 'burst_bomb') {
       const sphereGeo = new THREE.SphereGeometry(0.22, 12, 12);
       const sphereMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3 });
       const sphere = new THREE.Mesh(sphereGeo, sphereMat);
       group.add(sphere);
+
+      // Spike cap on top
+      const burstCapGeo = new THREE.ConeGeometry(0.08, 0.14, 8);
+      const burstCapMat = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.6 });
+      const burstCap = new THREE.Mesh(burstCapGeo, burstCapMat);
+      burstCap.position.y = 0.24;
+      group.add(burstCap);
     } else {
       // Splat bomb
       const pyrGeo = new THREE.TetrahedronGeometry(0.3);
       const pyrMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3 });
       const pyr = new THREE.Mesh(pyrGeo, pyrMat);
       group.add(pyr);
+
+      // Fuse + glowing tip
+      const splatFuseGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.16, 6);
+      const splatFuseMat = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.6 });
+      const splatFuse = new THREE.Mesh(splatFuseGeo, splatFuseMat);
+      splatFuse.position.y = 0.24;
+      group.add(splatFuse);
+
+      const splatTipGeo = new THREE.SphereGeometry(0.035, 6, 6);
+      const splatTipMat = new THREE.MeshBasicMaterial({ color: colorHex });
+      const splatTip = new THREE.Mesh(splatTipGeo, splatTipMat);
+      splatTip.position.y = 0.33;
+      group.add(splatTip);
     }
 
     this.group.add(group);
@@ -202,8 +235,21 @@ export class VisualWeapon {
     mesh.scale.set(0.2, 0.2, 0.2);
     this.group.add(mesh);
 
+    // Ground shockwave ring
+    const ringGeo = new THREE.TorusGeometry(1, 0.08, 8, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.7
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(pos.x, 0.12, pos.z);
+    this.group.add(ring);
+
     this.visualExplosions.push({
       mesh,
+      ring,
       startTime: performance.now(),
       duration: 350,
       targetScale: radius
@@ -227,6 +273,32 @@ export class VisualWeapon {
       const tornado = new THREE.Mesh(cylGeo, cylMat);
       tornado.position.y = 7;
       group.add(tornado);
+
+      // Ground splash disc
+      const splashGeo = new THREE.CylinderGeometry(5.5, 5.5, 0.1, 24);
+      const splashMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.5
+      });
+      const splash = new THREE.Mesh(splashGeo, splashMat);
+      splash.position.y = 0.05;
+      group.add(splash);
+
+      // Rotating swirl rings up the funnel
+      const swirlGeo = new THREE.TorusGeometry(4.2, 0.25, 8, 28);
+      const swirlMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.55
+      });
+      for (const swirlY of [2.5, 5, 7.5]) {
+        const swirl = new THREE.Mesh(swirlGeo, swirlMat);
+        swirl.rotation.x = Math.PI / 2;
+        swirl.position.y = swirlY;
+        swirl.scale.setScalar(1 - swirlY * 0.07);
+        group.add(swirl);
+      }
     } else if (event.type === 'ink_storm') {
       // Rain cloud
       const cloudGeo = new THREE.SphereGeometry(3.5, 14, 10);
@@ -240,6 +312,21 @@ export class VisualWeapon {
       cloud.position.y = 6;
       cloud.scale.set(1.4, 0.4, 1.4);
       group.add(cloud);
+
+      // Falling ink streaks
+      const dropGeo = new THREE.ConeGeometry(0.12, 0.9, 6);
+      const dropMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.75
+      });
+      for (let i = 0; i < 8; i++) {
+        const drop = new THREE.Mesh(dropGeo, dropMat);
+        const ang = (i / 8) * Math.PI * 2;
+        drop.position.set(Math.cos(ang) * 2.2, 4.2, Math.sin(ang) * 2.2);
+        drop.rotation.x = Math.PI;
+        group.add(drop);
+      }
     } else if (event.type === 'killer_wail') {
       // 3 Giant laser cylinders
       const dirX = event.direction?.x || 0;
@@ -257,6 +344,19 @@ export class VisualWeapon {
         laser.rotation.x = Math.PI / 2;
         laser.position.set(i * 2.2, 1.2, 35);
         group.add(laser);
+      }
+
+      // Speaker rings at the beam origins
+      const wailRingGeo = new THREE.TorusGeometry(1.1, 0.15, 8, 20);
+      const wailRingMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.85
+      });
+      for (let i = -1; i <= 1; i++) {
+        const wailRing = new THREE.Mesh(wailRingGeo, wailRingMat);
+        wailRing.position.set(i * 2.2, 1.2, 0);
+        group.add(wailRing);
       }
     }
 
@@ -325,12 +425,22 @@ export class VisualWeapon {
       if (elapsed >= exp.duration) {
         this.group.remove(exp.mesh);
         (exp.mesh.material as THREE.Material).dispose();
+        if (exp.ring) {
+          this.group.remove(exp.ring);
+          exp.ring.geometry.dispose();
+          (exp.ring.material as THREE.Material).dispose();
+        }
         this.visualExplosions.splice(i, 1);
       } else {
         const progress = elapsed / exp.duration;
         const currentScale = exp.targetScale * Math.sin(progress * Math.PI * 0.5);
         exp.mesh.scale.set(currentScale, currentScale, currentScale);
         (exp.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - progress) * 0.85;
+        if (exp.ring) {
+          const ringScale = Math.max(0.2, currentScale * 1.4);
+          exp.ring.scale.set(ringScale, ringScale, 1);
+          (exp.ring.material as THREE.MeshBasicMaterial).opacity = (1 - progress) * 0.7;
+        }
       }
     }
 
@@ -382,6 +492,16 @@ export class VisualWeapon {
       laser.geometry.dispose();
       (laser.material as THREE.Material).dispose();
     }
+    for (const exp of this.visualExplosions) {
+      this.group.remove(exp.mesh);
+      (exp.mesh.material as THREE.Material).dispose();
+      if (exp.ring) {
+        this.group.remove(exp.ring);
+        exp.ring.geometry.dispose();
+        (exp.ring.material as THREE.Material).dispose();
+      }
+    }
+    this.visualExplosions.length = 0;
     this.sharedExplosionGeo.dispose();
     for (const sub of this.visualSubWeapons.values()) {
       this.group.remove(sub.mesh);
