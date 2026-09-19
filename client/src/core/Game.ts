@@ -271,6 +271,12 @@ export class Game {
           paintEventsReceived: this.totalPaintEventsReceived,
           pinkScore: this.pinkScore,
           cyanScore: this.cyanScore,
+          net: {
+            sent: this.networkClient.debugSentInputs,
+            latchedSub: this.networkClient.debugLatchedSub,
+            latchedSpecial: this.networkClient.debugLatchedSpecial,
+            connected: (this.networkClient as unknown as { socket: { connected: boolean } }).socket.connected
+          },
           bufferLen: (this.snapshotBuffer as unknown as { buffer: unknown[] }).buffer.length,
           serverTime: Math.round(this.networkClient.getServerTime()),
           remoteRaw: Array.from(this.remotePlayers.entries()).map(([id, rp]) => {

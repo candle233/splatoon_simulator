@@ -17,6 +17,7 @@ export class PlayerView {
   private tankLiquidMesh: THREE.Mesh;
   private tankLedMesh: THREE.Mesh;
   private squidTentacles: THREE.Mesh[] = [];
+  private tentacleBaseX: number[] = [];
   private ghostGroup = new THREE.Group();
   private ghostActive = false;
   private ghostTime = 0;
@@ -97,6 +98,15 @@ export class PlayerView {
     });
     this.materials.push(liquidMat);
 
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: 0xdfe6f0,
+      roughness: 0.25,
+      metalness: 0.6,
+      emissive: 0x9fb4cc,
+      emissiveIntensity: 0.4
+    });
+    this.materials.push(accentMat);
+
     // ==========================================
     // 1. Build Humanoid Mesh & Limbs
     // ==========================================
@@ -115,6 +125,28 @@ export class PlayerView {
     jacketMesh.position.y = 0.1;
     this.torsoGroup.add(jacketMesh);
 
+    // Chest emblem
+    const emblemGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.03, 14);
+    this.geometries.push(emblemGeo);
+    const emblem = new THREE.Mesh(emblemGeo, accentMat);
+    emblem.rotation.x = Math.PI / 2;
+    emblem.position.set(0, 0.18, -0.32);
+    this.torsoGroup.add(emblem);
+
+    // Belt + buckle
+    const beltGeo = new THREE.TorusGeometry(0.365, 0.035, 8, 20);
+    this.geometries.push(beltGeo);
+    const belt = new THREE.Mesh(beltGeo, darkMat);
+    belt.rotation.x = Math.PI / 2;
+    belt.position.y = -0.32;
+    this.torsoGroup.add(belt);
+
+    const buckleGeo = new THREE.BoxGeometry(0.11, 0.08, 0.04);
+    this.geometries.push(buckleGeo);
+    const buckle = new THREE.Mesh(buckleGeo, accentMat);
+    buckle.position.set(0, -0.32, -0.395);
+    this.torsoGroup.add(buckle);
+
     // Head Group (pivot at neck y = 0.4)
     this.headGroup.position.set(0, 0.55, 0);
     const headGeo = new THREE.SphereGeometry(0.3, 16, 16);
@@ -130,16 +162,37 @@ export class PlayerView {
     visorMesh.position.set(0, 0.05, -0.22);
     this.headGroup.add(visorMesh);
 
-    // Cephalopod Squid Tentacles / Hair
-    for (let side = -1; side <= 1; side += 2) {
-      const tentacleGeo = new THREE.CylinderGeometry(0.08, 0.03, 0.65, 8);
+    // Visor top shine stripe
+    const visorShineGeo = new THREE.BoxGeometry(0.3, 0.018, 0.03);
+    this.geometries.push(visorShineGeo);
+    const visorShine = new THREE.Mesh(visorShineGeo, accentMat);
+    visorShine.position.set(0, 0.115, -0.29);
+    this.headGroup.add(visorShine);
+
+    // Jaw guard under the visor
+    const jawGeo = new THREE.BoxGeometry(0.28, 0.1, 0.14);
+    this.geometries.push(jawGeo);
+    const jawGuard = new THREE.Mesh(jawGeo, darkMat);
+    jawGuard.position.set(0, -0.06, -0.24);
+    this.headGroup.add(jawGuard);
+
+    // Cephalopod tentacle hair: two thick front locks, two thin back locks
+    const tentacleSpecs = [
+      { side: -1, len: 0.62, r: 0.085, z: 0.18, tilt: -0.35 },
+      { side: 1, len: 0.62, r: 0.085, z: 0.18, tilt: -0.35 },
+      { side: -1, len: 0.44, r: 0.055, z: 0.27, tilt: -0.75 },
+      { side: 1, len: 0.44, r: 0.055, z: 0.27, tilt: -0.75 }
+    ];
+    for (const spec of tentacleSpecs) {
+      const tentacleGeo = new THREE.CapsuleGeometry(spec.r, spec.len, 4, 8);
       this.geometries.push(tentacleGeo);
       const tentacle = new THREE.Mesh(tentacleGeo, bodyMat);
-      tentacle.position.set(side * 0.2, -0.15, 0.22);
-      tentacle.rotation.x = -0.3;
-      tentacle.rotation.z = side * 0.2;
+      tentacle.position.set(spec.side * 0.19, -0.12, spec.z);
+      tentacle.rotation.x = spec.tilt;
+      tentacle.rotation.z = spec.side * 0.22;
       this.headGroup.add(tentacle);
       this.squidTentacles.push(tentacle);
+      this.tentacleBaseX.push(spec.tilt);
     }
 
     // DJ Streetwear Headset & Earcups
@@ -193,7 +246,47 @@ export class PlayerView {
     this.tankLedMesh.position.set(0, 0.4, 0);
     tankGroup.add(this.tankLedMesh);
 
+    // Tank bracket rings
+    const tankRingGeo = new THREE.TorusGeometry(0.165, 0.018, 8, 18);
+    this.geometries.push(tankRingGeo);
+    for (const ringY of [-0.18, 0.18]) {
+      const ring = new THREE.Mesh(tankRingGeo, darkMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = ringY;
+      tankGroup.add(ring);
+    }
+
+    // Bottom ink valve
+    const valveGeo = new THREE.CylinderGeometry(0.035, 0.045, 0.09, 8);
+    this.geometries.push(valveGeo);
+    const valve = new THREE.Mesh(valveGeo, darkMat);
+    valve.position.y = -0.4;
+    tankGroup.add(valve);
+
+    // Pressure antenna with glowing tip
+    const antennaGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.22, 6);
+    this.geometries.push(antennaGeo);
+    const antenna = new THREE.Mesh(antennaGeo, darkMat);
+    antenna.position.set(0.09, 0.45, 0);
+    tankGroup.add(antenna);
+
+    const antennaTipGeo = new THREE.SphereGeometry(0.022, 8, 8);
+    this.geometries.push(antennaTipGeo);
+    const antennaTip = new THREE.Mesh(antennaTipGeo, ledMat);
+    antennaTip.position.set(0.09, 0.57, 0);
+    tankGroup.add(antennaTip);
+
     this.torsoGroup.add(tankGroup);
+
+    // Tank harness straps over the shoulders
+    const strapGeo = new THREE.BoxGeometry(0.06, 0.52, 0.025);
+    this.geometries.push(strapGeo);
+    for (let side = -1; side <= 1; side += 2) {
+      const strap = new THREE.Mesh(strapGeo, darkMat);
+      strap.position.set(side * 0.14, 0.12, 0.315);
+      strap.rotation.x = -0.1;
+      this.torsoGroup.add(strap);
+    }
 
     this.torsoGroup.position.y = 0.85;
     this.humanoidGroup.add(this.torsoGroup);

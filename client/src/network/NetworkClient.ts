@@ -48,6 +48,10 @@ export class NetworkClient {
   private inputRateMs = 33; // ~30Hz input network transmission
 
   public currentPing = 0;
+  /** Test/diagnostic counters for the input send pipeline. */
+  public debugSentInputs = 0;
+  public debugLatchedSub = 0;
+  public debugLatchedSpecial = 0;
   public estimatedServerTime = Date.now();
   public serverTimeOffset = 0;
   private timeSync = new TimeSynchronizer();
@@ -171,8 +175,8 @@ export class NetworkClient {
     // Sub/special are single-frame edge flags from the input manager; latch them
     // here so a press always survives the 33ms send batching (the latest-frame
     // overwrite would otherwise drop most presses before they are sent).
-    if (input.subWeapon) this.pendingSubWeapon = true;
-    if (input.special) this.pendingSpecial = true;
+    if (input.subWeapon) { this.pendingSubWeapon = true; this.debugLatchedSub++; }
+    if (input.special) { this.pendingSpecial = true; this.debugLatchedSpecial++; }
     this.latestInputToSend = input;
   }
 
@@ -190,6 +194,7 @@ export class NetworkClient {
           this.pendingSpecial = false;
         }
         this.socket.emit(PROTOCOL_EVENTS.C2S_PLAYER_INPUT, out);
+        this.debugSentInputs++;
       }
     }, this.inputRateMs);
   }
