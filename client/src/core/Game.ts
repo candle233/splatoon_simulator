@@ -191,7 +191,11 @@ export class Game {
         onPlay: () => {
           this.lobbyScreen.show();
         },
-        onOpenSettings: () => this.settingsModal.show()
+        onOpenSettings: () => this.settingsModal.show(),
+        onOpenCodex: () => {
+          this.lobbyScreen.show();
+          this.lobbyScreen.showCodex();
+        }
       },
       this.screens
     );

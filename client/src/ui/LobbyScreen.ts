@@ -786,4 +786,11 @@ export class LobbyScreen {
     if (this.screens) return this.screens.isVisible('lobby');
     return this.container && !this.container.classList.contains('hidden');
   }
+
+  showCodex(): void {
+    if (this.screens) this.screens.show('lobby');
+    else this.container?.classList.remove('hidden');
+    renderCodex();
+    document.getElementById('codex-modal')?.classList.remove('hidden');
+  }
 }

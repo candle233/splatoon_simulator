@@ -4,6 +4,7 @@ import type { ScreenManager } from './ScreenManager.js';
 export interface TitleScreenCallbacks {
   onPlay: () => void;
   onOpenSettings: () => void;
+  onOpenCodex: () => void;
 }
 
 /**
@@ -49,6 +50,9 @@ export class TitleScreen {
     });
     this.container.querySelector('#btn-title-settings')?.addEventListener('click', () => {
       callbacks.onOpenSettings();
+    });
+    this.container.querySelector('#btn-title-codex')?.addEventListener('click', () => {
+      callbacks.onOpenCodex();
     });
 
     this.buildLangSwitch();
