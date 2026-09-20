@@ -1,5 +1,6 @@
-import { ARENA_SIZE, BoxObstacle, Team, Vec3 } from '@ink/shared';
+import { ARENA_SIZE, BoxObstacle, Team, Vec3, spawnXForSize } from '@ink/shared';
 import { PaintEngine } from '../world/PaintEngine.js';
+import { t } from '../i18n.js';
 
 export interface MinimapPlayerData {
   position: Vec3;
@@ -18,9 +19,19 @@ export class Minimap {
   private lastDrawTime = 0;
   private drawInterval = 80; // ~12 fps radar refresh for optimal performance
   private mapSize = ARENA_SIZE;
+  /** |x| of both team spawn rows, derived from the real map size. */
+  private spawnX = spawnXForSize(ARENA_SIZE);
+  private zone: { x: number; z: number; w: number; d: number } | undefined;
 
   constructor(paintEngine: PaintEngine) {
     this.paintEngine = paintEngine;
+    // Fall back to the paint engine's extent so the radar is already correct
+    // before anyone calls setSize().
+    const engineSize = paintEngine.getMapSize();
+    if (engineSize > 0) {
+      this.mapSize = engineSize;
+      this.spawnX = spawnXForSize(engineSize);
+    }
 
     // Check if container already in DOM, else create
     let cont = document.getElementById('minimap-container');
@@ -30,14 +41,19 @@ export class Minimap {
       cont.className = 'minimap-box';
       cont.innerHTML = `
         <div class="minimap-header">
-          <span class="minimap-title">RADAR</span>
-          <span class="minimap-toggle-hint">[M]</span>
+          <span class="minimap-title">${t('hud.radar')}</span>
+          <span class="minimap-toggle-hint" title="${t('hud.radarToggle')}">[M]</span>
         </div>
         <canvas id="minimap-canvas" width="150" height="150"></canvas>
       `;
       document.getElementById('game-container')?.appendChild(cont);
     }
     this.container = cont;
+
+    // Re-localize the radar header on language change (the node is created once,
+    // so applyI18n() alone cannot reach it).
+    window.addEventListener('ink:langchange', () => this.applyI18n());
+    this.applyI18n();
 
     this.canvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
     const ctx = this.canvas.getContext('2d');
@@ -50,6 +66,17 @@ export class Minimap {
         this.toggle();
       }
     });
+  }
+
+  /** Re-applies the localized radar header labels. */
+  applyI18n(): void {
+    const title = this.container.querySelector('.minimap-title');
+    if (title) title.textContent = t('hud.radar');
+    const hint = this.container.querySelector('.minimap-toggle-hint');
+    if (hint) {
+      hint.textContent = '[M]';
+      hint.setAttribute('title', t('hud.radarToggle'));
+    }
   }
 
   toggle(): void {
@@ -69,7 +96,20 @@ export class Minimap {
 
   /** Sets the active map edge length so radar coordinates stay correct. */
   setSize(size: number): void {
-    if (size > 0) this.mapSize = size;
+    if (size > 0) {
+      this.mapSize = size;
+      this.spawnX = spawnXForSize(size);
+    }
+  }
+
+  /** Active map edge length the radar is drawing against. */
+  getSize(): number {
+    return this.mapSize;
+  }
+
+  /** Sets the active map's Splat Zones rect so the radar can outline it. */
+  setZone(zone: { x: number; z: number; w: number; d: number } | undefined): void {
+    this.zone = zone;
   }
 
   update(
@@ -113,22 +153,39 @@ export class Minimap {
       ctx.strokeRect(u * w, v * h, ow, oh);
     }
 
-    // 4. Draw Spawns
-    // Pink Spawn at (-40, 0)
-    const pinkU = (-(this.mapSize * 0.4) + this.mapSize / 2) / this.mapSize;
-    const pinkV = (0 + this.mapSize / 2) / this.mapSize;
+    // 4. Draw Spawns — markers follow the real spawn row, not a fixed ±40
+    const toPx = (wx: number): number => ((wx + this.mapSize / 2) / this.mapSize) * w;
+    const toPy = (wz: number): number => ((wz + this.mapSize / 2) / this.mapSize) * h;
+
+    // Splat Zones rect (drawn under the spawn pips when the map defines one)
+    if (this.zone) {
+      const zx = toPx(this.zone.x - this.zone.w / 2);
+      const zy = toPy(this.zone.z - this.zone.d / 2);
+      const zw = (this.zone.w / this.mapSize) * w;
+      const zh = (this.zone.d / this.mapSize) * h;
+      ctx.fillStyle = 'rgba(255, 234, 0, 0.10)';
+      ctx.fillRect(zx, zy, zw, zh);
+      ctx.strokeStyle = 'rgba(255, 234, 0, 0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(zx, zy, zw, zh);
+      ctx.setLineDash([]);
+    }
+
+    const spawnRadius = Math.max(4, (7 * ARENA_SIZE) / this.mapSize);
+    const pinkPx = toPx(-this.spawnX);
+    const pinkPy = toPy(0);
     ctx.beginPath();
-    ctx.arc(pinkU * w, pinkV * h, 7, 0, Math.PI * 2);
+    ctx.arc(pinkPx, pinkPy, spawnRadius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255, 0, 127, 0.4)';
     ctx.fill();
     ctx.strokeStyle = '#ff007f';
     ctx.stroke();
 
-    // Cyan Spawn at (40, 0)
-    const cyanU = (this.mapSize * 0.4 + this.mapSize / 2) / this.mapSize;
-    const cyanV = (0 + this.mapSize / 2) / this.mapSize;
+    const cyanPx = toPx(this.spawnX);
+    const cyanPy = toPy(0);
     ctx.beginPath();
-    ctx.arc(cyanU * w, cyanV * h, 7, 0, Math.PI * 2);
+    ctx.arc(cyanPx, cyanPy, spawnRadius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0, 255, 255, 0.4)';
     ctx.fill();
     ctx.strokeStyle = '#00ffff';

@@ -18,6 +18,44 @@ export interface InterpolatedPlayerState {
   name?: string;
 }
 
+/**
+ * Creates a fully-populated state object suitable for reuse as the `out`
+ * parameter of {@link SnapshotBuffer.getInterpolatedState}. Every field is
+ * written on every call, so a reused buffer never leaks a previous player's
+ * values.
+ */
+export function createInterpolatedState(): InterpolatedPlayerState {
+  return {
+    position: { x: 0, y: 0, z: 0 },
+    yaw: 0,
+    pitch: 0,
+    mode: 0,
+    alive: false,
+    hp: 0,
+    invulnerable: false
+  };
+}
+
+/** Copies a raw snapshot into a reusable state object, in place. */
+function writeSnapshotState(
+  out: InterpolatedPlayerState,
+  snap: PlayerSnapshot
+): InterpolatedPlayerState {
+  out.position.x = snap.x;
+  out.position.y = snap.y;
+  out.position.z = snap.z;
+  out.yaw = snap.yaw;
+  out.pitch = snap.pitch;
+  out.mode = snap.mode;
+  out.alive = snap.alive;
+  out.hp = snap.hp;
+  out.invulnerable = snap.invulnerable;
+  out.weaponType = snap.weaponType;
+  out.ink = snap.ink;
+  out.name = snap.name;
+  return out;
+}
+
 export class SnapshotBuffer {
   private buffer: TimestampedSnapshot[] = [];
   private maxBufferSize = 30; // ~1.5s of snapshots at 20Hz
@@ -39,9 +77,18 @@ export class SnapshotBuffer {
     }
   }
 
+  /**
+   * Interpolates a remote player's state at `currentServerTime`.
+   *
+   * Pass a persistent `out` object (see {@link createInterpolatedState}) to make
+   * the per-frame path allocation-free; the object is fully overwritten and
+   * returned. Without `out` a fresh object is allocated, which is what the unit
+   * tests and one-off callers use.
+   */
   getInterpolatedState(
     playerId: string,
-    currentServerTime: number
+    currentServerTime: number,
+    out?: InterpolatedPlayerState
   ): InterpolatedPlayerState | null {
     if (this.buffer.length === 0) return null;
 
@@ -52,18 +99,7 @@ export class SnapshotBuffer {
     if (this.buffer.length === 1 || renderTime >= latest.timestamp) {
       const snap = latest.players.get(playerId);
       if (!snap) return null;
-      return {
-        position: { x: snap.x, y: snap.y, z: snap.z },
-        yaw: snap.yaw,
-        pitch: snap.pitch,
-        mode: snap.mode,
-        alive: snap.alive,
-        hp: snap.hp,
-        invulnerable: snap.invulnerable,
-        weaponType: snap.weaponType,
-        ink: snap.ink,
-        name: snap.name
-      };
+      return writeSnapshotState(out ?? createInterpolatedState(), snap);
     }
 
     // If render time is behind oldest snapshot in buffer, use oldest
@@ -71,18 +107,7 @@ export class SnapshotBuffer {
     if (renderTime <= oldest.timestamp) {
       const snap = oldest.players.get(playerId);
       if (!snap) return null;
-      return {
-        position: { x: snap.x, y: snap.y, z: snap.z },
-        yaw: snap.yaw,
-        pitch: snap.pitch,
-        mode: snap.mode,
-        alive: snap.alive,
-        hp: snap.hp,
-        invulnerable: snap.invulnerable,
-        weaponType: snap.weaponType,
-        ink: snap.ink,
-        name: snap.name
-      };
+      return writeSnapshotState(out ?? createInterpolatedState(), snap);
     }
 
     // Find two adjacent snapshots s0 and s1
@@ -102,17 +127,7 @@ export class SnapshotBuffer {
     if (!s0 || !s1) {
       const snap = latest.players.get(playerId);
       if (!snap) return null;
-      return {
-        position: { x: snap.x, y: snap.y, z: snap.z },
-        yaw: snap.yaw,
-        pitch: snap.pitch,
-        mode: snap.mode,
-        alive: snap.alive,
-        hp: snap.hp,
-        invulnerable: snap.invulnerable,
-        weaponType: snap.weaponType,
-        ink: snap.ink
-      };
+      return writeSnapshotState(out ?? createInterpolatedState(), snap);
     }
 
     const snap0 = s0.players.get(playerId);
@@ -121,23 +136,13 @@ export class SnapshotBuffer {
     if (!snap0 || !snap1) {
       const fallback = snap1 || snap0;
       if (!fallback) return null;
-      return {
-        position: { x: fallback.x, y: fallback.y, z: fallback.z },
-        yaw: fallback.yaw,
-        pitch: fallback.pitch,
-        mode: fallback.mode,
-        alive: fallback.alive,
-        hp: fallback.hp,
-        invulnerable: fallback.invulnerable,
-        weaponType: fallback.weaponType,
-        ink: fallback.ink
-      };
+      return writeSnapshotState(out ?? createInterpolatedState(), fallback);
     }
 
     const timeDelta = s1.timestamp - s0.timestamp;
     const alpha = timeDelta > 0 ? (renderTime - s0.timestamp) / timeDelta : 0;
 
-    return interpolatePlayerState(snap0, snap1, alpha);
+    return interpolatePlayerState(snap0, snap1, alpha, out);
   }
 
   clear(): void {
@@ -149,11 +154,13 @@ export class SnapshotBuffer {
  * Pure interpolation function between two player snapshots (Subagent 37)
  *
  * Includes teleport / respawn detection: avoids sliding across arena when respawning.
+ * Pass `out` to write into a reusable object instead of allocating a new one.
  */
 export function interpolatePlayerState(
   snap0: PlayerSnapshot,
   snap1: PlayerSnapshot,
-  alpha: number
+  alpha: number,
+  out?: InterpolatedPlayerState
 ): InterpolatedPlayerState {
   // Teleport / Respawn Detection:
   // If player transitioned from dead to alive, or position jumped > 10m, snap directly without lerp
@@ -173,16 +180,18 @@ export function interpolatePlayerState(
   while (diffYaw > Math.PI) diffYaw -= Math.PI * 2;
   const interpYaw = snap0.yaw + diffYaw * alpha;
 
-  return {
-    position: { x: posX, y: posY, z: posZ },
-    yaw: interpYaw,
-    pitch: lerp(snap0.pitch, snap1.pitch, alpha),
-    mode: snap1.mode,
-    alive: snap1.alive,
-    hp: snap1.hp,
-    invulnerable: snap1.invulnerable,
-    weaponType: snap1.weaponType || snap0.weaponType,
-    ink: snap1.ink,
-    name: snap1.name || snap0.name
-  };
+  const state = out ?? createInterpolatedState();
+  state.position.x = posX;
+  state.position.y = posY;
+  state.position.z = posZ;
+  state.yaw = interpYaw;
+  state.pitch = lerp(snap0.pitch, snap1.pitch, alpha);
+  state.mode = snap1.mode;
+  state.alive = snap1.alive;
+  state.hp = snap1.hp;
+  state.invulnerable = snap1.invulnerable;
+  state.weaponType = snap1.weaponType || snap0.weaponType;
+  state.ink = snap1.ink;
+  state.name = snap1.name || snap0.name;
+  return state;
 }

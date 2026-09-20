@@ -103,10 +103,10 @@ export class SettingsModal {
                 <span data-i18n="settings.quality">Graphics Quality</span>
               </div>
               <div class="quality-btn-row" id="quality-btn-row">
-                <button class="quality-btn" data-quality="low">LOW</button>
-                <button class="quality-btn" data-quality="medium">MED</button>
-                <button class="quality-btn" data-quality="high">HIGH</button>
-                <button class="quality-btn" data-quality="auto">AUTO</button>
+                <button class="quality-btn" data-quality="low" data-i18n="settings.qLow">LOW</button>
+                <button class="quality-btn" data-quality="medium" data-i18n="settings.qMed">MED</button>
+                <button class="quality-btn" data-quality="high" data-i18n="settings.qHigh">HIGH</button>
+                <button class="quality-btn" data-quality="auto" data-i18n="settings.qAuto">AUTO</button>
               </div>
             </div>
 
@@ -138,7 +138,7 @@ export class SettingsModal {
       gear = document.createElement('button');
       gear.id = 'btn-open-settings';
       gear.className = 'btn-hud-gear';
-      gear.title = 'Settings [O]';
+      gear.title = t('settings.openTitle');
       gear.innerHTML = '⚙️';
       document.getElementById('hud')?.appendChild(gear);
     }
@@ -263,6 +263,14 @@ export class SettingsModal {
   /** Refresh localized labels (called after a language switch). */
   refreshI18n(): void {
     applyI18n(this.modalEl);
+    // The quality row carries data-i18n so applyI18n() covers it, but drive it
+    // from QUALITY_LABEL_KEY as well so the mapping stays the single source of
+    // truth for which key each level uses.
+    this.qualityBtns.forEach((btn) => {
+      const q = btn.getAttribute('data-quality') as QualityLevel | null;
+      if (q && QUALITY_LABEL_KEY[q]) btn.textContent = t(QUALITY_LABEL_KEY[q]);
+    });
+    if (this.openBtn) this.openBtn.title = t('settings.openTitle');
     this.highlightQuality();
   }
 

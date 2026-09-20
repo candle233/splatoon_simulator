@@ -8,6 +8,12 @@ Built strictly under the architectural principle: **Client renders, Server decid
 
 ## 🎮 Gameplay Features
 
+- **Trilingual UI**: Full Chinese / Japanese / English coverage with a live language switcher, applied at boot and persisted to `localStorage`.
+- **5 Game Modes**: Turf War (coverage at time-out), Splat Zones (hold the objective), Team Deathmatch (knockouts), Hybrid Ranked (coverage **and** knockouts feed one score), and Final Push (coverage sampled on a timer — only the last sample decides the winner).
+- **8 Main Weapons / 6 Sub Weapons / 5 Specials**, each with its own stats, procedural in-hand model, and server-side simulation.
+- **12 Gear Skills**: passive perks (ink saver, ink recovery, run/swim speed, special charge, quick respawn, main power, defense, and more) applied authoritatively by the server.
+- **4 Arenas**: Neon Downtown (145u), Cargo Docks (185u), Sky Rink (130u), and Aurora Outpost (160u) — symmetric layouts with 60-80 obstacles each, procedural props, sky domes, and ambient life.
+- **Character Customization**: ~150 distinct looks derived deterministically from the player id (6 headgear × 5 outfits × 5 ink tanks), plus an uploaded avatar shown to other players in the lobby roster.
 - **3D TPS Over-the-Shoulder Camera**: Full yaw/pitch aiming with collision anti-clipping against arena walls.
 - **Dual Form State Machine**:
   - `HUMANOID`: Standard running (6.0 u/s), jumping, hitscan ink blaster combat.
@@ -38,9 +44,15 @@ Built strictly under the architectural principle: **Client renders, Server decid
 | :--- | :--- | :--- |
 | **W / A / S / D** | Move | Navigate around the arena |
 | **Mouse** | Aim | Rotate third-person camera (pitch clamped $-75^\circ$ to $+75^\circ$) |
-| **Left Mouse (LMB)** | Fire | Shoot hitscan ink blaster (consumes 2 ink/shot) |
+| **Left Mouse (LMB)** | Fire | Shoot the equipped main weapon (ink cost varies per weapon) |
+| **Right Mouse / Q** | Sub Weapon | Throw the equipped sub weapon |
+| **E** | Special | Fire the equipped special once the meter is full |
+| **1-8** | Switch Weapon | Hot-swap main weapons mid-match |
 | **Shift** (Hold) | Swim / Squid | Submerge in team's ink for speed boost & rapid ink recovery |
 | **Space** | Jump | Jump when grounded in humanoid form |
+| **Tab** (Hold) | Scoreboard | Show the live scoreboard |
+| **M** | Radar | Toggle the tactical minimap |
+| **O** | Settings | Open the settings modal |
 | **Esc** | Release Cursor | Exit Pointer Lock |
 | **Click Arena / Prompt** | Capture Cursor | Enter Pointer Lock |
 | **F3** | Debug Overlay | Toggle real-time diagnostics (FPS, Ping, Pos, Ground Ink, etc.) |
@@ -185,4 +197,5 @@ Rather than teleporting remote players upon receiving 20Hz network snapshots:
 
 ## ⚠️ Known Limitations
 - **Audio Effects**: Built with 100% original procedural Web Audio API synthesis (sawtooth/sine oscillators, noise burst filters) without any copyrighted external audio assets.
-- **Bot AI**: Offline AI bots are not implemented; test with 2+ browser windows for multiplayer interaction.
+- **Bot AI**: Practice bots are available offline (settings modal) and as host-added lobby bots; server-side bots run the same authoritative simulation as human players.
+- **Weapon art**: Newer weapons reuse existing thumbnail art and fall back to a tinted plate when no image exists.

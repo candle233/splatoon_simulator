@@ -5,7 +5,8 @@ import {
   RUN_SPEED,
   SQUID_SPEED
 } from './config.js';
-import { PlayerMode, Team, Vec3 } from './types.js';
+import { skillMultiplier } from './skills.js';
+import { PlayerMode, SkillId, Team, Vec3 } from './types.js';
 
 /**
  * Pure Player Form State Machine Transition (Subagent 11)
@@ -39,15 +40,20 @@ export function nextPlayerForm(
 }
 
 /**
- * Computes speed modifier based on ground ink and player form (Subagent 08)
+ * Computes speed modifier based on ground ink and player form (Subagent 08).
+ *
+ * `skills` applies the run_speed (humanoid) / swim_speed (submerged) gear
+ * skills. Enemy-ink movement is intentionally left unmodified: those skills
+ * only boost a player's own locomotion, not the enemy-ink crawl.
  */
 export function getMovementSpeed(
   form: PlayerMode,
   groundInk: Team,
-  playerTeam: Team
+  playerTeam: Team,
+  skills?: SkillId[] | null
 ): number {
   if (form === PlayerMode.SUBMERGED) {
-    return SQUID_SPEED; // RUN_SPEED * 1.8
+    return SQUID_SPEED * skillMultiplier(skills, 'swim_speed');
   }
 
   const isEnemyInk =
@@ -57,7 +63,7 @@ export function getMovementSpeed(
     return ENEMY_INK_SPEED; // RUN_SPEED * 0.3
   }
 
-  return RUN_SPEED;
+  return RUN_SPEED * skillMultiplier(skills, 'run_speed');
 }
 
 /**

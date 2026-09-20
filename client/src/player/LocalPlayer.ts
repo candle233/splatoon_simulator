@@ -9,6 +9,7 @@ import {
   PlayerMode,
   PlayerSnapshot,
   SQUID_HEIGHT,
+  SkillId,
   Team,
   Vec3,
   WeaponType,
@@ -43,6 +44,12 @@ export class LocalPlayer {
   specialMeter = 0;
   specialActive = false;
   chargeLevel = 0;
+  /**
+   * Gear skills as reported by the server snapshot. Client-side prediction must
+   * use the same run_speed / swim_speed multipliers or every prediction frame
+   * fights the authoritative position and the camera jitters.
+   */
+  skills: SkillId[] = [];
 
   private collisionWorld: ClientCollisionWorld;
   private pendingInputs: { seq: number; input: PlayerInput; dt: number; groundInk: Team }[] = [];
@@ -80,7 +87,7 @@ export class LocalPlayer {
       groundInk,
       this.team
     );
-    const currentSpeed = getMovementSpeed(mode, groundInk, this.team);
+    const currentSpeed = getMovementSpeed(mode, groundInk, this.team, this.skills);
     const { vx, vz } = computeMovementVelocity(input.yaw, input.moveX, input.moveZ, currentSpeed);
 
     const stepVel = {
@@ -191,6 +198,9 @@ export class LocalPlayer {
     if (snapshot.chargeLevel !== undefined) {
       this.chargeLevel = snapshot.chargeLevel;
     }
+    // The server omits `skills` when the loadout is empty, so clear rather than
+    // keep a stale loadout after the player unequips everything.
+    this.skills = snapshot.skills ?? [];
 
     if (!this.alive) {
       this.pendingInputs = [];

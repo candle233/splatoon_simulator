@@ -1,4 +1,5 @@
 import { applyI18n, getLang, langLabel, setLang, t, LANGS } from '../i18n.js';
+import type { ScreenManager } from './ScreenManager.js';
 
 export interface TitleScreenCallbacks {
   onPlay: () => void;
@@ -8,14 +9,19 @@ export interface TitleScreenCallbacks {
 /**
  * Animated main menu shown before the lobby. Pure DOM/CSS: floating ink
  * blobs, logo, primary actions and a language switcher.
+ *
+ * Visibility goes through the ScreenManager when one is supplied, so the title
+ * can never stay layered over the lobby swallowing its clicks.
  */
 export class TitleScreen {
   private container: HTMLElement | null;
   private langSwitch: HTMLElement | null;
+  private screens?: ScreenManager;
 
-  constructor(callbacks: TitleScreenCallbacks) {
+  constructor(callbacks: TitleScreenCallbacks, screens?: ScreenManager) {
     this.container = document.getElementById('title-screen');
     this.langSwitch = document.getElementById('title-lang-switch');
+    this.screens = screens;
 
     if (!this.container) return;
 
@@ -70,14 +76,17 @@ export class TitleScreen {
   }
 
   show(): void {
-    this.container?.classList.remove('hidden');
+    if (this.screens) this.screens.show('title');
+    else this.container?.classList.remove('hidden');
   }
 
   hide(): void {
-    this.container?.classList.add('hidden');
+    if (this.screens) this.screens.hide('title');
+    else this.container?.classList.add('hidden');
   }
 
   isVisible(): boolean {
+    if (this.screens) return this.screens.isVisible('title');
     return !!this.container && !this.container.classList.contains('hidden');
   }
 }

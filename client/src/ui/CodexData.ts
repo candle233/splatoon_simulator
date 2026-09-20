@@ -17,14 +17,34 @@ interface LocText {
   en: string;
 }
 
+/**
+ * One stat chip under a codex card. Either an i18n key plus a raw value
+ * (`"codex.dmg"` + `"35 HP"`) or fully authored per-language text. Keys are
+ * resolved at render time so chips follow the active language.
+ */
+interface CodexTag {
+  key?: string;
+  text?: LocText;
+  value?: string;
+}
+
 interface CodexItem {
   img: string;
-  badge: string;
+  /** i18n key for the corner badge, or null when badgeText carries the label. */
+  badgeKey: string | null;
+  /** Per-language badge text used instead of badgeKey (weapon names). */
+  badgeText?: LocText;
   badgeClass: string;
   title: LocText;
   desc: LocText;
-  tags: LocText[];
+  tags: CodexTag[];
   wide?: boolean;
+}
+
+/** Renders one stat chip, resolving its key against the active language. */
+function tagLabel(tag: CodexTag): string {
+  if (tag.key) return `${t(tag.key)}: ${tag.value ?? ''}`.trimEnd();
+  return tag.text ? loc(tag.text) : '';
 }
 
 interface CodexTab {
@@ -43,7 +63,7 @@ const CHARACTER_TAB: CodexTab = {
   items: [
     {
       img: '/assets/characters/inkling_pink.jpg',
-      badge: 'TEAM PINK',
+      badgeKey: 'codex.badgePink',
       badgeClass: 'pink',
       title: { zh: '霓虹粉战队墨水战士', ja: 'ネオンピンクのインクリンガー', en: 'Pink Hero Inker' },
       desc: {
@@ -52,14 +72,14 @@ const CHARACTER_TAB: CodexTab = {
         en: 'Vanguard shooter of the neon streets. Iconic fluorescent-pink tentacles and nimble footwork for fast pushes.'
       },
       tags: [
-        { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' },
-        { zh: '主武器: 墨水冲锋枪', ja: 'メイン: ブラスター', en: 'Main: Ink Blaster' },
-        { zh: '移动力: ★★★★★', ja: '機動力: ★★★★★', en: 'Mobility: ★★★★★' }
+        { text: { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' } },
+        { text: { zh: '主武器: 墨水冲锋枪', ja: 'メイン: ブラスター', en: 'Main: Ink Blaster' } },
+        { text: { zh: '移动力: ★★★★★', ja: '機動力: ★★★★★', en: 'Mobility: ★★★★★' } }
       ]
     },
     {
       img: '/assets/characters/inkling_cyan.jpg',
-      badge: 'TEAM CYAN',
+      badgeKey: 'codex.badgeCyan',
       badgeClass: 'cyan',
       title: { zh: '电光青战队墨水战士', ja: '電光シアンのインクリンガー', en: 'Cyan Hero Inker' },
       desc: {
@@ -68,14 +88,14 @@ const CHARACTER_TAB: CodexTab = {
         en: 'Composed technical shooter with full-cover headset and techwear hoodie, thriving on prediction.'
       },
       tags: [
-        { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' },
-        { zh: '主武器: 蓄力狙击 / 冲锋枪', ja: 'メイン: スナイパー/ブラスター', en: 'Main: Charger / Blaster' },
-        { zh: '专注度: ★★★★★', ja: '集中力: ★★★★★', en: 'Focus: ★★★★★' }
+        { text: { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' } },
+        { text: { zh: '主武器: 蓄力狙击 / 冲锋枪', ja: 'メイン: スナイパー/ブラスター', en: 'Main: Charger / Blaster' } },
+        { text: { zh: '专注度: ★★★★★', ja: '集中力: ★★★★★', en: 'Focus: ★★★★★' } }
       ]
     },
     {
       img: '/assets/characters/squid_morph.jpg',
-      badge: 'TRANSFORMATION',
+      badgeKey: 'codex.badgeTransform',
       badgeClass: 'purple',
       title: { zh: '乌贼潜行形态', ja: 'イカ形態', en: 'Squid Morph' },
       desc: {
@@ -84,14 +104,14 @@ const CHARACTER_TAB: CodexTab = {
         en: 'Fluid squid transformation. Hold Shift to submerge in friendly ink: 1.8× speed, 3× refill, hard to spot.'
       },
       tags: [
-        { zh: '极速游动: 10.8 u/s', ja: '遊泳速度: 10.8 u/s', en: 'Swim: 10.8 u/s' },
-        { zh: '墨水回充: 30%/s', ja: '回復: 30%/s', en: 'Refill: 30%/s' },
-        { zh: '高度隐蔽', ja: '高い隠密性', en: 'Stealthy' }
+        { text: { zh: '极速游动: 10.8 u/s', ja: '遊泳速度: 10.8 u/s', en: 'Swim: 10.8 u/s' } },
+        { text: { zh: '墨水回充: 30%/s', ja: '回復: 30%/s', en: 'Refill: 30%/s' } },
+        { text: { zh: '高度隐蔽', ja: '高い隠密性', en: 'Stealthy' } }
       ]
     },
     {
       img: '/assets/characters/inkling_duel_clash.jpg',
-      badge: 'KEY ART',
+      badgeKey: 'codex.badgeKeyArt',
       badgeClass: 'gold',
       title: { zh: '街区锦标赛巅峰对决', ja: '選手権の頂上決戦', en: 'Championship Clash' },
       desc: {
@@ -100,9 +120,9 @@ const CHARACTER_TAB: CodexTab = {
         en: 'The decisive clash above the center bridge — pink and cyan collide into a rainbow ink storm.'
       },
       tags: [
-        { zh: '赛场热斗', ja: '熱き戦い', en: 'Heated battle' },
-        { zh: '空中对决', ja: '空中決戦', en: 'Aerial duel' },
-        { zh: '4v4 终局争夺', ja: '4v4 最終決戦', en: '4v4 final push' }
+        { text: { zh: '赛场热斗', ja: '熱き戦い', en: 'Heated battle' } },
+        { text: { zh: '空中对决', ja: '空中決戦', en: 'Aerial duel' } },
+        { text: { zh: '4v4 终局争夺', ja: '4v4 最終決戦', en: '4v4 final push' } }
       ],
       wide: true
     }
@@ -114,45 +134,49 @@ function weaponItems(): CodexItem[] {
     shooter: 'shooter',
     roller: 'roller',
     charger: 'charger',
-    slosher: 'slosher'
+    slosher: 'slosher',
+    sprayer: 'sprayer',
+    cannon: 'cannon',
+    marksman: 'marksman',
+    scatter: 'scatter'
   };
   return (Object.keys(WEAPON_CONFIGS) as WeaponType[]).map((id) => {
     const cfg = WEAPON_CONFIGS[id];
-    const tags: LocText[] = [];
-    if (id === 'charger' && cfg.chargeTime) {
-      tags.push({ zh: `蓄力: ${cfg.chargeTime}s`, ja: `チャージ: ${cfg.chargeTime}s`, en: `Charge: ${cfg.chargeTime}s` });
+    const tags: CodexTag[] = [];
+    if (cfg.chargeTime) {
+      tags.push({ key: 'codex.charge', value: `${cfg.chargeTime}s` });
     }
-    if (id === 'roller' && cfg.rollDamage) {
-      tags.push({ zh: `碾压: ${cfg.rollDamage} HP`, ja: `転圧: ${cfg.rollDamage} HP`, en: `Roll: ${cfg.rollDamage} HP` });
+    if (cfg.rollDamage) {
+      tags.push({ key: 'codex.roll', value: `${cfg.rollDamage} HP` });
+    }
+    if (cfg.pelletCount && cfg.pelletCount > 1) {
+      tags.push({ key: 'codex.pellets', value: `${cfg.pelletCount}` });
+    }
+    if (cfg.splashRadius) {
+      tags.push({ key: 'codex.blast', value: `${cfg.splashRadius}m` });
     }
     return {
       img: weaponImg(id),
-      badge: cfg.name.toUpperCase(),
+      badgeKey: null,
+      badgeText: { zh: cfg.nameZh, ja: cfg.nameJa, en: cfg.name },
       badgeClass: badges[id],
       title: { zh: cfg.nameZh, ja: cfg.nameJa, en: cfg.name },
       desc: { zh: cfg.descriptionZh, ja: cfg.descriptionJa, en: cfg.description },
       tags: [
-        {
-          zh: `${t('codex.dmg')}: ${cfg.damage} HP`,
-          ja: `${t('codex.dmg')}: ${cfg.damage} HP`,
-          en: `${t('codex.dmg')}: ${cfg.damage} HP`
-        },
-        {
-          zh: `${t('codex.range')}: ${cfg.range}m`,
-          ja: `${t('codex.range')}: ${cfg.range}m`,
-          en: `${t('codex.range')}: ${cfg.range}m`
-        },
-        {
-          zh: `${t('codex.ink')}: ${cfg.inkCost}%`,
-          ja: `${t('codex.ink')}: ${cfg.inkCost}%`,
-          en: `${t('codex.ink')}: ${cfg.inkCost}%`
-        },
+        { key: 'codex.dmg', value: `${cfg.damage} HP` },
+        { key: 'codex.range', value: `${cfg.range}m` },
+        { key: 'codex.rate', value: `${cfg.fireRate}/s` },
+        { key: 'codex.ink', value: `${cfg.inkCost}%` },
         ...tags
       ]
     };
   });
 }
 
+/**
+ * Weapon thumbnails. New weapons reuse the closest existing art so the codex
+ * never renders a broken image; drop a matching jpg in to get bespoke art.
+ */
 function weaponImg(id: WeaponType): string {
   switch (id) {
     case 'roller':
@@ -161,6 +185,14 @@ function weaponImg(id: WeaponType): string {
       return '/assets/weapons/splat_charger.jpg';
     case 'slosher':
       return '/assets/weapons/slosher.jpg';
+    case 'sprayer':
+      return '/assets/weapons/splattershot.jpg';
+    case 'cannon':
+      return '/assets/weapons/slosher.jpg';
+    case 'marksman':
+      return '/assets/weapons/splat_charger.jpg';
+    case 'scatter':
+      return '/assets/weapons/splattershot.jpg';
     default:
       return '/assets/weapons/splattershot.jpg';
   }
@@ -172,6 +204,12 @@ function subImg(id: SubWeaponType): string {
       return '/assets/weapons/curling_bomb.jpg';
     case 'burst_bomb':
       return '/assets/weapons/splat_bomb.jpg';
+    case 'ink_mine':
+      return '/assets/weapons/splat_bomb.jpg';
+    case 'bounce_bomb':
+      return '/assets/weapons/curling_bomb.jpg';
+    case 'ink_puddle':
+      return '/assets/weapons/splat_bomb.jpg';
     default:
       return '/assets/weapons/splat_bomb.jpg';
   }
@@ -182,14 +220,14 @@ function subItems(): CodexItem[] {
     const cfg = SUB_WEAPON_CONFIGS[id];
     return {
       img: subImg(id),
-      badge: 'SUB WEAPON',
+      badgeKey: 'codex.badgeSub',
       badgeClass: 'sub',
       title: { zh: cfg.nameZh, ja: cfg.nameJa, en: cfg.name },
       desc: { zh: cfg.descriptionZh, ja: cfg.descriptionJa, en: cfg.description },
       tags: [
-        { zh: `${t('codex.dmg')}: ${cfg.damage} HP`, ja: `${t('codex.dmg')}: ${cfg.damage} HP`, en: `${t('codex.dmg')}: ${cfg.damage} HP` },
-        { zh: `${t('codex.ink')}: ${cfg.inkCost}%`, ja: `${t('codex.ink')}: ${cfg.inkCost}%`, en: `${t('codex.ink')}: ${cfg.inkCost}%` },
-        { zh: `${t('codex.radius')}: ${cfg.splashRadius}m`, ja: `${t('codex.radius')}: ${cfg.splashRadius}m`, en: `${t('codex.radius')}: ${cfg.splashRadius}m` }
+        { key: 'codex.dmg', value: `${cfg.damage} HP` },
+        { key: 'codex.ink', value: `${cfg.inkCost}%` },
+        { key: 'codex.radius', value: `${cfg.splashRadius}m` }
       ]
     };
   });
@@ -201,6 +239,10 @@ function specialImg(id: SpecialWeaponType): string {
       return '/assets/weapons/killer_wail.jpg';
     case 'ink_storm':
       return '/assets/weapons/inkstrike.jpg';
+    case 'ink_nova':
+      return '/assets/weapons/inkstrike.jpg';
+    case 'ink_barrier':
+      return '/assets/weapons/curling_bomb.jpg';
     default:
       return '/assets/weapons/inkstrike.jpg';
   }
@@ -211,14 +253,14 @@ function specialItems(): CodexItem[] {
     const cfg = SPECIAL_CONFIGS[id];
     return {
       img: specialImg(id),
-      badge: 'SPECIAL ULTIMATE',
+      badgeKey: 'codex.badgeSpecial',
       badgeClass: 'special',
       title: { zh: cfg.nameZh, ja: cfg.nameJa, en: cfg.name },
       desc: { zh: cfg.descriptionZh, ja: cfg.descriptionJa, en: cfg.description },
       tags: [
-        { zh: `${t('codex.dps')}: ${cfg.dps}`, ja: `${t('codex.dps')}: ${cfg.dps}`, en: `${t('codex.dps')}: ${cfg.dps}` },
-        { zh: `${t('codex.duration')}: ${cfg.duration}s`, ja: `${t('codex.duration')}: ${cfg.duration}s`, en: `${t('codex.duration')}: ${cfg.duration}s` },
-        { zh: `${t('codex.radius')}: ${cfg.radius}m`, ja: `${t('codex.radius')}: ${cfg.radius}m`, en: `${t('codex.radius')}: ${cfg.radius}m` }
+        { key: 'codex.dps', value: `${cfg.dps}` },
+        { key: 'codex.duration', value: `${cfg.duration}s` },
+        { key: 'codex.radius', value: `${cfg.radius}m` }
       ]
     };
   });
@@ -230,7 +272,7 @@ const GEAR_TAB: CodexTab = {
   items: [
     {
       img: '/assets/gear/ink_tank.jpg',
-      badge: 'BACKPACK',
+      badgeKey: 'codex.badgeBackpack',
       badgeClass: 'gear',
       title: { zh: '高容量发光墨汁背罐', ja: '大容量インクタンク', en: 'High-Capacity Ink Tank' },
       desc: {
@@ -239,14 +281,14 @@ const GEAR_TAB: CodexTab = {
         en: 'The lifeline of every inker. Reinforced glass tank, brass relief valve and quick-release harness.'
       },
       tags: [
-        { zh: '容积: 100 单位', ja: '容量: 100', en: 'Capacity: 100 units' },
-        { zh: '防爆抗压', ja: '防爆設計', en: 'Blast-safe' },
-        { zh: '战术快拆', ja: 'クイック解除', en: 'Quick release' }
+        { text: { zh: '容积: 100 单位', ja: '容量: 100', en: 'Capacity: 100 units' } },
+        { text: { zh: '防爆抗压', ja: '防爆設計', en: 'Blast-safe' } },
+        { text: { zh: '战术快拆', ja: 'クイック解除', en: 'Quick release' } }
       ]
     },
     {
       img: '/assets/gear/headset_visor.jpg',
-      badge: 'HEADGEAR',
+      badgeKey: 'codex.badgeHeadgear',
       badgeClass: 'gear',
       title: { zh: '潮流降噪耳机与战术目镜', ja: 'ヘッドセット&バイザー', en: 'Studio Headset & Visor' },
       desc: {
@@ -255,14 +297,14 @@ const GEAR_TAB: CodexTab = {
         en: 'Street-culture headset with a holo-HUD visor overlaying live ink coverage.'
       },
       tags: [
-        { zh: '全息 HUD 准心', ja: 'ホロHUD照準', en: 'Holo-HUD reticle' },
-        { zh: '主动降噪', ja: 'アクティブノイズキャン', en: 'Active noise-cancel' },
-        { zh: '潮流徽标', ja: 'スクイッドロゴ', en: 'Squid logo' }
+        { text: { zh: '全息 HUD 准心', ja: 'ホロHUD照準', en: 'Holo-HUD reticle' } },
+        { text: { zh: '主动降噪', ja: 'アクティブノイズキャン', en: 'Active noise-cancel' } },
+        { text: { zh: '潮流徽标', ja: 'スクイッドロゴ', en: 'Squid logo' } }
       ]
     },
     {
       img: '/assets/gear/street_sneakers.jpg',
-      badge: 'FOOTWEAR',
+      badgeKey: 'codex.badgeFootwear',
       badgeClass: 'gear',
       title: { zh: '撞色高帮气垫滑板鞋', ja: 'ネオンスケートスニーカー', en: 'Neon Turf Skate Sneakers' },
       desc: {
@@ -271,9 +313,9 @@ const GEAR_TAB: CodexTab = {
         en: 'Sneakers tuned for ink slides: two-tone leather, ink-filled air cushion and sticky grip soles.'
       },
       tags: [
-        { zh: '流动墨汁气垫', ja: 'インクエア', en: 'Ink air cushion' },
-        { zh: '高抓地力鞋底', ja: '高グリップ', en: 'High-grip sole' },
-        { zh: '撞色设计', ja: 'ツートンカラー', en: 'Two-tone' }
+        { text: { zh: '流动墨汁气垫', ja: 'インクエア', en: 'Ink air cushion' } },
+        { text: { zh: '高抓地力鞋底', ja: '高グリップ', en: 'High-grip sole' } },
+        { text: { zh: '撞色设计', ja: 'ツートンカラー', en: 'Two-tone' } }
       ]
     }
   ]
@@ -285,7 +327,7 @@ const SCENERY_TAB: CodexTab = {
   items: [
     {
       img: '/assets/backgrounds/arena_battlefield.jpg',
-      badge: 'BATTLEGROUND',
+      badgeKey: 'codex.badgeBattleground',
       badgeClass: 'scene',
       title: { zh: '码头货柜涂地竞技场', ja: '貨物ドック・アリーナ', en: 'Cargo Docks Arena' },
       desc: {
@@ -294,15 +336,15 @@ const SCENERY_TAB: CodexTab = {
         en: 'Pro turf stage built in a harbor container hub — stacked steel boxes and ramps create layered fights.'
       },
       tags: [
-        { zh: '规格: 124m × 124m', ja: 'サイズ: 124m', en: 'Size: 124m × 124m' },
-        { zh: '地形: 集装箱 & 坡道', ja: '地形: コンテナ+ランプ', en: 'Terrain: containers & ramps' },
-        { zh: '黄昏氛围', ja: '夕暮れ', en: 'Sunset vibe' }
+        { text: { zh: '规格: 124m × 124m', ja: 'サイズ: 124m', en: 'Size: 124m × 124m' } },
+        { text: { zh: '地形: 集装箱 & 坡道', ja: '地形: コンテナ+ランプ', en: 'Terrain: containers & ramps' } },
+        { text: { zh: '黄昏氛围', ja: '夕暮れ', en: 'Sunset vibe' } }
       ],
       wide: true
     },
     {
       img: '/assets/backgrounds/lobby_plaza.jpg',
-      badge: 'LOBBY PLAZA',
+      badgeKey: 'codex.badgeLobby',
       badgeClass: 'scene',
       title: { zh: '赛区更衣室与地下街区', ja: 'ロビープラザ', en: 'Underground Locker Plaza' },
       desc: {
@@ -311,15 +353,15 @@ const SCENERY_TAB: CodexTab = {
         en: 'Pre-match hub: metal lockers, graffiti walls, neon signs and a live ladder leaderboard.'
       },
       tags: [
-        { zh: '街区潮流文化', ja: 'ストリート文化', en: 'Street culture' },
-        { zh: '战队整备中心', ja: 'チーム準備エリア', en: 'Team prep center' },
-        { zh: '天梯积分展板', ja: 'ランキング表示', en: 'Ladder board' }
+        { text: { zh: '街区潮流文化', ja: 'ストリート文化', en: 'Street culture' } },
+        { text: { zh: '战队整备中心', ja: 'チーム準備エリア', en: 'Team prep center' } },
+        { text: { zh: '天梯积分展板', ja: 'ランキング表示', en: 'Ladder board' } }
       ],
       wide: true
     },
     {
       img: '/assets/backgrounds/victory_stage.jpg',
-      badge: 'VICTORY STAGE',
+      badgeKey: 'codex.badgeVictory',
       badgeClass: 'scene',
       title: { zh: '全球锦标赛冠军颁奖舞台', ja: '世界選手権の表彰舞台', en: 'Victory Tournament Stage' },
       desc: {
@@ -328,9 +370,9 @@ const SCENERY_TAB: CodexTab = {
         en: 'Where champions lift the trophy under golden confetti and ink fireworks.'
       },
       tags: [
-        { zh: '冠军领奖台', ja: '優勝セレモニー', en: 'Champion podium' },
-        { zh: '全息彩花礼炮', ja: 'ホロ花火', en: 'Holo fireworks' },
-        { zh: '万众欢呼盛典', ja: '大歓声', en: 'Roaring crowd' }
+        { text: { zh: '冠军领奖台', ja: '優勝セレモニー', en: 'Champion podium' } },
+        { text: { zh: '全息彩花礼炮', ja: 'ホロ花火', en: 'Holo fireworks' } },
+        { text: { zh: '万众欢呼盛典', ja: '大歓声', en: 'Roaring crowd' } }
       ],
       wide: true
     }
@@ -385,7 +427,13 @@ export function renderCodex(): void {
       img.alt = loc(item.title);
       const badge = document.createElement('span');
       badge.className = `codex-badge ${item.badgeClass}`;
-      badge.textContent = item.badge;
+      // Badges are authored as i18n keys; weapon cards instead carry the
+      // localized weapon name (upper-cased only where that reads naturally).
+      badge.textContent = item.badgeKey
+        ? t(item.badgeKey)
+        : item.badgeText
+          ? loc(item.badgeText).toUpperCase()
+          : '';
       thumbWrap.appendChild(img);
       thumbWrap.appendChild(badge);
 
@@ -400,7 +448,7 @@ export function renderCodex(): void {
       tags.className = 'codex-tags';
       for (const tag of item.tags) {
         const span = document.createElement('span');
-        span.textContent = loc(tag);
+        span.textContent = tagLabel(tag);
         tags.appendChild(span);
       }
       info.appendChild(h4);

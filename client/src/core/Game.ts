@@ -19,6 +19,7 @@ import {
   WelcomePayload,
   getMapDef,
   getSpawnPosition,
+  isChargeWeapon,
   worldToUV
 } from '@ink/shared';
 import type { GameMode, MapDef, MapId } from '@ink/shared';
@@ -30,7 +31,7 @@ import { CameraController } from '../player/CameraController.js';
 import { LocalPlayer } from '../player/LocalPlayer.js';
 import { RemotePlayer } from '../player/RemotePlayer.js';
 import { NetworkClient } from '../network/NetworkClient.js';
-import { SnapshotBuffer } from '../network/SnapshotBuffer.js';
+import { SnapshotBuffer, createInterpolatedState } from '../network/SnapshotBuffer.js';
 import { GameOverScreen } from '../ui/GameOverScreen.js';
 import { HUD } from '../ui/HUD.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
@@ -38,6 +39,7 @@ import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
 import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
 import { TitleScreen } from '../ui/TitleScreen.js';
+import { ScreenManager, screenRouteForPhase } from '../ui/ScreenManager.js';
 import { BotController, BotState } from '../bot/BotController.js';
 import { Arena } from '../world/Arena.js';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
@@ -75,6 +77,7 @@ export class Game {
   private scoreboard = new Scoreboard();
   private lobbyScreen: LobbyScreen;
   private titleScreen: TitleScreen;
+  private screens = new ScreenManager();
   private inputManager: InputManager;
   private cameraController: CameraController;
   private soundManager = new SoundManager();
@@ -106,6 +109,28 @@ export class Game {
   private lastRemoteShotSoundAt = 0;
   /** Debug-fire window end timestamp (test hook only; the server still validates everything). */
   private debugFireUntil = 0;
+
+  // --- Per-frame scratch buffers -------------------------------------------
+  // The render loop runs 60+ times a second; every one of these is reused and
+  // overwritten in place instead of allocating. Consumers (minimap, HUD squid
+  // row) only read them during the same frame and never retain them, so a
+  // single shared buffer per shape is safe.
+  /** Radar blips: local player + every remote (bots appended after remotes). */
+  private readonly minimapBlips: MinimapPlayerData[] = [];
+  private readonly minimapLocal: MinimapPlayerData = {
+    position: { x: 0, y: 0, z: 0 },
+    yaw: 0,
+    team: Team.NEUTRAL,
+    alive: false
+  };
+  /** HUD squid indicators, same order: local, remotes, bots. */
+  private readonly squidIndicators: { team: Team; alive: boolean; specialMeter: number }[] = [];
+  /** Reused interpolation result handed to `RemotePlayer.update`. */
+  private readonly remoteState = createInterpolatedState();
+  /** Frame-time sampling for the debug hook (rolling window). */
+  private frameTimeHistory: number[] = [];
+  private frameTimeMax = 0;
+  private lastFrameAt = 0;
 
   constructor() {
     const canvas = document.getElementById('webgl-canvas') as HTMLCanvasElement;
@@ -161,27 +186,35 @@ export class Game {
     this.soundManager.setBgmVolume(this.settingsModal.config.bgmVolume);
     this.applyQuality(this.settingsModal.config.quality);
 
-    this.titleScreen = new TitleScreen({
-      onPlay: () => {
-        this.titleScreen.hide();
-        this.lobbyScreen.show();
+    this.titleScreen = new TitleScreen(
+      {
+        onPlay: () => {
+          this.lobbyScreen.show();
+        },
+        onOpenSettings: () => this.settingsModal.show()
       },
-      onOpenSettings: () => this.settingsModal.show()
-    });
+      this.screens
+    );
 
-    this.lobbyScreen = new LobbyScreen({
-      onLobbyUpdate: (data) => this.networkClient.sendLobbyUpdate(data),
-      onLobbyStart: () => this.networkClient.sendLobbyStart(),
-      onWeaponChanged: (weapon) => {
-        this.setLocalWeapon(weapon);
+    this.lobbyScreen = new LobbyScreen(
+      {
+        onLobbyUpdate: (data) => this.networkClient.sendLobbyUpdate(data),
+        onLobbyStart: () => this.networkClient.sendLobbyStart(),
+        onWeaponChanged: (weapon) => {
+          this.setLocalWeapon(weapon);
+        },
+        onRequestEnterArena: () => {
+          this.inputManager.requestPointerLock();
+        },
+        onMatchConfig: (config) => this.networkClient.sendMatchConfig(config),
+        onAddBot: () => this.networkClient.sendAddBot(),
+        onRemoveBot: () => this.networkClient.sendRemoveBot(),
+        onReturnToTitle: () => {
+          this.screens.show('title');
+        }
       },
-      onRequestEnterArena: () => {
-        this.inputManager.requestPointerLock();
-      },
-      onMatchConfig: (config) => this.networkClient.sendMatchConfig(config),
-      onAddBot: () => this.networkClient.sendAddBot(),
-      onRemoveBot: () => this.networkClient.sendRemoveBot()
-    });
+      this.screens
+    );
 
     this.setupPointerLockPrompt();
 
@@ -243,13 +276,12 @@ export class Game {
           this.scoreboard.setVisible(true);
         }
       }
-      // In-match quick weapon switching on 1-4
-      const weaponKeys: Record<string, WeaponType> = {
-        Digit1: 'shooter',
-        Digit2: 'roller',
-        Digit3: 'charger',
-        Digit4: 'slosher'
-      };
+      // In-match quick weapon switching on 1-8, in the same order the lobby
+      // grid lists the roster so the keys match what the player just saw.
+      const weaponKeys: Record<string, WeaponType> = {};
+      (Object.keys(WEAPON_CONFIGS) as WeaponType[]).forEach((id, i) => {
+        if (i < 9) weaponKeys[`Digit${i + 1}`] = id;
+      });
       const weapon = weaponKeys[e.code];
       if (weapon && !e.repeat && this.localPlayer) {
         const inGame = !this.lobbyScreen.isVisible() && !this.titleScreen.isVisible();
@@ -273,6 +305,89 @@ export class Game {
     if (!this.localPlayer) return;
     this.localPlayer.weaponType = weapon;
     this.localPlayer.view.setWeaponType(weapon);
+  }
+
+  /**
+   * Writes one radar blip into the reused buffer, growing it only when the
+   * roster is larger than anything seen before.
+   */
+  private writeBlip(
+    index: number,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    team: Team,
+    alive: boolean
+  ): void {
+    const blip = this.minimapBlips[index];
+    if (blip) {
+      blip.position.x = x;
+      blip.position.y = y;
+      blip.position.z = z;
+      blip.yaw = yaw;
+      blip.team = team;
+      blip.alive = alive;
+      return;
+    }
+    this.minimapBlips[index] = { position: { x, y, z }, yaw, team, alive };
+  }
+
+  /**
+   * Writes one HUD squid indicator into the reused buffer.
+   */
+  private writeSquid(index: number, team: Team, alive: boolean, specialMeter: number): void {
+    const entry = this.squidIndicators[index];
+    if (entry) {
+      entry.team = team;
+      entry.alive = alive;
+      entry.specialMeter = specialMeter;
+      return;
+    }
+    this.squidIndicators[index] = { team, alive, specialMeter };
+  }
+
+  /**
+   * Rolling frame-time window (last 120 frames) exposed through the debug hook
+   * so a regression can be read programmatically instead of by eye.
+   */
+  private sampleFrameTime(now: number): void {
+    if (this.lastFrameAt > 0) {
+      const delta = now - this.lastFrameAt;
+      this.frameTimeHistory.push(delta);
+      if (this.frameTimeHistory.length > 120) this.frameTimeHistory.shift();
+      if (delta > this.frameTimeMax) this.frameTimeMax = delta;
+    }
+    this.lastFrameAt = now;
+  }
+
+  /** Snapshot of the frame-time window: mean, p95 and the worst sample. */
+  private frameStats(): { avgMs: number; p95Ms: number; maxMs: number; samples: number; fps: number } {
+    const history = this.frameTimeHistory;
+    const n = history.length;
+    if (n === 0) {
+      return { avgMs: 0, p95Ms: 0, maxMs: 0, samples: 0, fps: 0 };
+    }
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += history[i]!;
+    const avg = sum / n;
+    // Copy before sorting: the window must keep its chronological order.
+    const sorted = history.slice().sort((a, b) => a - b);
+    const p95 = sorted[Math.min(n - 1, Math.floor(n * 0.95))]!;
+    return {
+      avgMs: Math.round(avg * 100) / 100,
+      p95Ms: Math.round(p95 * 100) / 100,
+      maxMs: Math.round(this.frameTimeMax * 100) / 100,
+      samples: n,
+      fps: Math.round((1000 / Math.max(0.01, avg)) * 10) / 10
+    };
+  }
+
+  /** Clears the frame-time window (used by tests/automation before a measurement). */
+  private resetFrameStats(): void {
+    this.frameTimeHistory.length = 0;
+    this.frameTimeMax = 0;
+    this.lastFrameAt = 0;
   }
 
   private applyQuality(q: 'low' | 'medium' | 'high' | 'auto'): void {
@@ -301,11 +416,18 @@ export class Game {
           team: lp?.team ?? null,
           phase: this.matchPhase,
           lobbyVisible: this.lobbyScreen.isVisible(),
+          visibleScreens: this.screens.visibleIds(),
+          activeScreen: this.screens.getActiveId(),
+          matchMode: this.matchMode,
+          mapId: this.activeMapDef.id,
+          mapSize: this.activeMapDef.size,
+          zoneMarkerVisible: this.arena.isZoneMarkerVisible(),
           locked: this.inputManager.isLocked(),
           alive: lp?.alive ?? false,
           hp: lp?.hp ?? 0,
           ink: lp ? Math.round(lp.ink) : 0,
           mode: lp ? PlayerMode[lp.mode] : null,
+          weaponType: lp?.weaponType ?? null,
           pos: lp
             ? {
                 x: Math.round(lp.position.x * 100) / 100,
@@ -333,6 +455,9 @@ export class Game {
           },
           bufferLen: (this.snapshotBuffer as unknown as { buffer: unknown[] }).buffer.length,
           serverTime: Math.round(this.networkClient.getServerTime()),
+          frames: this.frameStats(),
+          render: this.renderer.getRenderInfo(),
+          paint: this.paintEngine.getUploadStats(),
           remoteRaw: Array.from(this.remotePlayers.entries()).map(([id, rp]) => {
             const r = rp as unknown as { lastTime: number; lastPos: { x: number; y: number; z: number } };
             return { id, lastTime: Math.round(r.lastTime * 1000) / 1000, lastPos: r.lastPos };
@@ -361,7 +486,14 @@ export class Game {
       },
       debugFire: (durationMs = 1500) => {
         this.debugFireUntil = performance.now() + Math.max(100, Math.min(5000, durationMs));
-      }
+      },
+      /** Frame-time window control for automated perf runs. */
+      resetFrameStats: () => {
+        this.resetFrameStats();
+      },
+      getFrameStats: () => this.frameStats(),
+      /** Live renderer counters (draw calls, triangles, programs). */
+      getRenderInfo: () => this.renderer.getRenderInfo()
     };
   }
 
@@ -374,12 +506,16 @@ export class Game {
     const now = performance.now();
     const serverTime = this.networkClient.getServerTime();
 
+    this.sampleFrameTime(now);
+
     // Dynamic resolution (quality = auto)
     this.renderer.adaptiveTick(this.clock.getFPS(), now);
 
     // 1. Local Player Processing
     if (this.localPlayer) {
-      const isCharger = (this.localPlayer.weaponType || 'shooter') === 'charger';
+      // Charge input follows the weapon's own stats, so a charging weapon added
+      // later needs no edit here.
+      const isCharger = isChargeWeapon(this.localPlayer.weaponType || 'shooter');
       this.inputManager.updateCharge(dt, isCharger);
 
       this.inputSeq++;
@@ -418,13 +554,13 @@ export class Game {
           this.localPlayer.triggerShootRecoil();
           this.cameraController.addRecoil(0.014);
 
-          if (weaponType === 'charger') {
+          if (isCharger) {
             this.soundManager.playChargerShot(input.chargeLevel || 1.0);
             this.cameraController.addShake(0.18, 0.15);
           } else if (weaponType === 'roller') {
             this.soundManager.playRollerFlick();
             this.cameraController.addShake(0.12, 0.12);
-          } else if (weaponType === 'slosher') {
+          } else if (weaponType === 'slosher' || weaponType === 'cannon') {
             this.soundManager.playBucket();
             this.cameraController.addShake(0.1, 0.1);
           } else {
@@ -549,7 +685,7 @@ export class Game {
                   this.soundManager.playKillChime();
                   this.cameraController.addShake(0.35, 0.25);
                   this.particleSystem.spawnSplash(bot.position, this.localPlayer.team, 24, 11.0);
-                  this.hud.addKillFeedEntry('You', this.localPlayer.team, bot.name, bot.team);
+                  this.hud.addKillFeedEntry(t('hud.you'), this.localPlayer.team, bot.name, bot.team);
                 }
                 break;
               }
@@ -662,7 +798,7 @@ export class Game {
 
     // 2. Remote Players Interpolation
     for (const [id, remote] of this.remotePlayers) {
-      const state = this.snapshotBuffer.getInterpolatedState(id, serverTime);
+      const state = this.snapshotBuffer.getInterpolatedState(id, serverTime, this.remoteState);
       if (state) {
         remote.update(state, now / 1000);
       }
@@ -719,18 +855,18 @@ export class Game {
               this.hud.showDeathOverlay(4.0);
               this.respawnEndsAt = Date.now() + 4000;
               this.soundManager.playSplat();
-              this.hud.addKillFeedEntry(bot.name, bot.team, 'You', this.localPlayer!.team);
+              this.hud.addKillFeedEntry(bot.name, bot.team, t('hud.you'), this.localPlayer!.team);
             }
           }
         },
         (bot, paintX, paintZ) => {
-          const { u, v } = worldToUV(paintX, paintZ);
+          const { u, v } = worldToUV(paintX, paintZ, this.activeMapDef.size);
           const paintEvt: PaintEvent = {
             id: Math.floor(Math.random() * 100000),
             team: bot.team,
             u,
             v,
-            radius: PAINT_RADIUS_WORLD / 100,
+            radius: PAINT_RADIUS_WORLD / this.activeMapDef.size,
             seed: (now ^ 0x9876) >>> 0
           };
           this.paintEngine.applyPaintBatch([paintEvt]);
@@ -748,46 +884,42 @@ export class Game {
       }
 
       // 6. Tactical Minimap Radar & Top Team Squids Update
-      const allRemotePositions: MinimapPlayerData[] = Array.from(this.remotePlayers.values()).map((p) => ({
-        position: { x: p.position.x, y: p.position.y, z: p.position.z },
-        yaw: p.yaw,
-        team: p.team,
-        alive: p.alive
-      }));
-      for (const bot of this.botController.getBots()) {
-        allRemotePositions.push({
-          position: bot.position,
-          yaw: bot.yaw,
-          team: bot.team,
-          alive: bot.alive
-        });
+      // Both lists are reused buffers: `Minimap.update` and `HUD.updateTeamSquids`
+      // read them synchronously and never keep a reference, so writing in place
+      // removes two array allocations per frame.
+      let blipCount = 0;
+      for (const p of this.remotePlayers.values()) {
+        this.writeBlip(blipCount++, p.position.x, p.position.y, p.position.z, p.yaw, p.team, p.alive);
       }
+      for (const bot of this.botController.getBots()) {
+        this.writeBlip(blipCount++, bot.position.x, bot.position.y, bot.position.z, bot.yaw, bot.team, bot.alive);
+      }
+      // Shrink the view without dropping the objects, so the next frame reuses them.
+      if (this.minimapBlips.length > blipCount) this.minimapBlips.length = blipCount;
 
-      this.minimap.update(
-        {
-          position: this.localPlayer.position,
-          yaw: this.localPlayer.yaw,
-          team: this.localPlayer.team,
-          alive: this.localPlayer.alive
-        },
-        allRemotePositions,
-        this.collisionWorld.getObstacles()
+      const localBlip = this.minimapLocal;
+      localBlip.position = this.localPlayer.position;
+      localBlip.yaw = this.localPlayer.yaw;
+      localBlip.team = this.localPlayer.team;
+      localBlip.alive = this.localPlayer.alive;
+
+      this.minimap.update(localBlip, this.minimapBlips, this.collisionWorld.getObstacles());
+
+      let squidCount = 0;
+      this.writeSquid(
+        squidCount++,
+        this.localPlayer.team,
+        this.localPlayer.alive,
+        this.localPlayer.specialMeter
       );
-
-      const squidsData = [
-        {
-          team: this.localPlayer.team,
-          alive: this.localPlayer.alive,
-          specialMeter: this.localPlayer.specialMeter
-        }
-      ];
       for (const rp of this.remotePlayers.values()) {
-        squidsData.push({ team: rp.team, alive: rp.alive, specialMeter: rp.specialMeter });
+        this.writeSquid(squidCount++, rp.team, rp.alive, rp.specialMeter);
       }
       for (const bot of this.botController.getBots()) {
-        squidsData.push({ team: bot.team, alive: bot.alive, specialMeter: bot.specialMeter });
+        this.writeSquid(squidCount++, bot.team, bot.alive, bot.specialMeter);
       }
-      this.hud.updateTeamSquids(squidsData);
+      if (this.squidIndicators.length > squidCount) this.squidIndicators.length = squidCount;
+      this.hud.updateTeamSquids(this.squidIndicators);
     }
 
     // 7. Paint Texture Upload (ONLY IF DIRTY, AT MOST ONCE PER RENDER FRAME!)
@@ -798,12 +930,17 @@ export class Game {
   };
 
   private handleWelcome(payload: WelcomePayload): void {
-    // 1. Set obstacles + map
+    // 1. Set obstacles + map. switchLocalMap applies the size-dependent state
+    // first, so the collision world picks it up from the authoritative payload
+    // when the server reports one.
     if (payload.obstacles && payload.obstacles.length > 0) {
       this.collisionWorld.setObstacles(payload.obstacles);
     }
     if (payload.mapId) {
       this.switchLocalMap(payload.mapId);
+    }
+    if (typeof payload.mapSize === 'number' && payload.obstacles?.length) {
+      this.collisionWorld.setObstacles(payload.obstacles, payload.mapSize);
     }
 
     // 2. Replay all Paint History (Late Join)
@@ -857,11 +994,14 @@ export class Game {
   /** Rebuilds arena visuals + collision + minimap for a (possibly new) map. */
   private switchLocalMap(mapId: MapId): void {
     const mapDef = getMapDef(mapId);
+    // Size-dependent state is applied before the early return: the initial map
+    // can already be the active one, and the paint/minimap extents still need it.
+    this.paintEngine.setMapSize(mapDef.size);
+    this.minimap.setSize(mapDef.size);
     if (mapDef.id === this.activeMapDef.id) return;
     this.activeMapDef = mapDef;
     this.arena.rebuild(mapDef);
     this.collisionWorld.setObstacles(mapDef.obstacles, mapDef.size);
-    this.minimap.setSize(mapDef.size);
     this.renderer.applyTheme(mapDef.theme);
   }
 
@@ -939,11 +1079,11 @@ export class Game {
       this.lastRemoteShotSoundAt = now;
     }
 
-    if (shot.weaponType === 'charger') {
+    if (shot.weaponType && isChargeWeapon(shot.weaponType)) {
       this.soundManager.playChargerShot(shot.chargeLevel || 1.0);
     } else if (shot.weaponType === 'roller') {
       this.soundManager.playRollerFlick();
-    } else if (shot.weaponType === 'slosher') {
+    } else if (shot.weaponType === 'slosher' || shot.weaponType === 'cannon') {
       this.soundManager.playBucket();
     } else {
       this.soundManager.playShoot();
@@ -1038,15 +1178,19 @@ export class Game {
 
     // Kill Feed Notification (Subagent 78)
     const victimMeta = this.playerMeta.get(data.victimId);
-    const victimName = victimMeta?.name || (isLocalVictim ? 'You' : `Player #${data.victimId.slice(0, 4)}`);
+    const victimName =
+      victimMeta?.name ||
+      (isLocalVictim ? t('hud.you') : t('hud.playerHash', { id: data.victimId.slice(0, 4) }));
     const victimTeam = victimMeta?.team || (isLocalVictim && this.localPlayer ? this.localPlayer.team : Team.PINK);
 
-    let killerName = 'Turf Hazard';
+    let killerName = t('hud.turfHazard');
     let killerTeam = victimTeam === Team.PINK ? Team.CYAN : Team.PINK;
 
     if (data.killerId) {
       const killerMeta = this.playerMeta.get(data.killerId);
-      killerName = killerMeta?.name || (isLocalKiller ? 'You' : `Player #${data.killerId.slice(0, 4)}`);
+      killerName =
+        killerMeta?.name ||
+        (isLocalKiller ? t('hud.you') : t('hud.playerHash', { id: data.killerId.slice(0, 4) }));
       killerTeam = killerMeta?.team || (isLocalKiller && this.localPlayer ? this.localPlayer.team : killerTeam);
     }
 
@@ -1075,6 +1219,21 @@ export class Game {
     this.pinkScore = state.pinkScore;
     this.cyanScore = state.cyanScore;
 
+    // The objective volume only exists in zone-scoring modes, and it is tinted
+    // by whoever currently holds the zone so the contest is readable at a
+    // glance without opening the scoreboard.
+    const isZoneMode = this.matchMode === 'splat_zones';
+    this.arena.setZoneVisible(isZoneMode && state.phase !== MatchPhase.WAITING);
+    if (isZoneMode) {
+      const owner =
+        state.pinkScore > state.cyanScore
+          ? Team.PINK
+          : state.cyanScore > state.pinkScore
+            ? Team.CYAN
+            : null;
+      this.arena.setZoneOwner(owner);
+    }
+
     if (prevPhase !== state.phase) {
       if (state.phase === MatchPhase.COUNTDOWN) {
         this.soundManager.playCountdown(false);
@@ -1086,21 +1245,20 @@ export class Game {
       }
     }
 
-    // Auto-hide lobby/title and lock mouse when entering match
-    if (state.phase === MatchPhase.COUNTDOWN || state.phase === MatchPhase.PLAYING) {
-      if (this.lobbyScreen.isVisible()) {
-        this.lobbyScreen.hide();
-        this.inputManager.requestPointerLock();
-      }
-      if (this.titleScreen.isVisible()) {
-        this.titleScreen.hide();
-      }
+    // Screen routing lives in ScreenManager so the "which overlay is visible"
+    // rule is one testable decision table instead of scattered ifs.
+    const route = screenRouteForPhase(state.phase, prevPhase, {
+      menuVisible: this.lobbyScreen.isVisible() || this.titleScreen.isVisible()
+    });
+    if (route.kind === 'hideAll') {
+      if (route.requestPointerLock) this.inputManager.requestPointerLock();
+      this.screens.hideAll();
+    } else if (route.kind === 'show') {
+      this.screens.show(route.id);
+    } else if (route.kind === 'hide') {
+      this.screens.hide(route.id);
     }
 
-    // Reopen lobby when match returns to waiting phase
-    if (state.phase === MatchPhase.WAITING && !this.lobbyScreen.isVisible() && prevPhase === MatchPhase.GAME_OVER) {
-      this.lobbyScreen.show();
-    }
     // If restarted
     if (prevPhase === MatchPhase.GAME_OVER && state.phase === MatchPhase.COUNTDOWN) {
       this.gameOverScreen.hide();
@@ -1167,7 +1325,7 @@ export class Game {
     this.renderer.scene.add(remoteBot.view.group);
     this.botRemotePlayers.set(bot.id, remoteBot);
 
-    this.hud.addKillFeedEntry('SYSTEM', Team.NEUTRAL, `Spawned ${bot.name}`, botTeam, '🤖');
+    this.hud.addKillFeedEntry(t('hud.system'), Team.NEUTRAL, t('hud.spawnedBot', { name: bot.name }), botTeam, '🤖');
   }
 
   private clearPracticeBots(): void {
@@ -1177,7 +1335,7 @@ export class Game {
     }
     this.botRemotePlayers.clear();
     this.botController.clearBots();
-    this.hud.addKillFeedEntry('SYSTEM', Team.NEUTRAL, 'Cleared all bots', Team.NEUTRAL, '🧹');
+    this.hud.addKillFeedEntry(t('hud.system'), Team.NEUTRAL, t('hud.clearedBots'), Team.NEUTRAL, '🧹');
   }
 
   dispose(): void {

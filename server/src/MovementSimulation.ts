@@ -63,7 +63,7 @@ export class MovementSimulation {
       groundInk,
       player.team
     );
-    const currentSpeed = getMovementSpeed(player.mode, groundInk, player.team);
+    const currentSpeed = getMovementSpeed(player.mode, groundInk, player.team, player.skills);
 
     // 3. Enemy Ink Damage over Time (DoT) via PlayerState (Subagent 19)
     let diedByEnemyInk = false;

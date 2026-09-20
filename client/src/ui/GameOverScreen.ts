@@ -11,6 +11,8 @@ export class GameOverScreen {
   private pinkLabelEl: HTMLElement | null;
   private cyanLabelEl: HTMLElement | null;
   private lastMode: GameMode | undefined;
+  /** Last payload rendered, so a language switch can repaint the same result. */
+  private lastPayload: GameOverPayload | undefined;
 
   constructor() {
     this.overlayEl = document.getElementById('game-over-screen');
@@ -20,11 +22,40 @@ export class GameOverScreen {
     this.nextTimerEl = document.getElementById('next-match-timer');
     this.pinkLabelEl = document.getElementById('final-pink-label');
     this.cyanLabelEl = document.getElementById('final-cyan-label');
+
+    // Winner banner and score labels are localized strings computed from the
+    // payload, so repaint the visible result when the language changes.
+    window.addEventListener('ink:langchange', () => {
+      if (this.lastPayload && !this.overlayEl?.classList.contains('hidden')) {
+        this.show(this.lastPayload);
+      } else {
+        this.applyIdleLabels();
+      }
+    });
+    // Localized defaults before the first result arrives.
+    this.applyIdleLabels();
+  }
+
+  /**
+   * Localized labels shown while no result is on screen: the banner placeholder,
+   * both coverage/kill/point labels and the countdown. `show()` overwrites them
+   * with the real result once a match ends.
+   */
+  private applyIdleLabels(): void {
+    if (this.winnerBannerEl) this.winnerBannerEl.textContent = t('gameover.matchOver');
+    const label = t('hud.coverage');
+    if (this.pinkLabelEl) this.pinkLabelEl.textContent = label;
+    if (this.cyanLabelEl) this.cyanLabelEl.textContent = label;
+    const modeEl = document.getElementById('game-over-mode');
+    if (modeEl) modeEl.textContent = t('mode.turfWar');
+    // Replaces the hardcoded English seed; updateCountdown() writes the live value.
+    if (this.nextTimerEl) this.nextTimerEl.textContent = t('gameover.nextMatch', { s: 8 });
   }
 
   show(payload: GameOverPayload): void {
     if (!this.overlayEl) return;
     this.lastMode = payload.mode;
+    this.lastPayload = payload;
 
     if (this.winnerBannerEl) {
       if (payload.winner === Team.PINK) {

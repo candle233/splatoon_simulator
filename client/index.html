@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ink Arena - 3D Multiplayer Turf War</title>
+    <title data-i18n="page.title">Ink Arena - 3D Multiplayer Turf War</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate icon" href="/favicon.ico" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -30,7 +30,7 @@
         <!-- Top Bar: Match Timer & Ink Coverage -->
         <div id="top-bar">
           <div id="team-pink-badge" class="team-badge pink">
-            <span class="team-label">PINK</span>
+            <span class="team-label" data-i18n="team.pink">PINK</span>
             <span id="pink-score-text">0.0%</span>
           </div>
 
@@ -44,7 +44,7 @@
           <div id="team-squids-cyan" class="team-squids"></div>
 
           <div id="team-cyan-badge" class="team-badge cyan">
-            <span class="team-label">CYAN</span>
+            <span class="team-label" data-i18n="team.cyan">CYAN</span>
             <span id="cyan-score-text">0.0%</span>
           </div>
         </div>
@@ -67,22 +67,25 @@
             <div class="meter-bar">
               <div id="hp-bar-fill"></div>
             </div>
-            <div id="player-mode-tag" class="mode-tag humanoid">HUMANOID</div>
+            <div id="player-mode-tag" class="mode-tag humanoid" data-i18n="hud.humanoid">HUMANOID</div>
           </div>
 
           <!-- Active Weapon & Sub Status -->
           <div class="loadout-card">
             <div class="loadout-item-box">
-              <img id="hud-weapon-icon" class="hud-item-thumb" src="/assets/weapons/splattershot.jpg" alt="Weapon" />
+              <img id="hud-weapon-icon" class="hud-item-thumb" src="/assets/weapons/splattershot.jpg" alt="Weapon" data-i18n-alt="hud.loadoutWeapon" />
               <div class="loadout-details">
-                <span class="loadout-title">WEAPON</span>
+                <span class="loadout-title" data-i18n="hud.loadoutWeapon">WEAPON</span>
+                <!-- #hud-weapon-name / #hud-sub-name are seeded from the shared
+                     weapon configs by HUD's constructor (locName) and refreshed
+                     on every loadout update. -->
                 <span id="hud-weapon-name">Ink Blaster</span>
               </div>
             </div>
             <div class="loadout-item-box">
-              <img id="hud-sub-icon" class="hud-item-thumb" src="/assets/weapons/splat_bomb.jpg" alt="Sub" />
+              <img id="hud-sub-icon" class="hud-item-thumb" src="/assets/weapons/splat_bomb.jpg" alt="Sub" data-i18n-alt="hud.loadoutSub" />
               <div class="loadout-details">
-                <span class="loadout-title">SUB [Q / RMB]</span>
+                <span class="loadout-title" data-i18n="hud.loadoutSub">SUB [Q / RMB]</span>
                 <div class="hud-sub-flex">
                   <span id="hud-sub-name">Ink Bomb</span>
                   <span id="hud-sub-cost">(65%)</span>
@@ -125,6 +128,8 @@
       <div id="death-screen" class="screen-overlay hidden">
         <div class="death-content">
           <h2 class="splatted-title" data-i18n="hud.splatted">SPLATTED!</h2>
+          <!-- #respawn-msg is seeded localized by HUD's constructor and updated
+               with the live countdown by showDeathOverlay(). -->
           <p class="respawn-msg" id="respawn-msg">Respawning in 4s…</p>
         </div>
       </div>
@@ -155,21 +160,26 @@
       <div id="game-over-screen" class="screen-overlay hidden">
         <div class="game-over-card">
           <div id="game-over-mode" class="game-over-mode hidden">TURF WAR</div>
+          <!-- #winner-banner, .score-team and the score labels are written by
+               GameOverScreen.ts (they depend on the winning team and mode), which
+               also re-renders them on 'ink:langchange'. -->
           <h1 id="winner-banner">MATCH OVER</h1>
           <div class="final-scores">
             <div class="final-score-column pink">
-              <span class="score-team">PINK</span>
+              <span class="score-team" data-i18n="team.pink">PINK</span>
               <span id="final-pink-pct" class="score-pct">0.0%</span>
               <span id="final-pink-label" class="score-label">COVERAGE</span>
             </div>
-            <div class="score-vs">VS</div>
+            <div class="score-vs" data-i18n="gameover.vs">VS</div>
             <div class="final-score-column cyan">
-              <span class="score-team">CYAN</span>
+              <span class="score-team" data-i18n="team.cyan">CYAN</span>
               <span id="final-cyan-pct" class="score-pct">0.0%</span>
               <span id="final-cyan-label" class="score-label">COVERAGE</span>
             </div>
           </div>
           <p id="next-match-timer">Next match in 8s…</p>
+          <!-- #next-match-timer is seeded localized by GameOverScreen's
+               constructor and updated with the live countdown. -->
           <button id="btn-return-lobby" class="btn-secondary" data-i18n="lobby.return">RETURN TO LOBBY</button>
         </div>
       </div>
@@ -177,6 +187,9 @@
       <!-- Connection / Sync Banner -->
       <div id="sync-banner" class="sync-overlay hidden">
         <div class="sync-spinner"></div>
+        <!-- #sync-text is always written by showSyncBanner(t(...)) in Game.ts and
+             starts hidden, so it must NOT carry data-i18n: applyI18n() would
+             overwrite a live "connection lost" message on a language change. -->
         <p id="sync-text">Synchronizing arena…</p>
       </div>
 
@@ -199,7 +212,7 @@
           </div>
 
           <div id="title-lang-switch" class="lang-switch"></div>
-          <p id="title-version" class="title-version">INK ARENA v1.1</p>
+          <p id="title-version" class="title-version" data-i18n="title.version">INK ARENA v1.1</p>
         </div>
       </div>
 
@@ -214,6 +227,7 @@
             <div class="header-right">
               <div id="lang-switch" class="lang-switch"></div>
               <button id="btn-open-codex" class="btn-codex">📖 <span data-i18n="lobby.codexBtn">Codex</span></button>
+              <button id="btn-lobby-back" class="btn-codex" data-i18n="title.back">Back to Title</button>
             </div>
           </header>
 
@@ -222,7 +236,9 @@
             <div class="lobby-col loadout-col">
               <div class="profile-section">
                 <div class="profile-avatar-wrapper">
-                  <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" title="" data-i18n-title="lobby.avatarUpload" />
+                  <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" title="" data-i18n-title="lobby.avatarUpload" data-i18n-alt="lobby.avatarAlt" />
+                  <!-- #profile-avatar-tag is written by LobbyScreen.updateAvatarVisual()
+                       from the selected team (and re-rendered on 'ink:langchange'). -->
                   <span id="profile-avatar-tag" class="profile-avatar-tag">AUTO</span>
                   <input id="avatar-file-input" type="file" accept="image/*" class="hidden" />
                 </div>
@@ -234,6 +250,10 @@
               </div>
 
               <h3 data-i18n="lobby.selectWeapon">SELECT WEAPON LOADOUT</h3>
+              <!-- No-JS seed only: LobbyScreen.buildWeaponGrid() clears this grid and
+                   rebuilds every card from WEAPON_CONFIGS via locName()/locDesc(), so
+                   these nodes are never shown to a user and must NOT carry data-i18n
+                   (a static key would fight the per-weapon runtime values). -->
               <div class="weapon-grid">
                 <div class="weapon-option selected" data-weapon="shooter">
                   <div class="weapon-card-thumb">
@@ -372,16 +392,16 @@
 
       <!-- F3 Debug Overlay -->
       <div id="debug-overlay" class="hidden">
-        <h3>DEBUG STATS (F3)</h3>
-        <div>FPS: <span id="dbg-fps">60</span></div>
-        <div>Ping: <span id="dbg-ping">--</span> ms</div>
-        <div>Player ID: <span id="dbg-player-id">--</span></div>
-        <div>Team: <span id="dbg-team">--</span></div>
-        <div>Position: <span id="dbg-pos">0, 0, 0</span></div>
-        <div>Ground Ink: <span id="dbg-ground">Neutral</span></div>
-        <div>HP: <span id="dbg-hp">100</span> | Ink: <span id="dbg-ink">100</span></div>
-        <div>Mode: <span id="dbg-mode">Humanoid</span></div>
-        <div>Paint Events: <span id="dbg-paint-count">0</span></div>
+        <h3 data-i18n="debug.title">DEBUG STATS (F3)</h3>
+        <div><span data-i18n="debug.fps">FPS</span>: <span id="dbg-fps">60</span></div>
+        <div><span data-i18n="debug.ping">Ping</span>: <span id="dbg-ping">--</span> <span data-i18n="debug.ms">ms</span></div>
+        <div><span data-i18n="debug.playerId">Player ID</span>: <span id="dbg-player-id">--</span></div>
+        <div><span data-i18n="debug.team">Team</span>: <span id="dbg-team">--</span></div>
+        <div><span data-i18n="debug.position">Position</span>: <span id="dbg-pos">0, 0, 0</span></div>
+        <div><span data-i18n="debug.groundInk">Ground Ink</span>: <span id="dbg-ground">Neutral</span></div>
+        <div><span data-i18n="debug.hp">HP</span>: <span id="dbg-hp">100</span> | <span data-i18n="debug.ink">Ink</span>: <span id="dbg-ink">100</span></div>
+        <div><span data-i18n="debug.mode">Mode</span>: <span id="dbg-mode">Humanoid</span></div>
+        <div><span data-i18n="debug.paintEvents">Paint Events</span>: <span id="dbg-paint-count">0</span></div>
       </div>
 
       <!-- Illustrated Codex & Art Gallery Modal (content rendered by CodexData.ts) -->
@@ -401,7 +421,7 @@
           <!-- Lightbox / Fullscreen Image Viewer -->
           <div id="codex-lightbox" class="codex-lightbox hidden">
             <div class="lightbox-content">
-              <img id="lightbox-img" src="" alt="Full Preview" />
+              <img id="lightbox-img" src="" alt="Full Preview" data-i18n-alt="codex.lightboxAlt" />
               <button id="lightbox-close" class="lightbox-close">✕</button>
             </div>
           </div>

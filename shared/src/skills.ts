@@ -110,6 +110,50 @@ export const SKILL_CONFIGS: SkillStats[] = [
     descriptionZh: '受到的伤害降低 10%。',
     descriptionJa: '受けるダメージを10%軽減。',
     multiplier: 0.9
+  },
+  {
+    id: 'sub_saver',
+    icon: '💧',
+    name: 'Sub Saver',
+    nameZh: '副武器省墨',
+    nameJa: 'サブインク効率',
+    description: 'Sub weapon ink costs reduced by 20%.',
+    descriptionZh: '副武器墨水消耗降低 20%。',
+    descriptionJa: 'サブウェポンのインク消費を20%削減。',
+    multiplier: 0.8
+  },
+  {
+    id: 'sub_power',
+    icon: '💣',
+    name: 'Sub Power Up',
+    nameZh: '副武器强化',
+    nameJa: 'サブ性能アップ',
+    description: 'Sub weapon damage +20% and a 25% larger blast radius.',
+    descriptionZh: '副武器伤害提升 20%，爆炸范围扩大 25%。',
+    descriptionJa: 'サブウェポンのダメージ+20%、爆発範囲+25%。',
+    multiplier: 1.2
+  },
+  {
+    id: 'special_power',
+    icon: '🌟',
+    name: 'Special Power Up',
+    nameZh: '大招强化',
+    nameJa: 'スペシャル性能',
+    description: 'Special weapon damage and duration +20%.',
+    descriptionZh: '大招伤害与持续时间提升 20%。',
+    descriptionJa: 'スペシャルのダメージと持続時間が20%アップ。',
+    multiplier: 1.2
+  },
+  {
+    id: 'paint_boost',
+    icon: '🖌️',
+    name: 'Turf Power Up',
+    nameZh: '涂地范围强化',
+    nameJa: '塗り範囲アップ',
+    description: 'Ink coverage radius +18% for every weapon and sub.',
+    descriptionZh: '主武器与副武器的涂地半径提升 18%。',
+    descriptionJa: 'メイン・サブウェポンの塗り半径が18%アップ。',
+    multiplier: 1.18
   }
 ];
 

@@ -1,6 +1,8 @@
 import {
   COUNTDOWN_DURATION,
+  FINAL_PUSH_SAMPLE_SEC,
   GAME_OVER_DURATION,
+  HYBRID_KILL_POINTS,
   MAP_DEFS,
   MATCH_DURATION,
   MatchPhase,
@@ -40,6 +42,10 @@ export class Match {
   private lastZoneTickAt = 0;
   private pinkKills = 0;
   private cyanKills = 0;
+  /** Last coverage sample (percent) for `final_push`; the running verdict. */
+  private pushPink = 0;
+  private pushCyan = 0;
+  private lastPushSampleAt = 0;
 
   constructor(paintGrid: PaintGrid, onReset?: () => void) {
     this.paintGrid = paintGrid;
@@ -53,15 +59,23 @@ export class Match {
   setConfig(mode?: GameMode, mapId?: MapId): void {
     if (mode && mode !== this.mode) {
       this.mode = mode;
-      this.zonePointsPink = 0;
-      this.zonePointsCyan = 0;
+      this.resetModeScores();
     }
     if (mapId && mapId !== this.mapId) {
       this.mapId = mapId;
       this.zoneRect = MAP_DEFS[mapId].zone;
-      this.zonePointsPink = 0;
-      this.zonePointsCyan = 0;
+      this.resetModeScores();
     }
+  }
+
+  /** Clears every mode-specific score accumulator. */
+  private resetModeScores(): void {
+    this.zonePointsPink = 0;
+    this.zonePointsCyan = 0;
+    this.lastZoneTickAt = 0;
+    this.pushPink = 0;
+    this.pushCyan = 0;
+    this.lastPushSampleAt = 0;
   }
 
   setTeamKills(pinkKills: number, cyanKills: number): void {
@@ -93,6 +107,38 @@ export class Match {
     return { pink: this.zonePointsPink, cyan: this.zonePointsCyan };
   }
 
+  /**
+   * Samples coverage for `final_push`. Called on the match tick; internally
+   * rate-limited to one sample per `FINAL_PUSH_SAMPLE_SEC`. Each sample simply
+   * replaces the previous verdict, so only the final one before time-out counts.
+   */
+  tickFinalPush(now: number = Date.now()): void {
+    if (this.phase !== MatchPhase.PLAYING || this.mode !== 'final_push') return;
+    // The first sample is taken as soon as play starts so the scoreboard is
+    // never blank; later ones are spaced by the sample interval.
+    if (this.lastPushSampleAt !== 0 && now - this.lastPushSampleAt < FINAL_PUSH_SAMPLE_SEC * 1000) return;
+    this.lastPushSampleAt = now;
+    const score = this.paintGrid.getScore();
+    this.pushPink = score.pinkPercentage;
+    this.pushCyan = score.cyanPercentage;
+  }
+
+  /**
+   * Combined score for `ranked_hybrid`: painted coverage plus knockout points,
+   * so a team cannot win by ignoring either half of the match.
+   */
+  getHybridScores(): { pink: number; cyan: number } {
+    const score = this.paintGrid.getScore();
+    return {
+      pink: Math.round(score.pinkPercentage + this.pinkKills * HYBRID_KILL_POINTS),
+      cyan: Math.round(score.cyanPercentage + this.cyanKills * HYBRID_KILL_POINTS)
+    };
+  }
+
+  getFinalPushScores(): { pink: number; cyan: number } {
+    return { pink: this.pushPink, cyan: this.pushCyan };
+  }
+
   update(
     playerCount: number,
     now: number = Date.now()
@@ -105,8 +151,7 @@ export class Match {
       this.matchStartAt = 0;
       this.matchEndAt = 0;
       this.phaseEndsAt = 0;
-      this.zonePointsPink = 0;
-      this.zonePointsCyan = 0;
+      this.resetModeScores();
       if (this.onResetCallback) {
         this.onResetCallback();
       }
@@ -151,6 +196,15 @@ export class Match {
             break;
           }
         }
+        if (this.mode === 'ranked_hybrid') {
+          const limit = MODE_CONFIGS.ranked_hybrid.scoreLimit;
+          const hybrid = this.getHybridScores();
+          if (limit > 0 && (hybrid.pink >= limit || hybrid.cyan >= limit)) {
+            gameOverPayload = this.endMatch(now);
+            phaseChanged = true;
+            break;
+          }
+        }
         if (now >= this.matchEndAt) {
           gameOverPayload = this.endMatch(now);
           phaseChanged = true;
@@ -178,9 +232,7 @@ export class Match {
     this.phase = MatchPhase.COUNTDOWN;
     this.phaseEndsAt = now + COUNTDOWN_DURATION * 1000;
     this.matchStartAt = this.phaseEndsAt;
-    this.zonePointsPink = 0;
-    this.zonePointsCyan = 0;
-    this.lastZoneTickAt = 0;
+    this.resetModeScores();
   }
 
   startPlaying(now: number = Date.now()): void {
@@ -206,6 +258,21 @@ export class Match {
     } else if (this.mode === 'team_deathmatch') {
       pinkScore = this.pinkKills;
       cyanScore = this.cyanKills;
+      winner =
+        pinkScore > cyanScore ? Team.PINK : cyanScore > pinkScore ? Team.CYAN : 'DRAW';
+    } else if (this.mode === 'ranked_hybrid') {
+      const hybrid = this.getHybridScores();
+      pinkScore = hybrid.pink;
+      cyanScore = hybrid.cyan;
+      winner =
+        pinkScore > cyanScore ? Team.PINK : cyanScore > pinkScore ? Team.CYAN : 'DRAW';
+    } else if (this.mode === 'final_push') {
+      // The last sample taken before time-out decides the match; if the match
+      // ended before the first sample, fall back to live coverage.
+      const settled = this.lastPushSampleAt > 0;
+      const score = this.paintGrid.getScore();
+      pinkScore = settled ? this.pushPink : score.pinkPercentage;
+      cyanScore = settled ? this.pushCyan : score.cyanPercentage;
       winner =
         pinkScore > cyanScore ? Team.PINK : cyanScore > pinkScore ? Team.CYAN : 'DRAW';
     } else {
@@ -246,6 +313,13 @@ export class Match {
     } else if (this.mode === 'team_deathmatch') {
       pinkScore = this.pinkKills;
       cyanScore = this.cyanKills;
+    } else if (this.mode === 'ranked_hybrid') {
+      const hybrid = this.getHybridScores();
+      pinkScore = hybrid.pink;
+      cyanScore = hybrid.cyan;
+    } else if (this.mode === 'final_push') {
+      pinkScore = this.pushPink;
+      cyanScore = this.pushCyan;
     }
 
     return {

@@ -1,4 +1,5 @@
 import { PlayerSnapshot, Team } from '@ink/shared';
+import { t } from '../i18n.js';
 
 /**
  * Live in-match scoreboard shown while Tab is held.
@@ -16,6 +17,11 @@ export class Scoreboard {
   constructor() {
     this.root = document.getElementById('scoreboard');
     this.body = document.getElementById('scoreboard-body');
+    // Team column labels are localized, so drop the memoized render key and
+    // rebuild on the next update() after a language switch.
+    window.addEventListener('ink:langchange', () => {
+      this.lastDataKey = '';
+    });
   }
 
   setVisible(visible: boolean): void {
@@ -51,12 +57,12 @@ export class Scoreboard {
 
       const name = document.createElement('td');
       name.className = 'sb-name';
-      name.textContent = `${p.isBot ? '🤖 ' : ''}${p.name || 'Inker'}`;
+      name.textContent = `${p.isBot ? '🤖 ' : ''}${p.name || t('lobby.inker')}`;
       tr.appendChild(name);
 
       const team = document.createElement('td');
       team.className = 'sb-team';
-      team.textContent = p.team === Team.PINK ? 'PINK' : 'CYAN';
+      team.textContent = p.team === Team.PINK ? t('team.pink') : t('team.cyan');
       tr.appendChild(team);
 
       const kills = document.createElement('td');

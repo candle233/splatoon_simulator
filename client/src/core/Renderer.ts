@@ -145,6 +145,32 @@ export class GameRenderer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * Live WebGL counters for the debug hook / perf automation. `calls` is the
+   * per-frame draw-call count, `triangles` the submitted triangle count and
+   * `objects` the number of scene objects the renderer visited.
+   */
+  getRenderInfo(): {
+    calls: number;
+    triangles: number;
+    objects: number;
+    programs: number;
+    geometries: number;
+    textures: number;
+    pixelRatio: number;
+  } {
+    const info = this.renderer.info;
+    return {
+      calls: info.render.calls,
+      triangles: info.render.triangles,
+      objects: info.render.frame,
+      programs: info.programs?.length ?? 0,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      pixelRatio: this.renderer.getPixelRatio()
+    };
+  }
+
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.renderer.dispose();

@@ -15,18 +15,38 @@ import {
 import type { MapId, SkillId, WeaponType } from '@ink/shared';
 import { applyI18n, getLang, langLabel, locDesc, locName, setLang, t, LANGS } from '../i18n.js';
 import { renderCodex } from './CodexData.js';
+import type { ScreenManager } from './ScreenManager.js';
 
 export interface LobbyScreenCallbacks {
-  onLobbyUpdate: (data: Partial<{ name: string; team: Team; weaponType: WeaponType; skills: SkillId[]; ready: boolean }>) => void;
+  onLobbyUpdate: (
+    data: Partial<{ name: string; team: Team; weaponType: WeaponType; skills: SkillId[]; ready: boolean; avatar?: string }>
+  ) => void;
   onLobbyStart: () => void;
   onWeaponChanged: (weapon: WeaponType) => void;
   onRequestEnterArena: () => void;
   onMatchConfig: (config: { mode?: GameMode; mapId?: MapId }) => void;
   onAddBot: () => void;
   onRemoveBot: () => void;
+  /** Leave the lobby and go back to the title screen. */
+  onReturnToTitle: () => void;
 }
 
 const MAX_SKILLS = 3;
+
+/**
+ * Card thumbnails per weapon. Weapons without their own art reuse the closest
+ * silhouette; the card falls back to a tinted plate if the file is missing.
+ */
+const WEAPON_THUMBS: Record<string, string> = {
+  shooter: '/assets/weapons/splattershot.jpg',
+  roller: '/assets/weapons/splat_roller.jpg',
+  charger: '/assets/weapons/splat_charger.jpg',
+  slosher: '/assets/weapons/slosher.jpg',
+  sprayer: '/assets/weapons/splattershot.jpg',
+  cannon: '/assets/weapons/splat_roller.jpg',
+  marksman: '/assets/weapons/splat_charger.jpg',
+  scatter: '/assets/weapons/slosher.jpg'
+};
 
 export class LobbyScreen {
   private container: HTMLElement;
@@ -50,8 +70,10 @@ export class LobbyScreen {
   private avatarTag: HTMLElement | null;
   private avatarFileInput: HTMLInputElement | null;
   private langSwitch: HTMLElement | null;
+  private backBtn: HTMLButtonElement | null;
 
   private callbacks: LobbyScreenCallbacks;
+  private screens?: ScreenManager;
   public playerName: string;
   public selectedWeapon: WeaponType = 'shooter';
   public selectedTeam: Team = Team.NEUTRAL; // auto-balance
@@ -61,9 +83,15 @@ export class LobbyScreen {
   private isHost = false;
   private currentMode: GameMode | undefined;
   private currentMapId: MapId | undefined;
+  private lastLobbyState?: LobbyStatePayload;
+  /** Own validated thumbnail, republished on each fresh connection. */
+  private myAvatar?: string;
+  /** Avatars seen for other players, keyed by player id. */
+  private readonly avatarCache = new Map<string, string>();
 
-  constructor(callbacks: LobbyScreenCallbacks) {
+  constructor(callbacks: LobbyScreenCallbacks, screens?: ScreenManager) {
     this.callbacks = callbacks;
+    this.screens = screens;
 
     this.container = document.getElementById('lobby-screen') as HTMLElement;
     this.nameInput = document.getElementById('player-name-input') as HTMLInputElement;
@@ -86,6 +114,7 @@ export class LobbyScreen {
     this.avatarTag = document.getElementById('profile-avatar-tag');
     this.avatarFileInput = document.getElementById('avatar-file-input') as HTMLInputElement | null;
     this.langSwitch = document.getElementById('lang-switch');
+    this.backBtn = document.getElementById('btn-lobby-back') as HTMLButtonElement | null;
 
     // Load persisted profile (name / weapon / team / skills / avatar)
     const savedName = localStorage.getItem('ink_arena_player_name');
@@ -115,10 +144,14 @@ export class LobbyScreen {
     }
 
     const savedAvatar = localStorage.getItem('ink_arena_avatar');
-    if (savedAvatar && this.avatarImg) {
-      this.avatarImg.src = savedAvatar;
+    if (savedAvatar) {
+      this.myAvatar = savedAvatar;
+      if (this.avatarImg) this.avatarImg.src = savedAvatar;
     }
 
+    // The weapon grid is generated before listeners are bound so the click
+    // handlers attach to the real cards, not the static markup seed.
+    this.buildWeaponGrid();
     this.restoreSelectionUi();
     this.buildSkillGrid();
     this.buildModeGrid();
@@ -157,17 +190,17 @@ export class LobbyScreen {
     if (!this.avatarImg || !this.avatarTag) return;
     if (this.selectedTeam === Team.PINK) {
       this.avatarImg.style.borderColor = '#ff007f';
-      this.avatarTag.textContent = 'PINK';
+      this.avatarTag.textContent = t('team.pink');
       this.avatarTag.style.background = '#ff007f';
       this.avatarTag.style.color = '#ffffff';
     } else if (this.selectedTeam === Team.CYAN) {
       this.avatarImg.style.borderColor = '#00ffff';
-      this.avatarTag.textContent = 'CYAN';
+      this.avatarTag.textContent = t('team.cyan');
       this.avatarTag.style.background = '#00ffff';
       this.avatarTag.style.color = '#000000';
     } else {
       this.avatarImg.style.borderColor = '#ffaa00';
-      this.avatarTag.textContent = 'AUTO';
+      this.avatarTag.textContent = t('lobby.auto');
       this.avatarTag.style.background = '#ffaa00';
       this.avatarTag.style.color = '#000000';
     }
@@ -335,10 +368,11 @@ export class LobbyScreen {
     this.buildSkillGrid();
     this.buildModeGrid();
     this.buildMapGrid();
+    this.updateAvatarVisual();
+    if (this.lastLobbyState) this.updateLobbyState(this.lastLobbyState);
     renderCodex();
   }
-
-  /** Localized weapon card texts + codex regen. Called on construct & lang change. */
+  /** Localized weapon card texts. Called on construct & lang change. */
   private applyLocalizedTexts(): void {
     this.weaponOptions.forEach((opt) => {
       const weapon = opt.getAttribute('data-weapon') as WeaponType | null;
@@ -354,7 +388,81 @@ export class LobbyScreen {
       if (descEl) descEl.textContent = locDesc(cfg);
       if (subEl) subEl.textContent = `${t('lobby.subBadge')}: ${locName(SUB_WEAPON_CONFIGS[cfg.sub])}`;
       if (specEl) specEl.textContent = `${t('lobby.specialBadge')}: ${locName(SPECIAL_CONFIGS[cfg.special])}`;
+      const img = opt.querySelector('img');
+      if (img) {
+        img.alt = cfg.name;
+        // Newer weapons have no thumbnail asset yet; fall back to a
+        // theme-tinted plate instead of a broken image.
+        if (!img.dataset.fallbackBound) {
+          img.dataset.fallbackBound = '1';
+          img.addEventListener('error', () => {
+            img.style.visibility = 'hidden';
+            const thumb = img.parentElement;
+            if (thumb) thumb.classList.add('weapon-thumb-fallback');
+          });
+        }
+      }
     });
+  }
+
+  /**
+   * Builds one card per entry in WEAPON_CONFIGS, so adding a weapon to the
+   * shared config is enough to make it selectable here. The static markup only
+   * seeds the first card as a no-JS fallback.
+   */
+  private buildWeaponGrid(): void {
+    const grid = document.querySelector('.weapon-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    for (const weapon of Object.keys(WEAPON_CONFIGS) as WeaponType[]) {
+      const cfg = WEAPON_CONFIGS[weapon];
+      const card = document.createElement('div');
+      card.className = 'weapon-option';
+      card.setAttribute('data-weapon', weapon);
+      if (weapon === this.selectedWeapon) card.classList.add('selected');
+
+      const thumb = document.createElement('div');
+      thumb.className = 'weapon-card-thumb';
+      const img = document.createElement('img');
+      img.src = WEAPON_THUMBS[weapon] ?? '/assets/weapons/splattershot.jpg';
+      img.alt = cfg.name;
+      img.addEventListener('error', () => {
+        img.style.visibility = 'hidden';
+        thumb.classList.add('weapon-thumb-fallback');
+      });
+      thumb.appendChild(img);
+
+      const info = document.createElement('div');
+      info.className = 'weapon-card-info';
+      const header = document.createElement('div');
+      header.className = 'opt-header';
+      const name = document.createElement('span');
+      name.className = 'opt-name';
+      const alt = document.createElement('span');
+      alt.className = 'opt-zh';
+      header.appendChild(name);
+      header.appendChild(alt);
+      const details = document.createElement('div');
+      details.className = 'opt-details';
+      const skills = document.createElement('div');
+      skills.className = 'opt-skills';
+      const subBadge = document.createElement('span');
+      subBadge.className = 'badge-sub';
+      const specBadge = document.createElement('span');
+      specBadge.className = 'badge-spec';
+      skills.appendChild(subBadge);
+      skills.appendChild(specBadge);
+      info.appendChild(header);
+      info.appendChild(details);
+      info.appendChild(skills);
+
+      card.appendChild(thumb);
+      card.appendChild(info);
+      grid.appendChild(card);
+    }
+
+    this.weaponOptions = document.querySelectorAll('.weapon-option');
+    this.applyLocalizedTexts();
   }
 
   private setupEventListeners(): void {
@@ -419,6 +527,14 @@ export class LobbyScreen {
     }
     if (this.removeBotBtn) {
       this.removeBotBtn.addEventListener('click', () => this.callbacks.onRemoveBot());
+    }
+
+    if (this.backBtn) {
+      this.backBtn.addEventListener('click', () => {
+        // Local navigation only — leaving the lobby must not change the
+        // player's ready state or send anything to the server.
+        this.callbacks.onReturnToTitle();
+      });
     }
 
     if (this.returnLobbyBtn) {
@@ -511,7 +627,12 @@ export class LobbyScreen {
           } catch {
             // storage full — keep showing it for this session only
           }
+          this.myAvatar = dataUrl;
           if (this.avatarImg) this.avatarImg.src = dataUrl;
+          // Publish once so other players' rosters can show it. The server
+          // ignores byte-identical repeats, and the thumbnail never rides the
+          // 20 Hz snapshot path.
+          this.callbacks.onLobbyUpdate({ avatar: dataUrl });
         };
         img.src = reader.result as string;
       };
@@ -522,18 +643,25 @@ export class LobbyScreen {
 
   setMyPlayerId(id: string): void {
     this.myPlayerId = id;
-    // Initial sync of profile
+    // Initial sync of profile. The avatar is re-published on every fresh
+    // connection because the server does not persist it across reloads.
     this.callbacks.onLobbyUpdate({
       name: this.playerName,
       weaponType: this.selectedWeapon,
       team: this.selectedTeam,
       skills: [...this.selectedSkills],
-      ready: this.isReady
+      ready: this.isReady,
+      avatar: this.myAvatar
     });
   }
 
   updateLobbyState(state: LobbyStatePayload): void {
     if (!state) return;
+
+    // Cached so a language change can re-render the roster without waiting for
+    // the next server snapshot (an idle lobby would otherwise stay in the old
+    // language until someone joins or readies up).
+    this.lastLobbyState = state;
 
     this.isHost = state.players.some((p) => p.id === this.myPlayerId && p.isHost);
     if (state.mode && state.mode !== this.currentMode) {
@@ -567,6 +695,11 @@ export class LobbyScreen {
         const isSelf = p.id === this.myPlayerId;
         card.className = `roster-item ${teamClass} ${isSelf ? 'self' : ''}`;
 
+        // Cache whatever the server published; the payload only carries an
+        // avatar when it changed, so a later roster render can still show it.
+        const avatar = p.avatar ?? (isSelf ? this.myAvatar : this.avatarCache.get(p.id));
+        if (p.avatar) this.avatarCache.set(p.id, p.avatar);
+
         const weaponCfg = WEAPON_CONFIGS[p.weaponType] ?? WEAPON_CONFIGS.shooter;
         const weaponLabel = locName(weaponCfg);
         const teamLabel =
@@ -580,7 +713,7 @@ export class LobbyScreen {
         // names come from the roster; build with escaped text nodes
         const nameSpan = document.createElement('span');
         nameSpan.className = 'roster-name';
-        nameSpan.textContent = `${p.name || 'Inker'}${isSelf ? ` ${t('lobby.you')}` : ''}`;
+        nameSpan.textContent = `${p.name || t('lobby.inker')}${isSelf ? ` ${t('lobby.you')}` : ''}`;
         const subSpan = document.createElement('span');
         subSpan.className = 'roster-sub';
         subSpan.textContent = `${weaponLabel} • [${teamLabel}]`;
@@ -594,6 +727,20 @@ export class LobbyScreen {
         status.className = 'roster-status';
         status.innerHTML = `${hostBadge}${botBadge}${readyBadge}`;
 
+        // Thumbnail, or a team-tinted initial when the player has none.
+        const thumb = document.createElement('div');
+        thumb.className = `roster-avatar ${teamClass}`;
+        if (avatar) {
+          const img = document.createElement('img');
+          img.src = avatar;
+          img.alt = '';
+          thumb.appendChild(img);
+        } else {
+          const initial = (p.name || '?').trim().charAt(0).toUpperCase() || '?';
+          thumb.textContent = p.isBot ? '🤖' : initial;
+        }
+
+        card.appendChild(thumb);
         card.appendChild(info);
         card.appendChild(status);
         this.playerListEl.appendChild(card);
@@ -626,18 +773,17 @@ export class LobbyScreen {
   }
 
   show(): void {
-    if (this.container) {
-      this.container.classList.remove('hidden');
-    }
+    if (this.screens) this.screens.show('lobby');
+    else this.container?.classList.remove('hidden');
   }
 
   hide(): void {
-    if (this.container) {
-      this.container.classList.add('hidden');
-    }
+    if (this.screens) this.screens.hide('lobby');
+    else this.container?.classList.add('hidden');
   }
 
   isVisible(): boolean {
+    if (this.screens) return this.screens.isVisible('lobby');
     return this.container && !this.container.classList.contains('hidden');
   }
 }

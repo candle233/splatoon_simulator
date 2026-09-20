@@ -22,15 +22,25 @@ const LANG_LABEL: Record<Lang, string> = {
 };
 
 const zh: Record<string, string> = {
+  'page.title': '墨水竞技场 - 3D 多人涂地对战',
+
   'title.tagline': '3D 多人涂地大乱斗',
   'title.play': '进入大厅',
   'title.codex': '装备图鉴',
   'title.settings': '游戏设置',
   'title.credits': '纯浏览器 WebGL · 实时联机对战',
+  'title.back': '返回主菜单',
+  'title.version': 'INK ARENA v1.1',
+
+  'team.pink': '粉红队',
+  'team.cyan': '青色队',
+  'mode.turfWar': '涂地对战',
 
   'lobby.badge': '涂地大战·对战大厅',
   'lobby.name': '玩家昵称',
   'lobby.namePlaceholder': '输入你的名字',
+  'lobby.inker': '墨水战士',
+  'lobby.avatarAlt': '墨水战士头像',
   'lobby.selectWeapon': '选择主武器',
   'lobby.team': '队伍分配',
   'lobby.auto': '自动平衡',
@@ -97,7 +107,20 @@ const zh: Record<string, string> = {
   'hud.points': '得分',
   'hud.kills': '击杀',
   'hud.coverage': '涂地率',
+  'hud.loadoutWeapon': '主武器',
+  'hud.loadoutSub': '副武器 [Q / 右键]',
+  'hud.specialReadyTitle': '大招已就绪',
+  'hud.radarToggle': '[M] 切换',
+  'hud.you': '你',
+  'hud.turfHazard': '涂地事故',
+  'hud.system': '系统',
+  'hud.spawnedBot': '已生成 {name}',
+  'hud.clearedBots': '已清除全部机器人',
+  'hud.playerHash': '玩家 #{id}',
+  'hud.initFailed': '初始化失败: {msg}',
 
+  'gameover.matchOver': '比赛结束',
+  'gameover.vs': 'VS',
   'gameover.pinkWins': '粉红队获胜!',
   'gameover.cyanWins': '青色队获胜!',
   'gameover.draw': '平局!',
@@ -117,6 +140,26 @@ const zh: Record<string, string> = {
   'settings.addBot': '🤖 添加练习机器人',
   'settings.clearBots': '清除机器人',
   'settings.done': '完成',
+  'settings.openTitle': '游戏设置 [O]',
+
+  'debug.title': '调试信息 (F3)',
+  'debug.fps': '帧率',
+  'debug.ping': '延迟',
+  'debug.ms': '毫秒',
+  'debug.playerId': '玩家 ID',
+  'debug.team': '队伍',
+  'debug.position': '坐标',
+  'debug.groundInk': '地面墨水',
+  'debug.hp': '生命',
+  'debug.ink': '墨水',
+  'debug.mode': '形态',
+  'debug.paintEvents': '涂地事件',
+  'debug.pink': '粉红',
+  'debug.cyan': '青色',
+  'debug.neutral': '中立',
+  'debug.humanoid': '人形态',
+  'debug.submerged': '游动中',
+  'debug.dead': '已阵亡',
 
   'codex.title': '角色与装备图鉴',
   'codex.subtitle': 'ILLUSTRATED CODEX & ART GALLERY',
@@ -134,19 +177,45 @@ const zh: Record<string, string> = {
   'codex.duration': '持续',
   'codex.dps': '秒伤',
   'codex.roll': '碾压',
-  'codex.charge': '蓄力'
+  'codex.charge': '蓄力',
+  'codex.pellets': '弹丸',
+  'codex.blast': '爆炸范围',
+
+  'codex.badgePink': '粉红战队',
+  'codex.badgeCyan': '青色战队',
+  'codex.badgeTransform': '形态变化',
+  'codex.badgeKeyArt': '主视觉',
+  'codex.badgeSub': '副武器',
+  'codex.badgeSpecial': '大招',
+  'codex.badgeBackpack': '背包',
+  'codex.badgeHeadgear': '头部装备',
+  'codex.badgeFootwear': '鞋子',
+  'codex.badgeBattleground': '对战赛场',
+  'codex.badgeLobby': '大厅广场',
+  'codex.badgeVictory': '胜利舞台',
+  'codex.lightboxAlt': '全屏预览'
 };
 
 const ja: Record<string, string> = {
+  'page.title': 'インクアリーナ - 3D マルチ塗りバトル',
+
   'title.tagline': '3D マルチプレイ塗りバトル',
   'title.play': 'ロビーへ',
   'title.codex': '図鑑',
   'title.settings': '設定',
   'title.credits': 'ブラウザ WebGL · リアルタイム対戦',
+  'title.back': 'タイトルへ戻る',
+  'title.version': 'INK ARENA v1.1',
+
+  'team.pink': 'ピンクチーム',
+  'team.cyan': 'シアンチーム',
+  'mode.turfWar': 'ナワバリバトル',
 
   'lobby.badge': 'ナワバリバトル・ロビー',
   'lobby.name': 'プレイヤー名',
   'lobby.namePlaceholder': '名前を入力',
+  'lobby.inker': 'インクリンガー',
+  'lobby.avatarAlt': 'インクリンガーのアバター',
   'lobby.selectWeapon': 'メインウェポン選択',
   'lobby.team': 'チーム分け',
   'lobby.auto': '自動バランス',
@@ -213,7 +282,20 @@ const ja: Record<string, string> = {
   'hud.points': 'ポイント',
   'hud.kills': 'キル',
   'hud.coverage': '塗り面積',
+  'hud.loadoutWeapon': 'メインウェポン',
+  'hud.loadoutSub': 'サブウェポン [Q / 右クリック]',
+  'hud.specialReadyTitle': 'スペシャル使用可能',
+  'hud.radarToggle': '[M] 切替',
+  'hud.you': 'あなた',
+  'hud.turfHazard': 'インク事故',
+  'hud.system': 'システム',
+  'hud.spawnedBot': '{name} を出現させた',
+  'hud.clearedBots': 'ボットを全削除',
+  'hud.playerHash': 'プレイヤー #{id}',
+  'hud.initFailed': '初期化に失敗しました: {msg}',
 
+  'gameover.matchOver': '試合終了',
+  'gameover.vs': 'VS',
   'gameover.pinkWins': 'ピンクチームの勝利!',
   'gameover.cyanWins': 'シアンチームの勝利!',
   'gameover.draw': '引き分け!',
@@ -233,6 +315,26 @@ const ja: Record<string, string> = {
   'settings.addBot': '🤖 練習ボット追加',
   'settings.clearBots': 'ボット全消去',
   'settings.done': '完了',
+  'settings.openTitle': '設定 [O]',
+
+  'debug.title': 'デバッグ情報 (F3)',
+  'debug.fps': 'FPS',
+  'debug.ping': 'Ping',
+  'debug.ms': 'ms',
+  'debug.playerId': 'プレイヤーID',
+  'debug.team': 'チーム',
+  'debug.position': '座標',
+  'debug.groundInk': '地面インク',
+  'debug.hp': 'HP',
+  'debug.ink': 'インク',
+  'debug.mode': '形態',
+  'debug.paintEvents': '塗りイベント',
+  'debug.pink': 'ピンク',
+  'debug.cyan': 'シアン',
+  'debug.neutral': '中立',
+  'debug.humanoid': 'ヒト',
+  'debug.submerged': 'イカ',
+  'debug.dead': 'やられた',
 
   'codex.title': 'キャラ・装備図鑑',
   'codex.subtitle': 'ILLUSTRATED CODEX & ART GALLERY',
@@ -250,19 +352,45 @@ const ja: Record<string, string> = {
   'codex.duration': '時間',
   'codex.dps': 'DPS',
   'codex.roll': '転圧',
-  'codex.charge': 'チャージ'
+  'codex.charge': 'チャージ',
+  'codex.pellets': 'ペレット',
+  'codex.blast': '爆発範囲',
+
+  'codex.badgePink': 'ピンクチーム',
+  'codex.badgeCyan': 'シアンチーム',
+  'codex.badgeTransform': '形態変化',
+  'codex.badgeKeyArt': 'キービジュアル',
+  'codex.badgeSub': 'サブウェポン',
+  'codex.badgeSpecial': 'スペシャル',
+  'codex.badgeBackpack': 'バックパック',
+  'codex.badgeHeadgear': 'ヘッドギア',
+  'codex.badgeFootwear': 'シューズ',
+  'codex.badgeBattleground': 'バトルステージ',
+  'codex.badgeLobby': 'ロビープラザ',
+  'codex.badgeVictory': '表彰ステージ',
+  'codex.lightboxAlt': '全画面プレビュー'
 };
 
 const en: Record<string, string> = {
+  'page.title': 'Ink Arena - 3D Multiplayer Turf War',
+
   'title.tagline': '3D Multiplayer Turf War',
   'title.play': 'Enter Lobby',
   'title.codex': 'Codex',
   'title.settings': 'Settings',
   'title.credits': 'Browser WebGL · Real-time online battle',
+  'title.back': 'Back to Title',
+  'title.version': 'INK ARENA v1.1',
+
+  'team.pink': 'TEAM PINK',
+  'team.cyan': 'TEAM CYAN',
+  'mode.turfWar': 'TURF WAR',
 
   'lobby.badge': 'TURF WAR BATTLE LOBBY',
   'lobby.name': 'Inker Name',
   'lobby.namePlaceholder': 'Enter your name',
+  'lobby.inker': 'Inker',
+  'lobby.avatarAlt': 'Inker avatar',
   'lobby.selectWeapon': 'Select Weapon Loadout',
   'lobby.team': 'Team Assignment',
   'lobby.auto': 'Auto-Balance',
@@ -329,7 +457,20 @@ const en: Record<string, string> = {
   'hud.points': 'POINTS',
   'hud.kills': 'KILLS',
   'hud.coverage': 'COVERAGE',
+  'hud.loadoutWeapon': 'WEAPON',
+  'hud.loadoutSub': 'SUB [Q / RMB]',
+  'hud.specialReadyTitle': 'Special Ready!',
+  'hud.radarToggle': '[M] toggle',
+  'hud.you': 'You',
+  'hud.turfHazard': 'Turf Hazard',
+  'hud.system': 'SYSTEM',
+  'hud.spawnedBot': 'Spawned {name}',
+  'hud.clearedBots': 'Cleared all bots',
+  'hud.playerHash': 'Player #{id}',
+  'hud.initFailed': 'Initialization failed: {msg}',
 
+  'gameover.matchOver': 'MATCH OVER',
+  'gameover.vs': 'VS',
   'gameover.pinkWins': 'TEAM PINK WINS!',
   'gameover.cyanWins': 'TEAM CYAN WINS!',
   'gameover.draw': 'DRAW!',
@@ -349,6 +490,26 @@ const en: Record<string, string> = {
   'settings.addBot': '🤖 Add Practice Bot',
   'settings.clearBots': 'Clear Bots',
   'settings.done': 'DONE',
+  'settings.openTitle': 'Settings [O]',
+
+  'debug.title': 'DEBUG STATS (F3)',
+  'debug.fps': 'FPS',
+  'debug.ping': 'Ping',
+  'debug.ms': 'ms',
+  'debug.playerId': 'Player ID',
+  'debug.team': 'Team',
+  'debug.position': 'Position',
+  'debug.groundInk': 'Ground Ink',
+  'debug.hp': 'HP',
+  'debug.ink': 'Ink',
+  'debug.mode': 'Mode',
+  'debug.paintEvents': 'Paint Events',
+  'debug.pink': 'Pink',
+  'debug.cyan': 'Cyan',
+  'debug.neutral': 'Neutral',
+  'debug.humanoid': 'Humanoid',
+  'debug.submerged': 'Submerged',
+  'debug.dead': 'Dead',
 
   'codex.title': 'Character & Gear Codex',
   'codex.subtitle': 'ILLUSTRATED CODEX & ART GALLERY',
@@ -366,10 +527,38 @@ const en: Record<string, string> = {
   'codex.duration': 'Duration',
   'codex.dps': 'DPS',
   'codex.roll': 'Roll',
-  'codex.charge': 'Charge'
+  'codex.charge': 'Charge',
+  'codex.pellets': 'Pellets',
+  'codex.blast': 'Blast',
+
+  'codex.badgePink': 'TEAM PINK',
+  'codex.badgeCyan': 'TEAM CYAN',
+  'codex.badgeTransform': 'TRANSFORMATION',
+  'codex.badgeKeyArt': 'KEY ART',
+  'codex.badgeSub': 'SUB WEAPON',
+  'codex.badgeSpecial': 'SPECIAL ULTIMATE',
+  'codex.badgeBackpack': 'BACKPACK',
+  'codex.badgeHeadgear': 'HEADGEAR',
+  'codex.badgeFootwear': 'FOOTWEAR',
+  'codex.badgeBattleground': 'BATTLEGROUND',
+  'codex.badgeLobby': 'LOBBY PLAZA',
+  'codex.badgeVictory': 'VICTORY STAGE',
+  'codex.lightboxAlt': 'Full preview'
 };
 
 const DICTS: Record<Lang, Record<string, string>> = { zh, ja, en };
+
+/**
+ * Read-only view of every dictionary, keyed by language. Exported so tooling
+ * (and tests/i18nCoverage.test.ts) can assert the three languages stay
+ * key-identical without reaching into module internals.
+ */
+export const DICTIONARIES: Readonly<Record<Lang, Readonly<Record<string, string>>>> = DICTS;
+
+/** Every key defined in the English dictionary, sorted. */
+export function allKeys(): string[] {
+  return Object.keys(en).sort();
+}
 
 const STORAGE_KEY = 'ink_arena_lang';
 let current: Lang = detectLang();
@@ -403,10 +592,27 @@ export function setLang(lang: Lang): void {
     // ignore
   }
   applyI18n();
+  syncDocumentLang();
   // Let every live module (lobby cards, settings modal, codex) re-render
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent<Lang>('ink:langchange', { detail: lang }));
   }
+}
+
+/** Keeps `<html lang>` honest so font/line-break rules follow the UI language. */
+export function syncDocumentLang(): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.lang = current;
+}
+
+/**
+ * Localizes the static markup once at startup. `setLang()` only runs on a user
+ * switch, so without this every element carrying `data-i18n` keeps whatever
+ * English the HTML shipped with until the player touches the language buttons.
+ */
+export function initI18n(): void {
+  applyI18n();
+  syncDocumentLang();
 }
 
 /** Translate a key with {param} interpolation. Falls back to English then key. */
@@ -438,6 +644,11 @@ export function applyI18n(root?: ParentNode): void {
   target.querySelectorAll('[data-i18n-title]').forEach((el) => {
     const key = el.getAttribute('data-i18n-title');
     if (key) el.setAttribute('title', t(key));
+  });
+  // Alt text for decorative/illustrative images that still need a label
+  target.querySelectorAll('[data-i18n-alt]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-alt');
+    if (key) el.setAttribute('alt', t(key));
   });
   // Keep every language switcher's highlight in sync with the active language
   document.querySelectorAll('.lang-btn').forEach((el) => {

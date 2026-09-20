@@ -10,6 +10,11 @@ import {
 import type { GameMode } from '@ink/shared';
 import { locName, t } from '../i18n.js';
 
+/** Escapes a localized label before it is embedded in an HTML attribute. */
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export class HUD {
   private timerEl: HTMLElement | null;
   private phaseEl: HTMLElement | null;
@@ -61,6 +66,23 @@ export class HUD {
   private pinkSquidsEl: HTMLElement | null;
   private cyanSquidsEl: HTMLElement | null;
 
+  /**
+   * Last arguments of every localized update. The render loop only calls the
+   * update methods while a match is live, so without this cache the phase tag,
+   * mode tag, weapon/sub names and debug values would keep the language they
+   * had when the match ended. Replaying them on 'ink:langchange' keeps the HUD
+   * consistent with the menus.
+   */
+  private lastMatchArgs: [MatchPhase, number, number, number, GameMode | undefined] | null = null;
+  private lastStatusArgs: [number, number, PlayerMode, Team] | null = null;
+  private lastLoadoutArgs: [WeaponType, number, number, number] | null = null;
+  private lastDebugArgs:
+    | [number, number, string, Team, number, number, number, Team, number, number, PlayerMode, number]
+    | null = null;
+  private lastSquidArgs: { team: Team; alive: boolean; specialMeter?: number }[] | null = null;
+  /** Seconds shown in the death overlay, so a language switch can re-render it. */
+  private lastRespawnSec = 4;
+
   constructor() {
     this.pinkSquidsEl = document.getElementById('team-squids-pink');
     this.cyanSquidsEl = document.getElementById('team-squids-cyan');
@@ -109,9 +131,36 @@ export class HUD {
     this.dbgInkEl = document.getElementById('dbg-ink');
     this.dbgModeEl = document.getElementById('dbg-mode');
     this.dbgPaintCountEl = document.getElementById('dbg-paint-count');
+
+    window.addEventListener('ink:langchange', () => this.refreshI18n());
+
+    // Localized seed for the (hidden) death overlay: showDeathOverlay() writes
+    // the live countdown, this only replaces the hardcoded English markup.
+    const respawnSeed = document.getElementById('respawn-msg');
+    if (respawnSeed) respawnSeed.textContent = t('hud.respawnIn', { s: 4 });
+
+    // Seed the loadout card from the shared configs so the lobby-time HUD shows
+    // localized weapon/sub names instead of the English markup defaults.
+    if (this.hudWeaponNameEl) this.hudWeaponNameEl.textContent = locName(WEAPON_CONFIGS.shooter);
+    if (this.hudSubNameEl) {
+      this.hudSubNameEl.textContent = locName(SUB_WEAPON_CONFIGS[WEAPON_CONFIGS.shooter.sub]);
+    }
+  }
+
+  /** Re-applies localized HUD strings after a language switch. */
+  refreshI18n(): void {
+    if (this.lastMatchArgs) this.updateMatch(...this.lastMatchArgs);
+    if (this.lastStatusArgs) this.updatePlayerStatus(...this.lastStatusArgs);
+    if (this.lastLoadoutArgs) this.updateLoadoutAndSkills(...this.lastLoadoutArgs);
+    // updateDebug() skips writing while the overlay is hidden, so replay through
+    // the unguarded writer to keep the (hidden) values localized too.
+    if (this.lastDebugArgs) this.applyDebug(...this.lastDebugArgs);
+    if (this.lastSquidArgs) this.updateTeamSquids(this.lastSquidArgs);
+    this.renderRespawnMessage(this.lastRespawnSec);
   }
 
   updateMatch(phase: MatchPhase, remainingSec: number, pinkScore: number, cyanScore: number, mode?: GameMode): void {
+    this.lastMatchArgs = [phase, remainingSec, pinkScore, cyanScore, mode];
     if (this.timerEl) {
       const mins = Math.floor(Math.max(0, remainingSec) / 60);
       const secs = Math.floor(Math.max(0, remainingSec) % 60);
@@ -127,7 +176,7 @@ export class HUD {
           this.phaseEl.textContent = t('hud.countdown');
           break;
         case MatchPhase.PLAYING:
-          this.phaseEl.textContent = mode ? locName(MODE_CONFIGS[mode]) : 'TURF WAR';
+          this.phaseEl.textContent = mode ? locName(MODE_CONFIGS[mode]) : t('mode.turfWar');
           break;
         case MatchPhase.GAME_OVER:
           this.phaseEl.textContent = t('hud.timeUp');
@@ -159,6 +208,7 @@ export class HUD {
   }
 
   updatePlayerStatus(hp: number, ink: number, mode: PlayerMode, team: Team): void {
+    this.lastStatusArgs = [hp, ink, mode, team];
     if (this.hpValueEl) this.hpValueEl.textContent = `${Math.max(0, Math.round(hp))}`;
     if (this.hpBarFillEl) {
       this.hpBarFillEl.style.width = `${Math.max(0, Math.min(100, hp))}%`;
@@ -228,24 +278,34 @@ export class HUD {
     currentInk: number,
     chargeLevel = 0
   ): void {
+    this.lastLoadoutArgs = [weaponType, specialMeter, currentInk, chargeLevel];
     const config = WEAPON_CONFIGS[weaponType] || WEAPON_CONFIGS.shooter;
     const subConfig = SUB_WEAPON_CONFIGS[config.sub];
 
-    const weaponThumbMap: Record<WeaponType, string> = {
+    const weaponThumbMap: Partial<Record<WeaponType, string>> = {
       shooter: '/assets/weapons/splattershot.jpg',
       roller: '/assets/weapons/splat_roller.jpg',
       charger: '/assets/weapons/splat_charger.jpg',
-      slosher: '/assets/weapons/slosher.jpg'
+      slosher: '/assets/weapons/slosher.jpg',
+      // New weapons have no bespoke art yet; reuse the closest silhouette so
+      // the HUD never renders a broken image.
+      sprayer: '/assets/weapons/splattershot.jpg',
+      cannon: '/assets/weapons/slosher.jpg',
+      marksman: '/assets/weapons/splat_charger.jpg',
+      scatter: '/assets/weapons/splattershot.jpg'
     };
     const subThumbMap: Record<string, string> = {
       splat_bomb: '/assets/weapons/splat_bomb.jpg',
       curling_bomb: '/assets/weapons/curling_bomb.jpg',
-      burst_bomb: '/assets/weapons/splat_bomb.jpg'
+      burst_bomb: '/assets/weapons/splat_bomb.jpg',
+      ink_mine: '/assets/weapons/splat_bomb.jpg',
+      bounce_bomb: '/assets/weapons/curling_bomb.jpg',
+      ink_puddle: '/assets/weapons/splat_bomb.jpg'
     };
 
     if (this.hudWeaponIconEl) {
-      const src = weaponThumbMap[weaponType] || weaponThumbMap.shooter;
-      if (this.hudWeaponIconEl.getAttribute('src') !== src) {
+      const src = weaponThumbMap[weaponType] ?? weaponThumbMap.shooter ?? '';
+      if (src && this.hudWeaponIconEl.getAttribute('src') !== src) {
         this.hudWeaponIconEl.src = src;
       }
     }
@@ -309,9 +369,15 @@ export class HUD {
     if (this.respawnCountdownEl) {
       this.respawnCountdownEl.textContent = `${Math.max(0, Math.ceil(respawnCountdownSec))}`;
     }
+    this.renderRespawnMessage(respawnCountdownSec);
+  }
+
+  /** Writes the localized "Respawning in {s}s…" line and remembers the value. */
+  private renderRespawnMessage(respawnCountdownSec: number): void {
+    this.lastRespawnSec = Math.max(0, Math.ceil(respawnCountdownSec));
     const msgEl = document.getElementById('respawn-msg');
     if (msgEl) {
-      msgEl.textContent = t('hud.respawnIn', { s: Math.max(0, Math.ceil(respawnCountdownSec)) });
+      msgEl.textContent = t('hud.respawnIn', { s: this.lastRespawnSec });
     }
   }
 
@@ -379,12 +445,14 @@ export class HUD {
    * Updates top 4v4 team squid icons showing alive, dead, and special status
    */
   updateTeamSquids(players: { team: Team; alive: boolean; specialMeter?: number }[]): void {
+    this.lastSquidArgs = players;
     if (!this.pinkSquidsEl || !this.cyanSquidsEl) return;
 
     const pinkPlayers = players.filter((p) => p.team === Team.PINK).slice(0, 4);
     const cyanPlayers = players.filter((p) => p.team === Team.CYAN).slice(0, 4);
 
     const renderList = (el: HTMLElement, list: typeof pinkPlayers, teamClass: string) => {
+      const specialReadyTitle = escapeAttr(t('hud.specialReadyTitle'));
       let html = '';
       for (let i = 0; i < 4; i++) {
         const p = list[i];
@@ -393,7 +461,7 @@ export class HUD {
         } else if (!p.alive) {
           html += `<span class="squid-indicator dead ${teamClass}">✕</span>`;
         } else if ((p.specialMeter || 0) >= 100) {
-          html += `<span class="squid-indicator alive ${teamClass} special-ready" title="Special Ready!">🦑</span>`;
+          html += `<span class="squid-indicator alive ${teamClass} special-ready" title="${specialReadyTitle}">🦑</span>`;
         } else {
           html += `<span class="squid-indicator alive ${teamClass}">🦑</span>`;
         }
@@ -423,22 +491,44 @@ export class HUD {
     mode: PlayerMode,
     paintCount: number
   ): void {
+    this.lastDebugArgs = [fps, ping, id, team, x, y, z, groundInk, hp, ink, mode, paintCount];
     if (this.debugOverlayEl?.classList.contains('hidden')) return;
+    this.applyDebug(fps, ping, id, team, x, y, z, groundInk, hp, ink, mode, paintCount);
+  }
 
+  /** Writes the debug values without the visibility guard (used by refreshI18n). */
+  private applyDebug(
+    fps: number,
+    ping: number,
+    id: string,
+    team: Team,
+    x: number,
+    y: number,
+    z: number,
+    groundInk: Team,
+    hp: number,
+    ink: number,
+    mode: PlayerMode,
+    paintCount: number
+  ): void {
     if (this.dbgFpsEl) this.dbgFpsEl.textContent = `${fps}`;
     if (this.dbgPingEl) this.dbgPingEl.textContent = `${ping}`;
     if (this.dbgPlayerIdEl) this.dbgPlayerIdEl.textContent = id.slice(0, 8);
-    if (this.dbgTeamEl) this.dbgTeamEl.textContent = team === Team.PINK ? 'Pink' : 'Cyan';
+    if (this.dbgTeamEl) this.dbgTeamEl.textContent = team === Team.PINK ? t('debug.pink') : t('debug.cyan');
     if (this.dbgPosEl) this.dbgPosEl.textContent = `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
     if (this.dbgGroundEl) {
       this.dbgGroundEl.textContent =
-        groundInk === Team.PINK ? 'Pink' : groundInk === Team.CYAN ? 'Cyan' : 'Neutral';
+        groundInk === Team.PINK ? t('debug.pink') : groundInk === Team.CYAN ? t('debug.cyan') : t('debug.neutral');
     }
     if (this.dbgHpEl) this.dbgHpEl.textContent = `${Math.round(hp)}`;
     if (this.dbgInkEl) this.dbgInkEl.textContent = `${Math.round(ink)}`;
     if (this.dbgModeEl) {
       this.dbgModeEl.textContent =
-        mode === PlayerMode.SUBMERGED ? 'Submerged' : mode === PlayerMode.DEAD ? 'Dead' : 'Humanoid';
+        mode === PlayerMode.SUBMERGED
+          ? t('debug.submerged')
+          : mode === PlayerMode.DEAD
+            ? t('debug.dead')
+            : t('debug.humanoid');
     }
     if (this.dbgPaintCountEl) this.dbgPaintCountEl.textContent = `${paintCount}`;
   }

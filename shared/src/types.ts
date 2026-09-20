@@ -31,11 +31,37 @@ export enum MatchPhase {
   RESTARTING = 4
 }
 
-export type WeaponType = 'shooter' | 'roller' | 'charger' | 'slosher';
-export type SubWeaponType = 'splat_bomb' | 'burst_bomb' | 'curling_bomb';
-export type SpecialWeaponType = 'inkstrike' | 'ink_storm' | 'killer_wail';
-export type GameMode = 'turf_war' | 'splat_zones' | 'team_deathmatch';
-export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink';
+export type WeaponType =
+  | 'shooter'
+  | 'roller'
+  | 'charger'
+  | 'slosher'
+  | 'sprayer'
+  | 'cannon'
+  | 'marksman'
+  | 'scatter';
+export type SubWeaponType =
+  | 'splat_bomb'
+  | 'burst_bomb'
+  | 'curling_bomb'
+  | 'ink_mine'
+  | 'bounce_bomb'
+  | 'ink_puddle';
+export type SpecialWeaponType =
+  | 'inkstrike'
+  | 'ink_storm'
+  | 'killer_wail'
+  | 'ink_nova'
+  | 'ink_barrier';
+export type GameMode =
+  | 'turf_war'
+  | 'splat_zones'
+  | 'team_deathmatch'
+  /** Kills and coverage both feed one score, so neither playstyle is optional. */
+  | 'ranked_hybrid'
+  /** Coverage is sampled on a timer; only the last sample decides the winner. */
+  | 'final_push';
+export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost';
 export type SkillId =
   | 'ink_saver'
   | 'ink_recovery'
@@ -44,7 +70,11 @@ export type SkillId =
   | 'special_charge'
   | 'quick_respawn'
   | 'main_power'
-  | 'defense';
+  | 'defense'
+  | 'sub_saver'
+  | 'sub_power'
+  | 'special_power'
+  | 'paint_boost';
 
 export interface Vec2 {
   x: number;
@@ -146,6 +176,12 @@ export interface LobbyPlayerState {
   isHost: boolean;
   isBot?: boolean;
   skills?: SkillId[];
+  /**
+   * Validated `data:image/...;base64,` thumbnail. Carried only on the
+   * low-frequency lobby payload — never in a 20 Hz snapshot, which would cost
+   * about a megabyte per second per player.
+   */
+  avatar?: string;
 }
 
 export interface LobbyStatePayload {

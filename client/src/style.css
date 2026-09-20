@@ -366,6 +366,17 @@ html, body {
   display: none !important;
 }
 
+/*
+ * The one screen ScreenManager has revealed. Full-viewport overlays are
+ * mutually exclusive, so the active one is lifted above every other overlay
+ * layer and guaranteed to receive pointer input — otherwise a higher-z screen
+ * that is still technically visible silently swallows its clicks.
+ */
+.screen-active {
+  z-index: 70;
+  pointer-events: auto;
+}
+
 /* Pointer lock starter prompt */
 #pointer-lock-prompt {
   background: rgba(10, 10, 15, 0.85);
@@ -983,6 +994,15 @@ kbd {
   transition: transform 0.2s ease;
 }
 
+/* Weapons without their own thumbnail art get a tinted ink plate instead of a
+   broken image. */
+.weapon-card-thumb.weapon-thumb-fallback {
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 0, 127, 0.55), transparent 62%),
+    radial-gradient(circle at 70% 74%, rgba(0, 200, 224, 0.5), transparent 60%),
+    #111118;
+}
+
 .weapon-option:hover .weapon-card-thumb img {
   transform: scale(1.08);
 }
@@ -1162,6 +1182,39 @@ kbd {
 
 .roster-item.self {
   background: #2a2c44;
+}
+
+/* Roster thumbnail: the player's uploaded avatar, or a team-tinted initial. */
+.roster-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #ffffff;
+  background: #3a3d4a;
+  border: 2px solid #666677;
+}
+
+.roster-avatar.pink {
+  border-color: #ff007f;
+  background: rgba(255, 0, 127, 0.22);
+}
+
+.roster-avatar.cyan {
+  border-color: #00ffff;
+  background: rgba(0, 255, 255, 0.18);
+}
+
+.roster-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .roster-info {

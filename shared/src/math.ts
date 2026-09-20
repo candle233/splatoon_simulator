@@ -193,8 +193,9 @@ export function intersectRayGroundPlane(
 }
 
 /**
- * Ray vs Vertical Capsule (approximating player body)
- * base: center at feet, top: base.y + height
+ * Ray vs Vertical Capsule (approximating player body).
+ * base: center at feet; A = base + (0, radius, 0) [hip], B = base + (0, height - radius, 0) [head];
+ * cylindrical body of radius `radius` between A and B + hemispherical caps of the same radius.
  */
 export function intersectRayCapsule(
   ray: Ray,
@@ -202,17 +203,50 @@ export function intersectRayCapsule(
   radius: number,
   height: number
 ): number | null {
-  // Approximate as cylinder with sphere caps
-  const p0 = { x: base.x, y: base.y + radius, z: base.z };
-  const p1 = { x: base.x, y: base.y + height - radius, z: base.z };
-
-  // Ray vs segment distance check (simplified: 2 spheres at center and top + cylinder)
-  // Check center sphere
-  const oc = vec3Sub(ray.origin, { x: base.x, y: base.y + height * 0.5, z: base.z });
-  const b = vec3Dot(oc, ray.direction);
-  const c = vec3Dot(oc, oc) - (height * 0.5) * (height * 0.5);
-  const disc = b * b - c;
-  if (disc < 0) return null;
-  const t = -b - Math.sqrt(disc);
-  return t > 0 ? t : null;
+  const Ax = base.x, Ay = base.y + radius, Az = base.z;
+  const Bx = base.x, By = base.y + height - radius, Bz = base.z;
+  const ABx = Bx - Ax, ABy = By - Ay, ABz = Bz - Az;
+  const ab2 = ABx * ABx + ABy * ABy + ABz * ABz;
+  const Ox = ray.origin.x - Ax, Oy = ray.origin.y - Ay, Oz = ray.origin.z - Az;
+  const dd =
+    ray.direction.x * ray.direction.x +
+    ray.direction.y * ray.direction.y +
+    ray.direction.z * ray.direction.z;
+  const dab = ray.direction.x * ABx + ray.direction.y * ABy + ray.direction.z * ABz;
+  const dac = Ox * ray.direction.x + Oy * ray.direction.y + Oz * ray.direction.z;
+  const abc = ABx * Ox + ABy * Oy + ABz * Oz;
+  const denom = dd * ab2 - dab * dab;
+  let best: number | null = null;
+  // Cylinder branch (segment A→B).
+  if (Math.abs(denom) > 1e-10) {
+    const s = (dd * abc - dab * dac) / denom;
+    const t = (s * dab - dac) / dd;
+    if (t > 0 && s >= -1e-9 && s <= 1 + 1e-9) {
+      const px = Ox + t * ray.direction.x - s * ABx;
+      const py = Oy + t * ray.direction.y - s * ABy;
+      const pz = Oz + t * ray.direction.z - s * ABz;
+      const dist2 = px * px + py * py + pz * pz;
+      if (dist2 <= radius * radius + 1e-6) best = t;
+    }
+  }
+  // Hemispherical caps at A and B.
+  for (const sp of [
+    { x: Ax, y: Ay, z: Az },
+    { x: Bx, y: By, z: Bz },
+  ] as const) {
+    const wx = ray.origin.x - sp.x, wy = ray.origin.y - sp.y, wz = ray.origin.z - sp.z;
+    const aC = dd;
+    const bC =
+      2 *
+      (wx * ray.direction.x + wy * ray.direction.y + wz * ray.direction.z);
+    const cC = wx * wx + wy * wy + wz * wz - radius * radius;
+    const disc = bC * bC - 4 * aC * cC;
+    if (disc < 0) continue;
+    const sq = Math.sqrt(disc);
+    const t1 = (-bC - sq) / (2 * aC);
+    const t2 = (-bC + sq) / (2 * aC);
+    const t = t1 > 1e-6 ? t1 : t2 > 1e-6 ? t2 : null;
+    if (t !== null && (best === null || t < best)) best = t;
+  }
+  return best;
 }

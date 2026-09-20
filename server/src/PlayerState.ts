@@ -30,6 +30,11 @@ export class PlayerState {
   isBot = false;
   /** Equipped gear skills; multipliers apply to movement, ink, damage, respawn. */
   skills: SkillId[] = [];
+  /**
+   * Validated inline image thumbnail. Kept off the 20 Hz snapshot path: it is
+   * broadcast only through the lobby payload, where the client caches it.
+   */
+  avatar?: string;
 
   position: Vec3;
   velocity: Vec3;

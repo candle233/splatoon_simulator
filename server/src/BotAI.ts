@@ -265,9 +265,10 @@ export class BotAI {
     input.yaw = Math.atan2(-dx, -dz);
     input.pitch = clamp(Math.asin(clamp(dy / aimLen, -1, 1)), -0.6, 0.6);
 
-    // Preferred engagement range per weapon class
+    // Preferred engagement range per weapon class (configs may override)
     const preferred =
-      bot.weaponType === 'charger' ? 26 : bot.weaponType === 'roller' ? 2.5 : bot.weaponType === 'slosher' ? 12 : 13;
+      weaponConfig.preferredRange ??
+      (bot.weaponType === 'charger' ? 26 : bot.weaponType === 'roller' ? 2.5 : bot.weaponType === 'slosher' ? 12 : 13);
 
     const nx = dx / dist;
     const nz = dz / dist;

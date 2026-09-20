@@ -3,7 +3,10 @@ import {
   ARENA_OBSTACLES,
   BoxObstacle,
   HitResult,
+  PLAYER_HEIGHT,
+  PlayerMode,
   Ray,
+  SQUID_HEIGHT,
   Team,
   Vec3,
   intersectRayAABB,
@@ -251,7 +254,9 @@ export class CollisionWorld {
       if (player.isInvulnerable()) continue;
       if (player.team === shooterTeam) continue; // No friendly fire
 
-      const t = intersectRayCapsule(ray, player.position, 0.5, 1.8);
+      const hitHeight =
+        player.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
+      const t = intersectRayCapsule(ray, player.position, 0.5, hitHeight);
       if (t !== null && t > 0 && t < closestDist) {
         closestDist = t;
         hitResult = {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  ARENA_SIZE,
   CANVAS_RES,
   CYAN_COLOR_CSS,
   NEUTRAL_COLOR_CSS,
@@ -22,6 +23,13 @@ export class PaintEngine {
   private gridResolution: number;
   private canvasWidth: number;
   private canvasHeight: number;
+
+  /**
+   * Active map edge length for world<->UV conversion. Mirrors the server's
+   * `PaintGrid.setMapSize`; without it every lookup on a non-100-unit map
+   * samples the wrong part of the ink texture.
+   */
+  private mapSize = ARENA_SIZE;
 
   private paintTextureDirty = false;
 
@@ -83,8 +91,22 @@ export class PaintEngine {
     this.paintTextureDirty = true;
   }
 
+  /**
+   * Sets the active map edge length so world<->UV lookups match the server.
+   * Call this whenever the arena is (re)built for a map.
+   */
+  setMapSize(size: number): void {
+    if (size > 0 && Number.isFinite(size)) {
+      this.mapSize = size;
+    }
+  }
+
+  getMapSize(): number {
+    return this.mapSize;
+  }
+
   getInkAt(worldX: number, worldZ: number): Team {
-    const { u, v } = worldToUV(worldX, worldZ);
+    const { u, v } = worldToUV(worldX, worldZ, this.mapSize);
     const { gx, gy } = uvToPaintGrid(u, v, this.gridResolution);
     const idx = gy * this.gridResolution + gx;
     return (this.paintGrid[idx] ?? Team.NEUTRAL) as Team;
@@ -229,6 +251,18 @@ export class PaintEngine {
   }
 
   public textureUploads = 0;
+  /** Texture uploads skipped by the min-interval throttle (diagnostics only). */
+  public textureUploadsThrottled = 0;
+
+  /**
+   * Minimum gap between paint-texture uploads. Each dirty upload re-uploads the
+   * full 2048² level and regenerates its mip chain, so a burst of paint events
+   * can otherwise pay that cost on consecutive frames. 33 ms still shows ink
+   * within two frames at 60 Hz — imperceptible — while capping the cost at
+   * ~30 uploads/sec instead of 60+.
+   */
+  private minUploadIntervalMs = 33;
+  private lastUploadAt = 0;
 
   /**
    * Marks paint texture dirty for next frame GPU upload (Subagent 16)
@@ -238,16 +272,23 @@ export class PaintEngine {
   }
 
   /**
-   * Flushes texture update to GPU at most once per render frame (Subagent 16)
+   * Flushes texture update to GPU at most once per render frame (Subagent 16),
+   * and at most once per `minUploadIntervalMs`.
    */
   flushTextureUpdate(): boolean {
-    if (this.paintTextureDirty) {
-      this.texture.needsUpdate = true;
-      this.paintTextureDirty = false;
-      this.textureUploads++;
-      return true;
+    if (!this.paintTextureDirty) return false;
+
+    const now = performance.now();
+    if (now - this.lastUploadAt < this.minUploadIntervalMs) {
+      this.textureUploadsThrottled++;
+      return false;
     }
-    return false;
+
+    this.texture.needsUpdate = true;
+    this.paintTextureDirty = false;
+    this.lastUploadAt = now;
+    this.textureUploads++;
+    return true;
   }
 
   /**
@@ -255,6 +296,15 @@ export class PaintEngine {
    */
   renderUpdate(): void {
     this.flushTextureUpdate();
+  }
+
+  /** Upload diagnostics for the debug hook / perf automation. */
+  getUploadStats(): { uploads: number; throttled: number; dirty: boolean } {
+    return {
+      uploads: this.textureUploads,
+      throttled: this.textureUploadsThrottled,
+      dirty: this.paintTextureDirty
+    };
   }
 
   dispose(): void {

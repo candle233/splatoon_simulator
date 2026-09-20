@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GAME_MODES,
   MAP_DEFS,
   MODE_CONFIGS,
   Team,
@@ -120,8 +121,13 @@ describe('map definitions (大场景/多地图)', () => {
 });
 
 describe('game modes (新模式)', () => {
-  it('defines three modes with localized names and score limits', () => {
-    expect(Object.keys(MODE_CONFIGS).sort()).toEqual(['splat_zones', 'team_deathmatch', 'turf_war']);
+  it('defines every advertised mode with localized names and score limits', () => {
+    // Assert the roster matches GAME_MODES rather than a frozen list, so adding
+    // a mode does not require editing this test.
+    expect(Object.keys(MODE_CONFIGS).sort()).toEqual([...GAME_MODES].sort());
+    expect(GAME_MODES).toContain('turf_war');
+    expect(GAME_MODES).toContain('splat_zones');
+    expect(GAME_MODES).toContain('team_deathmatch');
     expect(MODE_CONFIGS.turf_war.scoreLimit).toBe(0);
     expect(MODE_CONFIGS.splat_zones.scoreLimit).toBeGreaterThan(0);
     expect(MODE_CONFIGS.team_deathmatch.scoreLimit).toBeGreaterThan(0);

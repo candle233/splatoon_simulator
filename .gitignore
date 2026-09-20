@@ -5,3 +5,6 @@ dist/
 
 .playwright-mcp/
 tdm-*.png
+
+# Scratch space for subagent-driven development (reports, screenshots, diffs).
+.superpowers/
