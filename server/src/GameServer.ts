@@ -27,6 +27,7 @@ import {
   getSpawnPosition,
   isValidGameMode,
   isValidMapId,
+  isValidWeaponType,
   sanitizeSkills
 } from '@ink/shared';
 import type { GameMode, MapId } from '@ink/shared';
@@ -39,9 +40,18 @@ import { PaintGrid } from './PaintGrid.js';
 import { PlayerState } from './PlayerState.js';
 import { RateLimiter } from './RateLimiter.js';
 import { WeaponSimulation } from './WeaponSimulation.js';
-import { sanitizePlayerInput } from './validation.js';
+import { sanitizeAvatar, sanitizePlayerInput } from './validation.js';
 
-const BOT_WEAPONS: WeaponType[] = ['shooter', 'roller', 'charger', 'slosher'];
+const BOT_WEAPONS: WeaponType[] = [
+  'shooter',
+  'roller',
+  'charger',
+  'slosher',
+  'sprayer',
+  'cannon',
+  'marksman',
+  'scatter'
+];
 
 export class GameServer {
   private app = express();
@@ -56,6 +66,15 @@ export class GameServer {
   private botAI = new BotAI();
 
   private players: Map<string, PlayerState> = new Map();
+  /**
+   * Cached roster view of `players`, rebuilt only when the map actually
+   * mutates. `processPlayerTick` used to rebuild it once per player per tick
+   * (O(n^2) arrays at 20 Hz); every consumer treats it as read-only, and a
+   * rebuild always allocates a *new* array so a caller iterating the previous
+   * one keeps its own snapshot.
+   */
+  private playerRoster: PlayerState[] = [];
+  private playerRosterDirty = true;
   /** Bot ids in the order they were added (for host removal). */
   private botOrder: string[] = [];
   private latestInputs: Map<string, PlayerInput> = new Map();
@@ -74,6 +93,30 @@ export class GameServer {
   private rateLimiter = new RateLimiter(60, 40);
   private isRunning = false;
   private loopInterval?: NodeJS.Timeout;
+
+  /** Adds a player and invalidates the cached roster view. */
+  private addPlayer(player: PlayerState): void {
+    this.players.set(player.id, player);
+    this.playerRosterDirty = true;
+  }
+
+  /** Removes a player and invalidates the cached roster view. */
+  private removePlayer(playerId: string): void {
+    this.players.delete(playerId);
+    this.playerRosterDirty = true;
+  }
+
+  /**
+   * Read-only snapshot of every player. Reused between ticks while the roster
+   * is unchanged; never mutate the returned array.
+   */
+  private roster(): PlayerState[] {
+    if (this.playerRosterDirty) {
+      this.playerRoster = Array.from(this.players.values());
+      this.playerRosterDirty = false;
+    }
+    return this.playerRoster;
+  }
 
   constructor() {
     this.app.use(cors());
@@ -146,7 +189,7 @@ export class GameServer {
     const slotIndex = assignedTeam === Team.PINK ? pinkCount : cyanCount;
     const spawnPos = getSpawnPosition(assignedTeam, slotIndex, this.activeMap().spawnX);
     const player = new PlayerState(playerId, assignedTeam, slotIndex, spawnPos);
-    this.players.set(playerId, player);
+    this.addPlayer(player);
 
     if (!this.hostPlayerId) {
       this.hostPlayerId = playerId;
@@ -162,7 +205,7 @@ export class GameServer {
       team: assignedTeam,
       serverTime: now,
       match: this.match.getSnapshot(now),
-      players: Array.from(this.players.values()).map((p) => p.toSnapshot()),
+      players: this.roster().map((p) => p.toSnapshot()),
       paintHistory: this.paintHistory.slice(0, PAINT_HISTORY_CHUNK_SIZE),
       totalPaintEvents: this.paintHistory.length,
       obstacles: this.collisionWorld.getObstacles(),
@@ -227,11 +270,20 @@ export class GameServer {
           p.position = { ...newSpawn };
         }
       }
-      if (typeof data.weaponType === 'string' && ['shooter', 'roller', 'charger', 'slosher'].includes(data.weaponType)) {
-        p.weaponType = data.weaponType as WeaponType;
+      if (typeof data.weaponType === 'string' && isValidWeaponType(data.weaponType)) {
+        p.weaponType = data.weaponType;
       }
       if ('skills' in data) {
         p.skills = sanitizeSkills(data.skills);
+      }
+      if ('avatar' in data) {
+        const avatar = sanitizeAvatar(data.avatar);
+        // Ignore rejected payloads and byte-identical repeats: a client that
+        // re-sends the same image every frame must not trigger a re-broadcast,
+        // since the lobby payload carries the whole thumbnail.
+        if (avatar && avatar !== p.avatar) {
+          p.avatar = avatar;
+        }
       }
       if (typeof data.ready === 'boolean') {
         if (data.ready) {
@@ -381,7 +433,7 @@ export class GameServer {
       weaponType && BOT_WEAPONS.includes(weaponType)
         ? weaponType
         : (BOT_WEAPONS[Math.floor(Math.random() * BOT_WEAPONS.length)] ?? 'shooter');
-    this.players.set(bot.id, bot);
+    this.addPlayer(bot);
     this.botOrder.push(bot.id);
     return bot;
   }
@@ -398,7 +450,7 @@ export class GameServer {
     const bot = this.players.get(targetId);
     if (!bot) return null;
 
-    this.players.delete(targetId);
+    this.removePlayer(targetId);
     this.botOrder = this.botOrder.filter((id) => id !== targetId);
     this.botAI.forget(targetId);
     this.readyPlayers.delete(targetId);
@@ -406,7 +458,7 @@ export class GameServer {
   }
 
   private getLobbyState(): LobbyStatePayload {
-    const players: LobbyPlayerState[] = Array.from(this.players.values()).map((p) => ({
+    const players: LobbyPlayerState[] = this.roster().map((p) => ({
       id: p.id,
       name: p.name,
       team: p.team,
@@ -414,7 +466,8 @@ export class GameServer {
       ready: this.readyPlayers.has(p.id),
       isHost: p.id === this.hostPlayerId,
       isBot: p.isBot || undefined,
-      skills: p.skills.length > 0 ? p.skills : undefined
+      skills: p.skills.length > 0 ? p.skills : undefined,
+      avatar: p.avatar
     }));
     return {
       players,
@@ -434,7 +487,7 @@ export class GameServer {
 
   private handlePlayerDisconnect(playerId: string): void {
     console.log(`[BotMgmt] disconnect ${playerId}; playersBefore=${this.players.size}`);
-    this.players.delete(playerId);
+    this.removePlayer(playerId);
     this.latestInputs.delete(playerId);
     this.playerLastInputAt.delete(playerId);
     this.readyPlayers.delete(playerId);
@@ -442,35 +495,25 @@ export class GameServer {
     this.rateLimiter.remove(`input:${playerId}`);
     this.rateLimiter.remove(`ping:${playerId}`);
 
-    if (this.hostPlayerId === playerId) {
-      this.hostPlayerId = Array.from(this.players.keys()).find((id) => !this.players.get(id)?.isBot);
-      if (!this.hostPlayerId) {
-        this.hostPlayerId = this.players.keys().next().value;
-      }
-    }
-
-    this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, playerId);
-    this.broadcastLobbyState();
-
-    // Any human left? Otherwise tear down the bot match.
-    const humansLeft = Array.from(this.players.values()).some((p) => !p.isBot);
+    // If no humans remain after removal, tear down the bot match.
+    const humansLeft = this.roster().some((p) => !p.isBot);
     if (!humansLeft && this.botOrder.length > 0) {
       for (const botId of [...this.botOrder]) {
-        this.players.delete(botId);
+        this.removePlayer(botId);
         this.botAI.forget(botId);
         this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, botId);
       }
       this.botOrder = [];
     }
 
-    // The host may have been removed above (left, or cleared with the bots);
-    // clear the pointer so the next human to join becomes the host.
-    if (!this.hostPlayerId || !this.players.has(this.hostPlayerId)) {
-      this.hostPlayerId = Array.from(this.players.keys()).find((id) => !this.players.get(id)?.isBot);
-      if (!this.hostPlayerId) {
-        this.hostPlayerId = undefined;
-      }
+    // Single host lookup after bot cleanup.
+    if (this.hostPlayerId === playerId || !this.hostPlayerId || !this.players.has(this.hostPlayerId)) {
+      const nextHuman = this.roster().find((p) => !p.isBot);
+      this.hostPlayerId = nextHuman?.id;
     }
+
+    this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_LEFT, playerId);
+    this.broadcastLobbyState();
 
     if (this.players.size === 0) {
       this.match.update(0, Date.now());
@@ -578,7 +621,13 @@ export class GameServer {
       }
     }
 
-    const allPlayersList = Array.from(this.players.values());
+    // Final Push: resample coverage on a timer; only the last sample decides
+    // the winner, so the score visibly swings all match.
+    if (this.match.phase === MatchPhase.PLAYING && this.match.mode === 'final_push') {
+      this.match.tickFinalPush(now);
+    }
+
+    const allPlayersList = this.roster();
 
     // Lobby host handover: an idle host page (stale tab, reload loop) must not
     // squat the host slot forever — pass it to an active human in WAITING.
@@ -728,7 +777,7 @@ export class GameServer {
    * sub weapons and specials. Emits death / hit / shot / paint events.
    */
   private processPlayerTick(player: PlayerState, input: PlayerInput, dt: number, now: number): void {
-    const allPlayersList = Array.from(this.players.values());
+    const allPlayersList = this.roster();
 
     // Simulate movement and ground DoT
     const moveRes = this.movementSim.simulatePlayer(player, input, dt, now);
