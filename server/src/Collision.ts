@@ -2,10 +2,13 @@ import {
   ARENA_HALF_SIZE,
   ARENA_OBSTACLES,
   BoxObstacle,
+  ClimbableSurface,
   HitResult,
   PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   PlayerMode,
   Ray,
+  RampObstacle,
   SQUID_HEIGHT,
   Team,
   Vec3,
@@ -20,6 +23,8 @@ import { PlayerState } from './PlayerState.js';
 export class CollisionWorld {
   private obstacles: BoxObstacle[];
   private halfSize = ARENA_HALF_SIZE;
+  private ramps: RampObstacle[] = [];
+  private climbableSurfaces: ClimbableSurface[] = [];
 
   constructor(obstacles = ARENA_OBSTACLES) {
     this.obstacles = obstacles;
@@ -27,6 +32,14 @@ export class CollisionWorld {
 
   getObstacles(): BoxObstacle[] {
     return this.obstacles;
+  }
+
+  setRamps(ramps: RampObstacle[]): void {
+    this.ramps = ramps;
+  }
+
+  setClimbableSurfaces(surfaces: ClimbableSurface[]): void {
+    this.climbableSurfaces = surfaces;
   }
 
   /** Swaps the obstacle set and arena bounds (map change while in lobby). */
@@ -37,6 +50,85 @@ export class CollisionWorld {
 
   getHalfSize(): number {
     return this.halfSize;
+  }
+
+  /**
+   * Returns the ramp the player is standing on, or null.
+   * A player is on a ramp when their position is within the ramp's footprint
+   * and their feet Y is below the expected ramp height.
+   */
+  getRampAt(position: Vec3): RampObstacle | null {
+    const r = PLAYER_RADIUS;
+    for (const ramp of this.ramps) {
+      if (!ramp.climbable) continue;
+      // Determine the ramp's axis-aligned bounding box
+      let minX = ramp.position.x - (ramp.width / 2);
+      let maxX = ramp.position.x + (ramp.width / 2);
+      let minZ = ramp.position.z - (ramp.width / 2);
+      let maxZ = ramp.position.z + (ramp.width / 2);
+      // For ramps the footprint is length in the travel direction and width sideways
+      switch (ramp.direction) {
+        case 'north':
+        case 'south':
+          minZ = ramp.position.z - ramp.length / 2;
+          maxZ = ramp.position.z + ramp.length / 2;
+          break;
+        case 'east':
+        case 'west':
+          minX = ramp.position.x - ramp.length / 2;
+          maxX = ramp.position.x + ramp.length / 2;
+          break;
+      }
+      if (
+        position.x + r > minX &&
+        position.x - r < maxX &&
+        position.z + r > minZ &&
+        position.z - r < maxZ
+      ) {
+        return ramp;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the climbable surface closest to the player, or null.
+   */
+  getClimbableSurfaceAt(position: Vec3, withinRange = 2.0): ClimbableSurface | null {
+    for (const cs of this.climbableSurfaces) {
+      const cx = cs.position.x;
+      const cz = cs.position.z;
+      const dx = position.x - cx;
+      const dz = position.z - cz;
+      if (dx * dx + dz * dz < withinRange * withinRange) {
+        return cs;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the expected Y at the given XZ position on a ramp.
+   */
+  rampHeightAt(ramp: RampObstacle, x: number, z: number): number {
+    // Compute progress along the ramp's travel direction from the low end to the high end
+    let t: number;
+    switch (ramp.direction) {
+      case 'north':
+        t = (ramp.position.z + ramp.length / 2 - z) / ramp.length;
+        break;
+      case 'south':
+        t = (z - (ramp.position.z - ramp.length / 2)) / ramp.length;
+        break;
+      case 'east':
+        t = (x - (ramp.position.x - ramp.length / 2)) / ramp.length;
+        break;
+      case 'west':
+        t = (ramp.position.x + ramp.length / 2 - x) / ramp.length;
+        break;
+    }
+    t = Math.max(0, Math.min(1, t));
+    return ramp.rise * t;
   }
 
   /**
@@ -126,6 +218,17 @@ export class CollisionWorld {
       ) {
         // Player is standing stably on top of obstacle platform
         currY = maxY;
+        grounded = true;
+        player.velocity.y = 0;
+      }
+    }
+
+    // 2b. Ramp collision: lift the player up to the ramp's expected height
+    const ramp = this.getRampAt({ x: currX, y: currY, z: currZ });
+    if (ramp) {
+      const expectedY = this.rampHeightAt(ramp, currX, currZ);
+      if (currY < expectedY - 0.06 && player.velocity.y <= 0) {
+        currY = expectedY;
         grounded = true;
         player.velocity.y = 0;
       }

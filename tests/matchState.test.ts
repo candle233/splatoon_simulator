@@ -65,17 +65,23 @@ describe('Match State Machine', () => {
     expect(res.gameOverPayload!.pinkCoverage).toBeGreaterThan(0);
   });
 
-  it('restarts match and triggers reset callback after GAME_OVER', () => {
+  it('restarts match and triggers reset callback after GAME_OVER via WEAPON_SELECT', () => {
     const startTime = 100000;
     match.update(1, startTime);
     match.update(1, startTime + 3100);
     match.update(1, startTime + 3100 + 180100); // enters GAME_OVER
 
-    // 8.1 seconds later -> enters RESTART / COUNTDOWN
-    const restartTime = startTime + 3100 + 180100 + 8100;
-    const res = match.update(1, restartTime);
+    // 8.1 seconds later -> transitions to WEAPON_SELECT (reset not yet triggered)
+    const weaponSelectTime = startTime + 3100 + 180100 + 8100;
+    const res1 = match.update(1, weaponSelectTime);
+    expect(res1.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.WEAPON_SELECT);
+    expect(resetTriggered).toBe(false);
 
-    expect(res.phaseChanged).toBe(true);
+    // 10.1 seconds later (WEAPON_SELECT_DURATION) -> enters COUNTDOWN, reset fires
+    const countdownTime = weaponSelectTime + 10100;
+    const res2 = match.update(1, countdownTime);
+    expect(res2.phaseChanged).toBe(true);
     expect(resetTriggered).toBe(true);
     expect(match.phase).toBe(MatchPhase.COUNTDOWN);
   });

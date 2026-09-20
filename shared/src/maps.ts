@@ -1,6 +1,6 @@
 import { ARENA_SIZE, CYAN_COLOR_HEX, PINK_COLOR_HEX } from './config.js';
 import { Team } from './types.js';
-import type { BoxObstacle, MapId, Vec3 } from './types.js';
+import type { BoxObstacle, ClimbableSurface, MapId, PaintSurface, RampObstacle, Vec3 } from './types.js';
 
 export const ARENA_WALL_HEIGHT = 5.0;
 
@@ -61,6 +61,12 @@ export interface MapDef {
   /** Full square edge length in world units. */
   size: number;
   obstacles: BoxObstacle[];
+  /** Ramps that lift the player up a slope. */
+  ramps: RampObstacle[];
+  /** Surfaces the player can climb by holding the climb key. */
+  climbableSurfaces: ClimbableSurface[];
+  /** Vertical wall faces that accept paint. */
+  paintSurfaces: PaintSurface[];
   /** |x| of both team spawn rows. */
   spawnX: number;
   zone: ZoneRect;
@@ -72,10 +78,10 @@ function perimeterWalls(size: number): BoxObstacle[] {
   const len = size + 2;
   const z = half + 1;
   return [
-    { id: 'wall_north', position: { x: 0, y: 2.5, z }, size: { x: len, y: 5, z: 2 } },
-    { id: 'wall_south', position: { x: 0, y: 2.5, z: -z }, size: { x: len, y: 5, z: 2 } },
-    { id: 'wall_east', position: { x: z, y: 2.5, z: 0 }, size: { x: 2, y: 5, z: len } },
-    { id: 'wall_west', position: { x: -z, y: 2.5, z: 0 }, size: { x: 2, y: 5, z: len } }
+    { id: 'wall_north', position: { x: 0, y: 2.5, z }, size: { x: len, y: 5, z: 2 }, paintable: true },
+    { id: 'wall_south', position: { x: 0, y: 2.5, z: -z }, size: { x: len, y: 5, z: 2 }, paintable: true },
+    { id: 'wall_east', position: { x: z, y: 2.5, z: 0 }, size: { x: 2, y: 5, z: len }, paintable: true },
+    { id: 'wall_west', position: { x: -z, y: 2.5, z: 0 }, size: { x: 2, y: 5, z: len }, paintable: true }
   ];
 }
 
@@ -83,9 +89,34 @@ function box(id: string, x: number, y: number, z: number, sx: number, sy: number
   return { id, position: { x, y, z }, size: { x: sx, y: sy, z: sz } };
 }
 
+function boxPaintable(id: string, x: number, y: number, z: number, sx: number, sy: number, sz: number): BoxObstacle {
+  return { id, position: { x, y, z }, size: { x: sx, y: sy, z: sz }, paintable: true };
+}
+
 /** A ground-level riser of `STEP_RISE` height, authored as a climbable stair step. */
 function step(id: string, x: number, z: number, sx: number, sz: number): BoxObstacle {
   return box(id, x, STEP_RISE / 2, z, sx, STEP_RISE, sz);
+}
+
+/** A sloped ramp from ground level up by `rise` units over its length. */
+function ramp(id: string, x: number, z: number, direction: RampObstacle['direction'], length: number, rise: number, climbable = true): RampObstacle {
+  const width = 3;
+  let px = x, pz = z;
+  switch (direction) {
+    case 'north': pz -= length / 2; break;
+    case 'south': pz += length / 2; break;
+    case 'east':  px += length / 2; break;
+    case 'west':  px -= length / 2; break;
+  }
+  return { id, position: { x: px, y: rise / 2, z: pz }, length, width, rise, direction, climbable };
+}
+
+function climbable(id: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, nx: number, ny: number, nz: number): ClimbableSurface {
+  return { id, position: { x, y, z }, size: { x: sx, y: sy, z: sz }, normal: { x: nx, y: ny, z: nz } };
+}
+
+function paintWall(id: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, nx: number, ny: number, nz: number): PaintSurface {
+  return { id, position: { x, y, z }, size: { x: sx, y: sy, z: sz }, normal: { x: nx, y: ny, z: nz }, height: sy, paint: [0, 0] };
 }
 
 /**
@@ -160,6 +191,37 @@ const DOWNTOWN_OBSTACLES: BoxObstacle[] = [
   ])
 ];
 
+const DOWNTOWN_RAMPS: RampObstacle[] = [
+  ...mirrorLayout([]).flatMap(() => [] as RampObstacle[]),
+  // Ramp up to the lane platform from the south approach
+  ramp('ramp_lane_s', 0, 38, 'north', 8, STEP_RISE),
+  // Ramp up to the flank deck
+  ramp('ramp_flank_s', 48, 12, 'north', 10, STEP_RISE),
+  // Sloped access to the center deck
+  ramp('ramp_center', 8, 6, 'east', 6, STEP_RISE),
+];
+
+const DOWNTOWN_CLIMBABLES: ClimbableSurface[] = [
+  // Perimeter walls are climbable at their inner face
+  climbable('climb_wall_n', 0, 2.5, 74, 147, 5, 2, 0, 1, 0),
+  climbable('climb_wall_s', 0, 2.5, -74, 147, 5, 2, 0, -1, 0),
+  climbable('climb_wall_e', 74, 2.5, 0, 2, 5, 147, 1, 0, 0),
+  climbable('climb_wall_w', -74, 2.5, 0, 2, 5, 147, -1, 0, 0),
+];
+
+const DOWNTOWN_PAINT: PaintSurface[] = [
+  // Perimeter walls get paint tracks
+  paintWall('paint_wall_n', 0, 2.5, 74, 147, 5, 2, 0, 0, 1),
+  paintWall('paint_wall_s', 0, 2.5, -74, 147, 5, 2, 0, 0, -1),
+  paintWall('paint_wall_e', 74, 2.5, 0, 2, 5, 147, 1, 0, 0),
+  paintWall('paint_wall_w', -74, 2.5, 0, 2, 5, 147, -1, 0, 0),
+  // Center tower sides
+  paintWall('paint_tower_n', 0, 1.5, 9, 18, 3, 0.1, 0, 0, 1),
+  paintWall('paint_tower_s', 0, 1.5, -9, 18, 3, 0.1, 0, 0, -1),
+  paintWall('paint_tower_e', 9, 1.5, 0, 0.1, 3, 18, 1, 0, 0),
+  paintWall('paint_tower_w', -9, 1.5, 0, 0.1, 3, 18, -1, 0, 0),
+];
+
 // ---------------------------------------------------------------------------
 // Cargo Docks — 185 x 185
 // Long container rows, three-tier container towers, a crane plaza and piers.
@@ -202,6 +264,31 @@ const CARGO_DOCKS_OBSTACLES: BoxObstacle[] = [
   ])
 ];
 
+const CARGO_DOCKS_RAMPS: RampObstacle[] = [
+  // Ramp up to the pier platform
+  ramp('ramp_pier', 44, 58, 'north', 12, STEP_RISE),
+  // Ramp up to the yard level
+  ramp('ramp_yard', 66, 50, 'north', 8, STEP_RISE),
+  // Sloped access to the crane plaza
+  ramp('ramp_crane', 10, 8, 'east', 8, STEP_RISE),
+];
+
+const CARGO_DOCKS_CLIMBABLES: ClimbableSurface[] = [
+  climbable('climb_wall_n', 0, 2.5, 94, 187, 5, 2, 0, 1, 0),
+  climbable('climb_wall_s', 0, 2.5, -94, 187, 5, 2, 0, -1, 0),
+  climbable('climb_wall_e', 94, 2.5, 0, 2, 5, 187, 1, 0, 0),
+  climbable('climb_wall_w', -94, 2.5, 0, 2, 5, 187, -1, 0, 0),
+];
+
+const CARGO_DOCKS_PAINT: PaintSurface[] = [
+  paintWall('paint_wall_n', 0, 2.5, 94, 187, 5, 2, 0, 0, 1),
+  paintWall('paint_wall_s', 0, 2.5, -94, 187, 5, 2, 0, 0, -1),
+  paintWall('paint_wall_e', 94, 2.5, 0, 2, 5, 187, 1, 0, 0),
+  paintWall('paint_wall_w', -94, 2.5, 0, 2, 5, 187, -1, 0, 0),
+  paintWall('paint_crane_n', 0, 1.5, 10, 20, 3, 0.1, 0, 0, 1),
+  paintWall('paint_crane_s', 0, 1.5, -10, 20, 3, 0.1, 0, 0, -1),
+];
+
 // ---------------------------------------------------------------------------
 // Sky Rink — 130 x 130
 // Compact neon rooftop: a tight ring of cover, banks, rails and corner pipes.
@@ -236,6 +323,28 @@ const SKY_RINK_OBSTACLES: BoxObstacle[] = [
     box('base_rail', 52, 0.3, 14, 4, 0.6, 12),
     box('base_block', 56, 1.2, 24, 8, 2 * STEP_RISE, 7)
   ])
+];
+
+const SKY_RINK_RAMPS: RampObstacle[] = [
+  ramp('ramp_bank', 36, 26, 'north', 8, STEP_RISE),
+  ramp('ramp_pipe', 44, 48, 'north', 8, STEP_RISE),
+  ramp('ramp_corner_e', 50, 30, 'east', 6, STEP_RISE),
+  ramp('ramp_corner_w', -50, 30, 'west', 6, STEP_RISE),
+];
+
+const SKY_RINK_CLIMBABLES: ClimbableSurface[] = [
+  climbable('climb_wall_n', 0, 2.5, 66, 132, 5, 2, 0, 1, 0),
+  climbable('climb_wall_s', 0, 2.5, -66, 132, 5, 2, 0, -1, 0),
+  climbable('climb_wall_e', 66, 2.5, 0, 2, 5, 132, 1, 0, 0),
+  climbable('climb_wall_w', -66, 2.5, 0, 2, 5, 132, -1, 0, 0),
+];
+
+const SKY_RINK_PAINT: PaintSurface[] = [
+  paintWall('paint_wall_n', 0, 2.5, 66, 132, 5, 2, 0, 0, 1),
+  paintWall('paint_wall_s', 0, 2.5, -66, 132, 5, 2, 0, 0, -1),
+  paintWall('paint_wall_e', 66, 2.5, 0, 2, 5, 132, 1, 0, 0),
+  paintWall('paint_wall_w', -66, 2.5, 0, 2, 5, 132, -1, 0, 0),
+  paintWall('paint_tower', 0, 1.5, 8, 16, 3, 0.1, 0, 0, 1),
 ];
 
 // ---------------------------------------------------------------------------
@@ -280,6 +389,27 @@ const AURORA_OUTPOST_OBSTACLES: BoxObstacle[] = [
   ])
 ];
 
+const AURORA_OUTPOST_RAMPS: RampObstacle[] = [
+  ramp('ramp_hangar', 58, 34, 'north', 10, STEP_RISE),
+  ramp('ramp_radome', 8, 6, 'east', 8, STEP_RISE),
+  ramp('ramp_berm', 30, 22, 'south', 8, STEP_RISE),
+];
+
+const AURORA_OUTPOST_CLIMBABLES: ClimbableSurface[] = [
+  climbable('climb_wall_n', 0, 2.5, 81, 162, 5, 2, 0, 1, 0),
+  climbable('climb_wall_s', 0, 2.5, -81, 162, 5, 2, 0, -1, 0),
+  climbable('climb_wall_e', 81, 2.5, 0, 2, 5, 162, 1, 0, 0),
+  climbable('climb_wall_w', -81, 2.5, 0, 2, 5, 162, -1, 0, 0),
+];
+
+const AURORA_OUTPOST_PAINT: PaintSurface[] = [
+  paintWall('paint_wall_n', 0, 2.5, 81, 162, 5, 2, 0, 0, 1),
+  paintWall('paint_wall_s', 0, 2.5, -81, 162, 5, 2, 0, 0, -1),
+  paintWall('paint_wall_e', 81, 2.5, 0, 2, 5, 162, 1, 0, 0),
+  paintWall('paint_wall_w', -81, 2.5, 0, 2, 5, 162, -1, 0, 0),
+  paintWall('paint_radome', 0, 1.5, 11, 22, 3, 0.1, 0, 0, 1),
+];
+
 export const MAP_DEFS: Record<MapId, MapDef> = {
   downtown: {
     id: 'downtown',
@@ -291,6 +421,9 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     descriptionJa: '中央タワーがそびえる左右対称の広場。全武器が活躍するバランスマップ。',
     size: 145,
     obstacles: DOWNTOWN_OBSTACLES,
+    ramps: DOWNTOWN_RAMPS,
+    climbableSurfaces: DOWNTOWN_CLIMBABLES,
+    paintSurfaces: DOWNTOWN_PAINT,
     spawnX: spawnXForSize(145),
     zone: { x: 0, z: 0, w: 52, d: 38 },
     theme: {
@@ -319,6 +452,9 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     descriptionJa: '最大のアリーナ。積み重なるコンテナとクレーン、長い射線が特徴。',
     size: 185,
     obstacles: CARGO_DOCKS_OBSTACLES,
+    ramps: CARGO_DOCKS_RAMPS,
+    climbableSurfaces: CARGO_DOCKS_CLIMBABLES,
+    paintSurfaces: CARGO_DOCKS_PAINT,
     spawnX: spawnXForSize(185),
     zone: { x: 0, z: 0, w: 62, d: 46 },
     theme: {
@@ -347,6 +483,9 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     descriptionJa: 'コンパクトなネオン屋上リンク。近距離の激戦が絶えない。',
     size: 130,
     obstacles: SKY_RINK_OBSTACLES,
+    ramps: SKY_RINK_RAMPS,
+    climbableSurfaces: SKY_RINK_CLIMBABLES,
+    paintSurfaces: SKY_RINK_PAINT,
     spawnX: spawnXForSize(130),
     zone: { x: 0, z: 0, w: 48, d: 34 },
     theme: {
@@ -375,6 +514,9 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     descriptionJa: 'オーロラが揺れる極地の研究拠点。広い雪原に鉄塔と格納庫が点在する。',
     size: 160,
     obstacles: AURORA_OUTPOST_OBSTACLES,
+    ramps: AURORA_OUTPOST_RAMPS,
+    climbableSurfaces: AURORA_OUTPOST_CLIMBABLES,
+    paintSurfaces: AURORA_OUTPOST_PAINT,
     spawnX: spawnXForSize(160),
     zone: { x: 0, z: 0, w: 56, d: 42 },
     theme: {

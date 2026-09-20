@@ -2,7 +2,10 @@ import {
   ARENA_HALF_SIZE,
   ARENA_OBSTACLES,
   BoxObstacle,
+  ClimbableSurface,
+  PLAYER_RADIUS,
   Ray,
+  RampObstacle,
   Vec3,
   intersectRayAABB,
   intersectRayGroundPlane
@@ -11,6 +14,8 @@ import {
 export class ClientCollisionWorld {
   private obstacles: BoxObstacle[];
   private halfSize = ARENA_HALF_SIZE;
+  private ramps: RampObstacle[] = [];
+  private climbableSurfaces: ClimbableSurface[] = [];
 
   constructor(obstacles = ARENA_OBSTACLES) {
     this.obstacles = obstacles;
@@ -21,8 +26,94 @@ export class ClientCollisionWorld {
     this.halfSize = mapSize / 2;
   }
 
+  setRamps(ramps: RampObstacle[]): void {
+    this.ramps = ramps;
+  }
+
+  setClimbableSurfaces(surfaces: ClimbableSurface[]): void {
+    this.climbableSurfaces = surfaces;
+  }
+
   getObstacles(): BoxObstacle[] {
     return this.obstacles;
+  }
+
+  /**
+   * Returns the ramp the player is standing on, or null.
+   */
+  getRampAt(position: Vec3): RampObstacle | null {
+    const r = PLAYER_RADIUS;
+    for (const ramp of this.ramps) {
+      if (!ramp.climbable) continue;
+      let minX = ramp.position.x - (ramp.width / 2);
+      let maxX = ramp.position.x + (ramp.width / 2);
+      let minZ = ramp.position.z - (ramp.width / 2);
+      let maxZ = ramp.position.z + (ramp.width / 2);
+      switch (ramp.direction) {
+        case 'north':
+          minZ = ramp.position.z - ramp.length / 2;
+          maxZ = ramp.position.z + ramp.length / 2;
+          break;
+        case 'south':
+          minZ = ramp.position.z - ramp.length / 2;
+          maxZ = ramp.position.z + ramp.length / 2;
+          break;
+        case 'east':
+          minX = ramp.position.x - ramp.length / 2;
+          maxX = ramp.position.x + ramp.length / 2;
+          break;
+        case 'west':
+          minX = ramp.position.x - ramp.length / 2;
+          maxX = ramp.position.x + ramp.length / 2;
+          break;
+      }
+      if (
+        position.x + r > minX &&
+        position.x - r < maxX &&
+        position.z + r > minZ &&
+        position.z - r < maxZ
+      ) {
+        return ramp;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the climbable surface closest to the player, or null.
+   */
+  getClimbableSurfaceAt(position: Vec3, withinRange = 2.0): ClimbableSurface | null {
+    for (const cs of this.climbableSurfaces) {
+      const dx = position.x - cs.position.x;
+      const dz = position.z - cs.position.z;
+      if (dx * dx + dz * dz < withinRange * withinRange) {
+        return cs;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the expected Y at the given XZ position on a ramp.
+   */
+  rampHeightAt(ramp: RampObstacle, x: number, z: number): number {
+    let t: number;
+    switch (ramp.direction) {
+      case 'north':
+        t = (ramp.position.z + ramp.length / 2 - z) / ramp.length;
+        break;
+      case 'south':
+        t = (z - (ramp.position.z - ramp.length / 2)) / ramp.length;
+        break;
+      case 'east':
+        t = (x - (ramp.position.x - ramp.length / 2)) / ramp.length;
+        break;
+      case 'west':
+        t = (ramp.position.x + ramp.length / 2 - x) / ramp.length;
+        break;
+    }
+    t = Math.max(0, Math.min(1, t));
+    return ramp.rise * t;
   }
 
   /**
@@ -207,6 +298,17 @@ export class ClientCollisionWorld {
       ) {
         // Player is standing stably on top of obstacle platform
         currY = maxY;
+        grounded = true;
+        velocity.y = 0;
+      }
+    }
+
+    // 2b. Ramp collision: lift the player up to the ramp's expected height
+    const ramp = this.getRampAt({ x: currX, y: currY, z: currZ });
+    if (ramp) {
+      const expectedY = this.rampHeightAt(ramp, currX, currZ);
+      if (currY < expectedY - 0.06 && velocity.y <= 0) {
+        currY = expectedY;
         grounded = true;
         velocity.y = 0;
       }

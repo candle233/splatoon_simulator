@@ -22,7 +22,9 @@ export const SCREEN_ELEMENT_IDS = {
   title: 'title-screen',
   lobby: 'lobby-screen',
   gameOver: 'game-over-screen',
-  pointerPrompt: 'pointer-lock-prompt'
+  pointerPrompt: 'pointer-lock-prompt',
+  /** Pre-match weapon loadout selection screen (shown during WEAPON_SELECT phase). */
+  weaponSelect: 'weapon-select-screen'
 } as const;
 
 export type ScreenId = keyof typeof SCREEN_ELEMENT_IDS;
@@ -188,6 +190,9 @@ export function screenRouteForPhase(
   }
   if (phase === MatchPhase.GAME_OVER) {
     return { kind: 'hide', id: 'title' };
+  }
+  if (phase === MatchPhase.WEAPON_SELECT) {
+    return { kind: 'show', id: 'weaponSelect' };
   }
   if (phase === MatchPhase.WAITING && prevPhase !== MatchPhase.WAITING) {
     return { kind: 'show', id: 'lobby' };

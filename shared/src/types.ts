@@ -28,7 +28,8 @@ export enum MatchPhase {
   COUNTDOWN = 1,
   PLAYING = 2,
   GAME_OVER = 3,
-  RESTARTING = 4
+  /** Post-match weapon loadout selection before the next countdown starts. */
+  WEAPON_SELECT = 4
 }
 
 export type WeaponType =
@@ -91,6 +92,46 @@ export interface BoxObstacle {
   id: string;
   position: Vec3;
   size: Vec3;
+  /** Whether vertical faces of this obstacle accept paint. */
+  paintable?: boolean;
+}
+
+/** A vertical wall face that can be painted on and optionally climbed. */
+export interface PaintSurface {
+  id: string;
+  position: Vec3;
+  size: Vec3;
+  /** Surface normal pointing outward (unit length). */
+  normal: Vec3;
+  /** Height of the surface above ground. */
+  height: number;
+  /** Paint coverage per team: [pinkFraction, cyanFraction]. */
+  paint: [number, number];
+}
+
+/** Stairs or a ramp that lifts the player up along a slope. */
+export interface RampObstacle {
+  id: string;
+  position: Vec3;
+  /** Ramp length along the travel direction. */
+  length: number;
+  /** Ramp width perpendicular to travel direction. */
+  width: number;
+  /** Height gain over the full ramp length. */
+  rise: number;
+  /** Direction the player travels UP toward. */
+  direction: 'north' | 'south' | 'east' | 'west';
+  /** Whether the player automatically walks up at reduced speed. */
+  climbable: boolean;
+}
+
+/** A surface marked as climbable — players can ascend by holding a key. */
+export interface ClimbableSurface {
+  id: string;
+  position: Vec3;
+  size: Vec3;
+  /** Normal direction of the climbable face. */
+  normal: Vec3;
 }
 
 export interface PlayerInput {
@@ -216,6 +257,10 @@ export interface GameOverPayload {
   cyanCoverage: number;
   restartCountdown: number;
   mode?: GameMode;
+  /** Seconds until the weapon selection screen appears (GAME_OVER remaining). */
+  gameOverRemaining?: number;
+  /** Seconds until the next countdown begins after weapon selection. */
+  weaponSelectDuration?: number;
 }
 
 export interface WelcomePayload {
@@ -228,6 +273,9 @@ export interface WelcomePayload {
   paintHistory: PaintEvent[];
   totalPaintEvents?: number;
   obstacles: BoxObstacle[];
+  ramps: RampObstacle[];
+  climbableSurfaces: ClimbableSurface[];
+  paintSurfaces: PaintSurface[];
   lobby?: LobbyStatePayload;
   mapId?: MapId;
   mapSize?: number;
@@ -244,6 +292,8 @@ export interface SnapshotPayload {
   lastProcessedInputSeq: Record<string, number>;
   players: PlayerSnapshot[];
   match: MatchStateSnapshot;
+  /** Updated paint fractions on climbable surfaces since last snapshot. */
+  paintSurfaceUpdates?: PaintSurface[];
 }
 
 export interface HitResult {

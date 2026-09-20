@@ -24,7 +24,8 @@ export const PROTOCOL_EVENTS = {
   S2C_SHOT_EVENT: 's2c:shot_event',
   S2C_LOBBY_STATE: 's2c:lobby_state',
   S2C_SUB_WEAPON_EVENT: 's2c:sub_weapon_event',
-  S2C_SPECIAL_EVENT: 's2c:special_event'
+  S2C_SPECIAL_EVENT: 's2c:special_event',
+  S2C_SURFACE_PAINT: 's2c:surface_paint'
 } as const;
 
 export type ProtocolEventName = typeof PROTOCOL_EVENTS[keyof typeof PROTOCOL_EVENTS];

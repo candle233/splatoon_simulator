@@ -192,9 +192,10 @@ describe('PlayerView cosmetics: applied to real Three.js objects', () => {
 
     // Local muzzle offset is (0, 0, -0.6) from the weapon anchor, which sits at
     // (0.32, 0.85, -0.3) inside the humanoid group at world (1, 0, 2).
+    // Shooter additively offsets by getMuzzleZOffset('shooter')=0.05 → total Z offset = -0.65.
     expect(target.x).toBeCloseTo(1.32, 5);
     expect(target.y).toBeCloseTo(0.85, 5);
-    expect(target.z).toBeCloseTo(1.1, 5);
+    expect(target.z).toBeCloseTo(1.05, 5);
     view.dispose();
   });
 });

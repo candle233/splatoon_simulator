@@ -42,15 +42,13 @@ describe('weapon roster is complete', () => {
 
 describe('every weapon renders a model', () => {
   it('PlayerView maps every weapon id to a real model group', () => {
-    // Regression: setWeaponType() used to compare `type` against the four model
-    // names directly with no fallback, so the four newer weapons hid EVERY group
-    // and the fighter rendered empty-handed.
+    // Every weapon has its own distinct 3D model group — no archetypal sharing.
     const src = read('client/src/player/PlayerView.ts');
 
     const tableMatch = src.match(
-      /const WEAPON_MODEL_GROUP: Record<WeaponType,[^>]*> = \{([\s\S]*?)\n\};/
+      /const WEAPON_GROUPS: Record<WeaponType,[^>]*> = \{([\s\S]*?)\n\};/
     );
-    expect(tableMatch, 'WEAPON_MODEL_GROUP table is missing').toBeTruthy();
+    expect(tableMatch, 'WEAPON_GROUPS table is missing').toBeTruthy();
 
     const body = tableMatch![1];
     const mapped = new Map<string, string>();
@@ -58,24 +56,23 @@ describe('every weapon renders a model', () => {
     let m: RegExpExecArray | null;
     while ((m = re.exec(body)) !== null) mapped.set(m[1], m[2]);
 
-    const validGroups = new Set(['shooter', 'roller', 'charger', 'slosher']);
     for (const id of ALL_WEAPONS) {
       const group = mapped.get(id);
-      expect(group, `${id} has no model group mapping`).toBeTruthy();
-      expect(validGroups.has(group!), `${id} maps to unknown group "${group}"`).toBe(true);
+      expect(group, `${id} has no model group mapping`).toBe(id);
     }
 
     // setWeaponType must actually consult the table rather than raw equality.
-    expect(src).toMatch(/WEAPON_MODEL_GROUP\[type\]/);
+    expect(src).toMatch(/WEAPON_GROUPS\[type\]/);
   });
 
   it('the in-hand pose and laser follow the mapped group, not the raw id', () => {
     const src = read('client/src/player/PlayerView.ts');
     // The arm-pose switch, the roller roll and the charger laser must all use
-    // the archetype, otherwise new weapons fall through to a default pose.
-    const poseUsesTable = /switch \(WEAPON_MODEL_GROUP\[this\.currentWeapon\]/.test(src);
-    const rollUsesTable = /WEAPON_MODEL_GROUP\[this\.currentWeapon\] === 'roller'/.test(src);
-    const laserUsesTable = /WEAPON_MODEL_GROUP\[this\.currentWeapon\] === 'charger'/.test(src);
+    // the archetype table, otherwise weapons that previously fell through to
+    // the shooter pose would render without a visible weapon.
+    const poseUsesTable = /switch \(WEAPON_GROUPS\[this\.currentWeapon\]/.test(src);
+    const rollUsesTable = /WEAPON_GROUPS\[this\.currentWeapon\] === 'roller'/.test(src);
+    const laserUsesTable = /WEAPON_GROUPS\[this\.currentWeapon\] === 'charger'/.test(src);
     expect(poseUsesTable, 'arm pose switch ignores the model group table').toBe(true);
     expect(rollUsesTable, 'roller roll ignores the model group table').toBe(true);
     expect(laserUsesTable, 'charger laser ignores the model group table').toBe(true);

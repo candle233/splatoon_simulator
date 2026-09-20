@@ -7,6 +7,7 @@ import {
   PAINT_GRID_RES,
   PINK_COLOR_CSS,
   PaintEvent,
+  PaintSurface,
   Team,
   generateSplatters,
   uvToCanvas,
@@ -32,6 +33,13 @@ export class PaintEngine {
   private mapSize = ARENA_SIZE;
 
   private paintTextureDirty = false;
+
+  /** Per-surface ink coverage: [pinkAlpha, cyanAlpha] in [0, 1]. */
+  private surfacePaints = new Map<string, [number, number]>();
+  /** Canvas texture for vertical surface ink rendering. */
+  readonly surfaceCanvas: HTMLCanvasElement;
+  readonly surfaceCtx: CanvasRenderingContext2D;
+  readonly surfaceTexture: THREE.CanvasTexture;
 
   constructor(canvasRes = CANVAS_RES, gridRes = PAINT_GRID_RES) {
     this.canvasWidth = canvasRes;
@@ -62,6 +70,19 @@ export class PaintEngine {
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.needsUpdate = true;
+
+    // Secondary canvas for vertical surface ink overlays.
+    this.surfaceCanvas = document.createElement('canvas');
+    this.surfaceCanvas.width = 512;
+    this.surfaceCanvas.height = 512;
+    const surfaceCtx = this.surfaceCanvas.getContext('2d', { alpha: true });
+    if (!surfaceCtx) {
+      throw new Error('Failed to create surface canvas context');
+    }
+    this.surfaceCtx = surfaceCtx;
+    this.surfaceTexture = new THREE.CanvasTexture(this.surfaceCanvas);
+    this.surfaceTexture.colorSpace = THREE.SRGBColorSpace;
+    this.surfaceTexture.needsUpdate = true;
   }
 
   private clearCanvas(): void {
@@ -89,6 +110,9 @@ export class PaintEngine {
     this.paintGrid.fill(Team.NEUTRAL);
     this.clearCanvas();
     this.paintTextureDirty = true;
+    this.surfacePaints.clear();
+    this.surfaceCtx.clearRect(0, 0, this.surfaceCanvas.width, this.surfaceCanvas.height);
+    this.surfaceTexture.needsUpdate = true;
   }
 
   /**
@@ -309,6 +333,90 @@ export class PaintEngine {
 
   dispose(): void {
     this.texture.dispose();
+    this.surfaceTexture.dispose();
+  }
+
+  // -------------------------------------------------------------------------
+  // Vertical surface paint
+  // -------------------------------------------------------------------------
+
+  /** Initialize surface paint state from the map definition. */
+  initSurfaces(surfaces: PaintSurface[]): void {
+    for (const s of surfaces) {
+      if (!this.surfacePaints.has(s.id)) {
+        this.surfacePaints.set(s.id, [0, 0]);
+      }
+    }
+  }
+
+  /**
+   * Apply a surface paint update from the server.
+   * Called from the network client when S2C_SURFACE_PAINT events arrive.
+   */
+  applySurfacePaintUpdate(updates: Array<{ id: string; paint: [number, number] }>): void {
+    if (!updates.length) return;
+    for (const u of updates) {
+      const p = this.surfacePaints.get(u.id);
+      if (!p) continue;
+      p[0] = u.paint[0] ?? 0;
+      p[1] = u.paint[1] ?? 0;
+    }
+    this.flushSurfaceTexture();
+  }
+
+  /**
+   * Returns an array of surface rects (in world units) that should be rendered
+   * with the current ink overlay. Each rect is { id, x, y, z, sx, sy, sz }.
+   */
+  getSurfaceRects(surfaces: PaintSurface[]): Array<{ id: string; x: number; y: number; z: number; sx: number; sy: number; sz: number }> {
+    const out: Array<{ id: string; x: number; y: number; z: number; sx: number; sy: number; sz: number }> = [];
+    for (const s of surfaces) {
+      out.push({ id: s.id, x: s.position.x, y: s.position.y, z: s.position.z, sx: s.size.x, sy: s.size.y, sz: s.size.z });
+    }
+    return out;
+  }
+
+  /**
+   * Rebuilds the surface canvas from current paint state.
+   * Called whenever any surface's paint fraction changes.
+   */
+  flushSurfaceTexture(): void {
+    const w = this.surfaceCanvas.width;
+    const h = this.surfaceCanvas.height;
+    this.surfaceCtx.clearRect(0, 0, w, h);
+    for (const [id, [pink, cyan]] of this.surfacePaints) {
+      if (pink > 0.01 || cyan > 0.01) {
+        const grad = this.surfaceCtx.createLinearGradient(0, h, 0, 0);
+        if (cyan > 0.01) {
+          grad.addColorStop(0, `rgba(0,255,255,${cyan * 0.7})`);
+          grad.addColorStop(1, `rgba(0,255,255,${Math.max(0, cyan * 0.7 - 0.15)})`);
+        }
+        if (pink > 0.01) {
+          grad.addColorStop(0, `rgba(255,0,127,${pink * 0.7})`);
+          grad.addColorStop(1, `rgba(255,0,127,${Math.max(0, pink * 0.7 - 0.15)})`);
+        }
+        this.surfaceCtx.fillStyle = grad;
+        // Fill bottom portion proportional to paint coverage (0-1)
+        const coverage = Math.max(pink, cyan);
+        const fillH = Math.ceil(h * coverage);
+        this.surfaceCtx.fillRect(0, h - fillH, w, fillH);
+      }
+    }
+    this.surfaceTexture.needsUpdate = true;
+  }
+
+  /**
+   * Returns the surface canvas texture so Arena can use it for vertical faces.
+   */
+  getSurfaceTexture(): THREE.CanvasTexture {
+    return this.surfaceTexture;
+  }
+
+  /**
+   * Returns the surface canvas for minimap or other debug draws.
+   */
+  getSurfaceCanvas(): HTMLCanvasElement {
+    return this.surfaceCanvas;
   }
 }
 

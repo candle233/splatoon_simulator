@@ -3,6 +3,7 @@ import {
   PaintEvent,
   Team,
   PAINT_GRID_RES,
+  PaintSurface,
   generateSplatters,
   uvToPaintGrid,
   worldToUV
@@ -19,6 +20,8 @@ export class PaintGrid {
   private neutralCount: number;
   /** Active map edge length for world<->UV conversion. */
   private mapSize = 100;
+  /** Per-surface vertical ink coverage: [pinkFraction, cyanFraction]. */
+  private surfacePaints = new Map<string, [number, number]>();
 
   constructor(resolution = PAINT_GRID_RES) {
     this.resolution = resolution;
@@ -42,6 +45,50 @@ export class PaintGrid {
     this.pinkCount = 0;
     this.cyanCount = 0;
     this.neutralCount = this.totalCells;
+    this.surfacePaints.clear();
+  }
+
+  /** Initialize per-surface paint state from the map definition. */
+  initSurfaces(surfaces: PaintSurface[]): void {
+    for (const s of surfaces) {
+      if (!this.surfacePaints.has(s.id)) {
+        this.surfacePaints.set(s.id, [0, 0]);
+      }
+    }
+  }
+
+  /** Returns a snapshot of all paint surface states for broadcast. */
+  getSurfacePaintSnapshots(): PaintSurface[] {
+    const out: PaintSurface[] = [];
+    for (const [id, paint] of this.surfacePaints) {
+      out.push({ id, position: { x: 0, y: 0, z: 0 }, size: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 1, z: 0 }, height: 0, paint });
+    }
+    return out;
+  }
+
+  /**
+   * Returns the vertical paint coverage at a given world position on a named surface.
+   * Returns [0,0] when the surface is unknown.
+   */
+  getSurfacePaint(surfaceId: string): [number, number] {
+    return this.surfacePaints.get(surfaceId) ?? [0, 0];
+  }
+
+  /**
+   * Updates a surface's paint coverage based on how much ground ink is near it.
+   * Called by the weapon simulation when ink lands on/adjacent to a vertical face.
+   */
+  paintSurface(surfaceId: string, team: Team, amount: number): void {
+    const current = this.surfacePaints.get(surfaceId);
+    if (!current) {
+      if (team === Team.PINK) this.surfacePaints.set(surfaceId, [Math.min(1, amount), 0]);
+      else if (team === Team.CYAN) this.surfacePaints.set(surfaceId, [0, Math.min(1, amount)]);
+      return;
+    }
+    const next = [...current] as [number, number];
+    if (team === Team.PINK) next[0] = Math.min(1, Math.max(0, next[0] + amount));
+    else if (team === Team.CYAN) next[1] = Math.min(1, Math.max(0, next[1] + amount));
+    this.surfacePaints.set(surfaceId, next);
   }
 
   getInkAt(worldX: number, worldZ: number): Team {

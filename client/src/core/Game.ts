@@ -20,7 +20,8 @@ import {
   getMapDef,
   getSpawnPosition,
   isChargeWeapon,
-  worldToUV
+  worldToUV,
+  WEAPON_SELECT_DURATION
 } from '@ink/shared';
 import type { GameMode, MapDef, MapId } from '@ink/shared';
 
@@ -33,6 +34,7 @@ import { RemotePlayer } from '../player/RemotePlayer.js';
 import { NetworkClient } from '../network/NetworkClient.js';
 import { SnapshotBuffer, createInterpolatedState } from '../network/SnapshotBuffer.js';
 import { GameOverScreen } from '../ui/GameOverScreen.js';
+import { WeaponSelectScreen } from '../ui/WeaponSelectScreen.js';
 import { HUD } from '../ui/HUD.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
 import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
@@ -74,6 +76,7 @@ export class Game {
   private botController: BotController;
   private botRemotePlayers = new Map<string, RemotePlayer>();
   private gameOverScreen = new GameOverScreen();
+  private weaponSelectScreen: WeaponSelectScreen | null = null;
   private scoreboard = new Scoreboard();
   private lobbyScreen: LobbyScreen;
   private titleScreen: TitleScreen;
@@ -104,6 +107,7 @@ export class Game {
   private isRunning = false;
   private respawnEndsAt = 0;
   private gameOverEndsAt = 0;
+  private weaponSelectEndsAt = 0;
   private lastLocalShotTime = 0;
   private lastDebugUpdateTime = 0;
   private lastRemoteShotSoundAt = 0;
@@ -1263,14 +1267,38 @@ export class Game {
       this.screens.hide(route.id);
     }
 
-    // If restarted
+    // If restarted (GAME_OVER -> WEAPON_SELECT -> COUNTDOWN or GAME_OVER -> COUNTDOWN)
     if (prevPhase === MatchPhase.GAME_OVER && state.phase === MatchPhase.COUNTDOWN) {
       this.gameOverScreen.hide();
+      if (this.weaponSelectScreen) {
+        this.weaponSelectScreen.dispose();
+        this.weaponSelectScreen = null;
+      }
       this.paintEngine.reset();
       this.snapshotBuffer.clear();
       this.totalPaintEventsReceived = 0;
       this.respawnEndsAt = 0;
       this.hud.hideDeathOverlay();
+    } else if (prevPhase !== MatchPhase.WEAPON_SELECT && state.phase === MatchPhase.WEAPON_SELECT) {
+      // Entering weapon select for the first time this round
+      if (!this.weaponSelectScreen) {
+        this.weaponSelectScreen = new WeaponSelectScreen(
+          {
+            onWeaponConfirmed: (weapon) => this.confirmWeapon(weapon),
+            onAutoConfirm: (weapon) => this.confirmWeapon(weapon),
+            onReturnToLobby: () => this.returnToLobby()
+          },
+          this.localPlayer?.weaponType ?? 'shooter',
+          WEAPON_SELECT_DURATION,
+          this.screens
+        );
+      }
+      this.weaponSelectScreen.show();
+      this.weaponSelectEndsAt = Date.now() + WEAPON_SELECT_DURATION * 1000;
+      this.hud.hideDeathOverlay();
+    } else if (state.phase !== MatchPhase.WEAPON_SELECT && this.weaponSelectScreen) {
+      // Left weapon select phase
+      this.weaponSelectScreen.hide();
     }
   }
 
@@ -1290,6 +1318,27 @@ export class Game {
     this.gameOverEndsAt = Date.now() + payload.restartCountdown * 1000;
     this.gameOverScreen.show(payload);
     this.soundManager.playGameOver();
+  }
+
+  /** Player confirmed a weapon selection — tell the server and wait for countdown. */
+  private confirmWeapon(weapon: WeaponType): void {
+    this.networkClient.sendLobbyUpdate({ weaponType: weapon });
+    // The server will transition from WEAPON_SELECT -> COUNTDOWN automatically
+    // after the duration; the client shows the lobby or the match screen when
+    // the phase arrives.  No need to force the transition here.
+    if (this.weaponSelectScreen) {
+      this.weaponSelectScreen.hide();
+    }
+  }
+
+  /** Player clicked "Back to Lobby" during weapon select — return to WAITING state. */
+  private returnToLobby(): void {
+    if (this.weaponSelectScreen) {
+      this.weaponSelectScreen.dispose();
+      this.weaponSelectScreen = null;
+    }
+    // Tell the server we're going back; server will route us to WAITING/lobby
+    this.screens.show('lobby');
   }
 
   private handleDisconnect(): void {

@@ -7,15 +7,25 @@ import {
   PlayerMode,
   SQUID_HEIGHT,
   Team,
+  Vec3,
   clamp,
   computeMovementVelocity,
   enforceSpawnBarrier,
   getMovementSpeed,
   nextPlayerForm
 } from '@ink/shared';
+import type { RampObstacle } from '@ink/shared';
 import { CollisionWorld } from './Collision.js';
 import { PaintGrid } from './PaintGrid.js';
 import { PlayerState } from './PlayerState.js';
+
+const RAMP_LIFT_SPEED = 0.4;
+const RAMP_STICK_MIN_SPEED = 0.5;
+const WALL_RIDE_RANGE = 2.5;
+const WALL_RIDE_LIFT_SPEED = 0.8;
+const WALL_RIDE_FORWARD_SPEED = 0.3;
+const WALL_RIDE_MIN_SPEED = 0.3;
+const MAX_PAINT_UPDATE_PER_TICK = 8;
 
 export class MovementSimulation {
   private collisionWorld: CollisionWorld;
@@ -31,6 +41,25 @@ export class MovementSimulation {
     if (size > 0) {
       this.mapSize = size;
     }
+  }
+
+  /** Return [pinkFraction, cyanFraction] for nearby vertical paint surfaces. */
+  getSurfacePaintUpdates(
+    position: Vec3,
+    maxSurfaces = MAX_PAINT_UPDATE_PER_TICK
+  ): { id: string; paint: [number, number] }[] {
+    const surfaces = this.paintGrid.getSurfacePaintSnapshots();
+    const out: { id: string; paint: [number, number] }[] = [];
+    const range = WALL_RIDE_RANGE;
+    for (const s of surfaces) {
+      const dx = position.x - s.position.x;
+      const dz = position.z - s.position.z;
+      if (dx * dx + dz * dz < range * range) {
+        out.push({ id: s.id, paint: this.paintGrid.getSurfacePaint(s.id) });
+        if (out.length >= maxSurfaces) break;
+      }
+    }
+    return out;
   }
 
   simulatePlayer(
@@ -92,12 +121,41 @@ export class MovementSimulation {
       player.grounded = false;
     }
 
-    // 8. Gravity
+    // 8. Ramp climbing: when on a ramp and moving along its travel direction,
+    //    lift the player so they walk up the ramp naturally.
+    if (player.grounded) {
+      const ramp = this.collisionWorld.getRampAt(player.position);
+      if (ramp) {
+        const horizSpeed = Math.sqrt(player.velocity.x ** 2 + player.velocity.z ** 2);
+        if (horizSpeed >= RAMP_STICK_MIN_SPEED) {
+          const dot = this.rampDirectionDot(ramp, player.velocity.x, player.velocity.z);
+          if (dot > 0) {
+            player.velocity.y = RAMP_LIFT_SPEED * Math.min(dot, 1);
+          }
+        }
+      }
+    }
+
+    // 9. Wall-ride / slow climb: when airborne and adjacent to a climbable surface,
+    //    apply a small upward lift and push toward the wall.
+    if (!player.grounded) {
+      const surf = this.collisionWorld.getClimbableSurfaceAt(player.position, WALL_RIDE_RANGE);
+      if (surf && Math.abs(input.moveZ) >= WALL_RIDE_MIN_SPEED) {
+        const sdx = surf.position.x - player.position.x;
+        const sdz = surf.position.z - player.position.z;
+        const dist = Math.sqrt(sdx * sdx + sdz * sdz) || 1;
+        player.velocity.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
+        player.velocity.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
+        player.velocity.y = Math.min(player.velocity.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+      }
+    }
+
+    // 10. Gravity
     if (!player.grounded) {
       player.velocity.y += GRAVITY * dt;
     }
 
-    // 9. Position Integration & Collision with Cheat Validation
+    // 11. Position Integration & Collision with Cheat Validation
     const radius = PLAYER_RADIUS;
     const height = player.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
 
@@ -124,5 +182,26 @@ export class MovementSimulation {
     player.position = enforceSpawnBarrier(player.position, player.team, this.mapSize * 0.4);
 
     return { diedByEnemyInk: false };
+  }
+
+  /**
+   * Returns the dot product of the ramp's travel direction with the player's
+   * horizontal velocity, normalized to [0,1] when they're aligned.
+   */
+  private rampDirectionDot(ramp: RampObstacle, vx: number, vz: number): number {
+    const horiz = Math.sqrt(vx ** 2 + vz ** 2);
+    if (horiz < 0.001) return 0;
+    const nx = vx / horiz;
+    const nz = vz / horiz;
+    switch (ramp.direction) {
+      case 'north':
+        return -nz;
+      case 'south':
+        return nz;
+      case 'east':
+        return nx;
+      case 'west':
+        return -nx;
+    }
   }
 }

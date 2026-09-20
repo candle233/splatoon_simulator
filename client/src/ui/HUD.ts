@@ -283,16 +283,14 @@ export class HUD {
     const subConfig = SUB_WEAPON_CONFIGS[config.sub];
 
     const weaponThumbMap: Partial<Record<WeaponType, string>> = {
-      shooter: '/assets/weapons/splattershot.jpg',
-      roller: '/assets/weapons/splat_roller.jpg',
-      charger: '/assets/weapons/splat_charger.jpg',
-      slosher: '/assets/weapons/slosher.jpg',
-      // New weapons have no bespoke art yet; reuse the closest silhouette so
-      // the HUD never renders a broken image.
-      sprayer: '/assets/weapons/splattershot.jpg',
-      cannon: '/assets/weapons/slosher.jpg',
-      marksman: '/assets/weapons/splat_charger.jpg',
-      scatter: '/assets/weapons/splattershot.jpg'
+      shooter: '/assets/weapons/shooter.svg',
+      roller: '/assets/weapons/roller.svg',
+      charger: '/assets/weapons/charger.svg',
+      slosher: '/assets/weapons/slosher.svg',
+      sprayer: '/assets/weapons/sprayer.svg',
+      cannon: '/assets/weapons/cannon.svg',
+      marksman: '/assets/weapons/marksman.svg',
+      scatter: '/assets/weapons/scatter.svg'
     };
     const subThumbMap: Record<string, string> = {
       splat_bomb: '/assets/weapons/splat_bomb.jpg',

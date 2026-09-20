@@ -81,6 +81,7 @@ export class GameServer {
   private paintHistory: PaintEvent[] = [];
   private tickPaintEvents: PaintEvent[] = [];
   private tickShotEvents: ShotEventPayload[] = [];
+  private tickSurfacePaintUpdates: { id: string; paint: [number, number] }[] = [];
 
   private readyPlayers: Set<string> = new Set();
   private hostPlayerId?: string;
@@ -209,6 +210,9 @@ export class GameServer {
       paintHistory: this.paintHistory.slice(0, PAINT_HISTORY_CHUNK_SIZE),
       totalPaintEvents: this.paintHistory.length,
       obstacles: this.collisionWorld.getObstacles(),
+      ramps: this.activeMap().ramps,
+      climbableSurfaces: this.activeMap().climbableSurfaces,
+      paintSurfaces: this.activeMap().paintSurfaces,
       lobby: this.getLobbyState(),
       mapId: this.mapId,
       mapSize: this.mapSize
@@ -383,11 +387,15 @@ export class GameServer {
     const mapDef = getMapDef(mapId);
     this.mapSize = mapDef.size;
     this.collisionWorld.setObstacles(mapDef.obstacles, mapDef.size);
+    this.collisionWorld.setRamps(mapDef.ramps);
+    this.collisionWorld.setClimbableSurfaces(mapDef.climbableSurfaces);
+    this.paintGrid.initSurfaces(mapDef.paintSurfaces);
     this.applyMapSize();
     this.paintGrid.reset();
     this.paintHistory = [];
     this.tickPaintEvents = [];
     this.tickShotEvents = [];
+    this.tickSurfacePaintUpdates = [];
     this.weaponSim.reset();
 
     const now = Date.now();
@@ -474,7 +482,9 @@ export class GameServer {
       countdown:
         this.match.phase === MatchPhase.COUNTDOWN
           ? Math.max(0, Math.ceil((this.match.matchStartAt - Date.now()) / 1000))
-          : 0,
+          : this.match.phase === MatchPhase.WEAPON_SELECT
+            ? Math.max(0, Math.ceil((this.match.phaseEndsAt - Date.now()) / 1000))
+            : 0,
       inMatch: this.match.phase === MatchPhase.PLAYING || this.match.phase === MatchPhase.COUNTDOWN,
       mode: this.match.mode,
       mapId: this.mapId
@@ -525,6 +535,7 @@ export class GameServer {
     this.paintHistory = [];
     this.tickPaintEvents = [];
     this.tickShotEvents = [];
+    this.tickSurfacePaintUpdates = [];
     this.latestInputs.clear();
     this.playerLastInputAt.clear();
     this.readyPlayers.clear();
@@ -760,6 +771,25 @@ export class GameServer {
     const lastProcessedInputSeq: Record<string, number> = {};
     for (const player of allPlayersList) {
       lastProcessedInputSeq[player.id] = player.lastProcessedInputSeq;
+    }
+
+    // Compute surface paint updates for any player adjacent to a paint surface
+    for (const p of allPlayersList) {
+      if (!p.alive) continue;
+      const updates = this.movementSim.getSurfacePaintUpdates(p.position);
+      for (const u of updates) {
+        // Deduplicate by surface id
+        const existing = this.tickSurfacePaintUpdates.findIndex((x) => x.id === u.id);
+        if (existing >= 0) this.tickSurfacePaintUpdates[existing] = u;
+        else this.tickSurfacePaintUpdates.push(u);
+      }
+    }
+
+    // Flush any accumulated surface paint updates from this tick
+    const pendingSurfaceUpdates = this.tickSurfacePaintUpdates;
+    if (pendingSurfaceUpdates.length > 0) {
+      this.io.emit(PROTOCOL_EVENTS.S2C_SURFACE_PAINT, pendingSurfaceUpdates);
+      this.tickSurfacePaintUpdates = [];
     }
 
     const snapshotPayload: SnapshotPayload = {

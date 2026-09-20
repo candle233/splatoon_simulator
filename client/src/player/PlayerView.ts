@@ -241,17 +241,15 @@ const scratchPos = new THREE.Vector3();
 const scratchScale = new THREE.Vector3();
 
 /**
- * Which built model group each weapon uses, and therefore which arm pose, roll
- * animation and laser sight apply. Only four models exist; newer weapons map to
- * the archetype they play like, so adding a weapon never leaves the fighter
- * empty-handed or stuck in a default pose.
+ * Direct per-weapon-type group mapping. Each of the eight weapon types now has
+ * its own dedicated visual model so players can tell them apart at a glance.
  */
-const WEAPON_MODEL_GROUP: Record<WeaponType, 'shooter' | 'roller' | 'charger' | 'slosher'> = {
+const WEAPON_GROUPS: Record<WeaponType, string> = {
   shooter: 'shooter',
-  sprayer: 'shooter',
-  scatter: 'shooter',
-  cannon: 'slosher',
-  marksman: 'charger',
+  sprayer: 'sprayer',
+  scatter: 'scatter',
+  cannon: 'cannon',
+  marksman: 'marksman',
   roller: 'roller',
   charger: 'charger',
   slosher: 'slosher'
@@ -362,6 +360,10 @@ export class PlayerView {
   private rollerGroup = new THREE.Group();
   private chargerGroup = new THREE.Group();
   private slosherGroup = new THREE.Group();
+  private sprayerGroup = new THREE.Group();
+  private cannonGroup = new THREE.Group();
+  private marksmanGroup = new THREE.Group();
+  private scatterGroup = new THREE.Group();
   private muzzleFlashMesh!: THREE.Mesh;
   private rollerCylinderMesh?: THREE.Mesh;
   private chargerLaserMesh?: THREE.Mesh;
@@ -997,6 +999,132 @@ export class PlayerView {
     this.slosherGroup.visible = false;
     this.weaponAnchor.add(this.slosherGroup);
 
+    // 2.5 Sprayer — compact mist gun with top tank
+    const sprayerBody = new THREE.Mesh(box(0.13, 0.1, 0.32), P.mats.soft);
+    this.sprayerGroup.add(sprayerBody);
+    const sprayerBarrel = new THREE.Mesh(cyl(0.03, 0.03, 0.22, 8), P.mats.dark);
+    sprayerBarrel.rotation.z = Math.PI / 2;
+    sprayerBarrel.position.z = -0.25;
+    this.sprayerGroup.add(sprayerBarrel);
+    const sprayerNozzle = new THREE.Mesh(cyl(0.02, 0.035, 0.04, 8), P.mats.trim);
+    sprayerNozzle.rotation.z = Math.PI / 2;
+    sprayerNozzle.position.z = -0.39;
+    this.sprayerGroup.add(sprayerNozzle);
+    const sprayerTank = new THREE.Mesh(cyl(0.07, 0.07, 0.18, 10), P.glass);
+    sprayerTank.position.set(0, 0.14, -0.02);
+    this.sprayerGroup.add(sprayerTank);
+    const sprayerTankCap = new THREE.Mesh(cyl(0.075, 0.075, 0.03, 10), P.mats.dark);
+    sprayerTankCap.position.set(0, 0.245, -0.02);
+    this.sprayerGroup.add(sprayerTankCap);
+    const sprayerGrip = new THREE.Mesh(box(0.07, 0.18, 0.09), P.mats.dark);
+    sprayerGrip.position.set(0, -0.15, 0.04);
+    this.sprayerGroup.add(sprayerGrip);
+    this.sprayerGroup.visible = false;
+    this.weaponAnchor.add(this.sprayerGroup);
+
+    // 2.6 Cannon — heavy round mortar body with spring recoil housing
+    const cannonBody = new THREE.Mesh(sph(0.2, 16, 12, Math.PI), P.mats.team);
+    cannonBody.position.set(0, -0.05, 0.05);
+    this.cannonGroup.add(cannonBody);
+    const cannonBarrel = new THREE.Mesh(cyl(0.06, 0.07, 0.7, 10), P.mats.dark);
+    cannonBarrel.rotation.z = Math.PI / 2;
+    cannonBarrel.position.set(0, 0.15, -0.35);
+    this.cannonGroup.add(cannonBarrel);
+    const cannonMuzzle = new THREE.Mesh(cyl(0.08, 0.06, 0.08, 10), P.mats.soft);
+    cannonMuzzle.rotation.z = Math.PI / 2;
+    cannonMuzzle.position.set(0, 0.15, -0.75);
+    this.cannonGroup.add(cannonMuzzle);
+    const cannonSpring = new THREE.Mesh(cyl(0.05, 0.05, 0.18, 8), P.mats.dark);
+    cannonSpring.rotation.z = Math.PI / 2;
+    cannonSpring.position.set(0, -0.12, -0.15);
+    this.cannonGroup.add(cannonSpring);
+    for (let i = 0; i < 4; i++) {
+      const coil = new THREE.Mesh(torus(0.055, 0.008, 4, 12), P.mats.soft);
+      coil.position.set(0, -0.12 + i * 0.04, -0.22 - i * 0.01);
+      this.cannonGroup.add(coil);
+    }
+    const cannonStock = new THREE.Mesh(box(0.08, 0.22, 0.1), P.mats.dark);
+    cannonStock.position.set(0, -0.2, 0.15);
+    cannonStock.rotation.x = -0.15;
+    this.cannonGroup.add(cannonStock);
+    this.cannonGroup.visible = false;
+    this.weaponAnchor.add(this.cannonGroup);
+
+    // 2.7 Marksman — slender semi-auto rifle with scope and bipod
+    const marksmanRec = new THREE.Mesh(box(0.085, 0.12, 0.32), P.mats.dark);
+    this.marksmanGroup.add(marksmanRec);
+    const marksmanBarrel = new THREE.Mesh(cyl(0.03, 0.035, 0.9, 10), P.mats.soft);
+    marksmanBarrel.rotation.z = Math.PI / 2;
+    marksmanBarrel.position.z = -0.52;
+    this.marksmanGroup.add(marksmanBarrel);
+    const marksmanMuzzle = new THREE.Mesh(cyl(0.038, 0.03, 0.06, 10), P.mats.dark);
+    marksmanMuzzle.rotation.z = Math.PI / 2;
+    marksmanMuzzle.position.z = -0.98;
+    this.marksmanGroup.add(marksmanMuzzle);
+    const marksmanScope = new THREE.Mesh(cyl(0.035, 0.035, 0.2, 10), P.mats.soft);
+    marksmanScope.rotation.z = Math.PI / 2;
+    marksmanScope.position.set(0, 0.1, -0.08);
+    this.marksmanGroup.add(marksmanScope);
+    for (const sz of [-0.12, 0.04]) {
+      const ring = new THREE.Mesh(torus(0.04, 0.008, 6, 12, Math.PI), P.mats.dark);
+      ring.position.set(0, 0.1, sz);
+      this.marksmanGroup.add(ring);
+    }
+    const marksmanStock = new THREE.Mesh(box(0.04, 0.14, 0.26), P.mats.dark);
+    marksmanStock.position.set(0, -0.01, 0.2);
+    this.marksmanGroup.add(marksmanStock);
+    const marksmanPad = new THREE.Mesh(box(0.07, 0.12, 0.04), P.mats.soft);
+    marksmanPad.position.set(0, -0.01, 0.35);
+    this.marksmanGroup.add(marksmanPad);
+    const marksmanGrip = new THREE.Mesh(box(0.06, 0.16, 0.07), P.mats.dark);
+    marksmanGrip.position.set(0, -0.1, 0.06);
+    marksmanGrip.rotation.x = 0.2;
+    this.marksmanGroup.add(marksmanGrip);
+    const marksmanScopeLens = new THREE.Mesh(cyl(0.038, 0.038, 0.02, 10), P.visor);
+    marksmanScopeLens.rotation.x = Math.PI / 2;
+    marksmanScopeLens.position.set(0, 0.1, 0.01);
+    this.marksmanGroup.add(marksmanScopeLens);
+    const marksmanBipod = new THREE.Mesh(box(0.02, 0.02, 0.2), P.mats.dark);
+    marksmanBipod.position.set(0, -0.08, -0.5);
+    this.marksmanGroup.add(marksmanBipod);
+    this.marksmanGroup.visible = false;
+    this.weaponAnchor.add(this.marksmanGroup);
+
+    // 2.8 Scatter — double-barrel pump shotgun
+    const scatterRec = new THREE.Mesh(box(0.12, 0.1, 0.2), P.mats.dark);
+    this.scatterGroup.add(scatterRec);
+    const scatterBarrels = new THREE.Group();
+    for (const xOff of [-0.03, 0.03]) {
+      const b = new THREE.Mesh(cyl(0.04, 0.04, 0.45, 10), P.mats.dark);
+      b.rotation.z = Math.PI / 2;
+      b.position.x = xOff;
+      scatterBarrels.add(b);
+    }
+    scatterBarrels.position.z = -0.225;
+    this.scatterGroup.add(scatterBarrels);
+    const scatterUnderRib = new THREE.Mesh(box(0.08, 0.03, 0.28), P.mats.soft);
+    scatterUnderRib.position.set(0, -0.05, -0.2);
+    this.scatterGroup.add(scatterUnderRib);
+    const scatterPump = new THREE.Mesh(box(0.07, 0.06, 0.12), P.mats.dark);
+    scatterPump.position.set(0, -0.06, -0.1);
+    this.scatterGroup.add(scatterPump);
+    const scatterStock = new THREE.Mesh(box(0.09, 0.14, 0.22), P.mats.dark);
+    scatterStock.position.set(0, -0.01, 0.2);
+    this.scatterGroup.add(scatterStock);
+    const scatterPad = new THREE.Mesh(box(0.1, 0.15, 0.03), P.mats.soft);
+    scatterPad.position.set(0, -0.01, 0.33);
+    this.scatterGroup.add(scatterPad);
+    const scatterGrip = new THREE.Mesh(box(0.06, 0.16, 0.07), P.mats.dark);
+    scatterGrip.position.set(0, -0.1, 0.04);
+    scatterGrip.rotation.x = 0.15;
+    this.scatterGroup.add(scatterGrip);
+    const scatterMag = new THREE.Mesh(cyl(0.025, 0.025, 0.3, 8), P.mats.dark);
+    scatterMag.rotation.z = Math.PI / 2;
+    scatterMag.position.set(0, -0.08, -0.18);
+    this.scatterGroup.add(scatterMag);
+    this.scatterGroup.visible = false;
+    this.weaponAnchor.add(this.scatterGroup);
+
     // Muzzle flash
     const flashGeo = new THREE.OctahedronGeometry(0.18);
     this.geometries.push(flashGeo);
@@ -1208,16 +1336,21 @@ export class PlayerView {
    */
   setWeaponType(type: WeaponType): void {
     this.currentWeapon = type;
-    const model = WEAPON_MODEL_GROUP[type] ?? 'shooter';
-    this.shooterGroup.visible = model === 'shooter';
-    this.rollerGroup.visible = model === 'roller';
-    this.chargerGroup.visible = model === 'charger';
-    this.slosherGroup.visible = model === 'slosher';
+    const key = WEAPON_GROUPS[type] ?? 'shooter';
+    this.shooterGroup.visible   = key === 'shooter';
+    this.rollerGroup.visible    = key === 'roller';
+    this.chargerGroup.visible   = key === 'charger';
+    this.slosherGroup.visible   = key === 'slosher';
+    this.sprayerGroup.visible   = key === 'sprayer';
+    this.cannonGroup.visible    = key === 'cannon';
+    this.marksmanGroup.visible  = key === 'marksman';
+    this.scatterGroup.visible   = key === 'scatter';
   }
 
   triggerRecoil(): void {
     this.recoilOffset = -0.18;
     this.flashTimer = 0.07;
+    this.muzzleFlashMesh.position.z = -0.6 - this.getMuzzleZOffset(this.currentWeapon);
     this.muzzleFlashMesh.visible = true;
   }
 
@@ -1339,7 +1472,22 @@ export class PlayerView {
    * Callers must ensure the world matrix is current (matrixWorldAutoUpdate).
    */
   getMuzzleWorldPosition(target: THREE.Vector3): THREE.Vector3 {
-    return target.set(0, 0, -0.6).applyMatrix4(this.weaponAnchor.matrixWorld);
+    const offsetZ = -0.6 - this.getMuzzleZOffset(this.currentWeapon);
+    return target.set(0, 0, offsetZ).applyMatrix4(this.weaponAnchor.matrixWorld);
+  }
+
+  private getMuzzleZOffset(type: WeaponType): number {
+    switch (type) {
+      case 'shooter':  return 0.05;
+      case 'roller':   return 0.15;
+      case 'charger':  return 0.65;
+      case 'slosher':  return 0.25;
+      case 'sprayer':  return 0.1;
+      case 'cannon':   return 0.35;
+      case 'marksman': return 0.35;
+      case 'scatter':  return 0.1;
+      default:         return 0.05;
+    }
   }
 
   // ========================================================================
@@ -1367,8 +1515,10 @@ export class PlayerView {
     let leftElbow = -0.25;
     let rightElbow = -0.35;
 
-    switch (WEAPON_MODEL_GROUP[this.currentWeapon] ?? 'shooter') {
+    switch (WEAPON_GROUPS[this.currentWeapon] ?? 'shooter') {
       case 'shooter':
+      case 'sprayer':
+      case 'scatter':
         baseRightX = -0.7;
         baseRightY = -0.15;
         rightElbow = -0.5;
@@ -1388,6 +1538,7 @@ export class PlayerView {
         leftElbow = -0.5;
         break;
       case 'charger':
+      case 'marksman':
         baseRightX = -0.85;
         baseRightY = -0.1;
         rightElbow = -0.55;
@@ -1397,6 +1548,7 @@ export class PlayerView {
         leftElbow = -0.75;
         break;
       case 'slosher':
+      case 'cannon':
         baseRightX = -0.55;
         baseRightY = -0.1;
         rightElbow = -0.35;
@@ -1462,7 +1614,7 @@ export class PlayerView {
     }
 
     // Physically roll the Ink Roller cylinder
-    if (WEAPON_MODEL_GROUP[this.currentWeapon] === 'roller' && this.rollerCylinderMesh && isGrounded && speed > 0.5) {
+    if (WEAPON_GROUPS[this.currentWeapon] === 'roller' && this.rollerCylinderMesh && isGrounded && speed > 0.5) {
       this.rollerCylinderMesh.rotation.x += speed * dt * 5.0;
     }
 
@@ -1614,7 +1766,7 @@ export class PlayerView {
     // Charger laser sight visibility
     if (this.chargerLaserMesh) {
       this.chargerLaserMesh.visible =
-        WEAPON_MODEL_GROUP[this.currentWeapon] === 'charger' && this.currentMode === PlayerMode.HUMANOID;
+        WEAPON_GROUPS[this.currentWeapon] === 'charger' && this.currentMode === PlayerMode.HUMANOID;
     }
   }
 

@@ -381,6 +381,26 @@
         </div>
       </div>
 
+      <!-- Weapon Selection Screen (shown between matches during WEAPON_SELECT phase) -->
+      <div id="weapon-select-screen" class="screen-overlay hidden">
+        <div class="weapon-select-card-wrapper">
+          <h2 id="weapon-select-title" data-i18n="weaponSelect.title">SELECT YOUR WEAPON</h2>
+          <p id="weapon-select-instructions" class="weapon-select-instructions" data-i18n="weaponSelect.instructions">Press 1-8 or click a weapon to choose</p>
+          <div class="weapon-select-grid"></div>
+          <div class="weapon-select-detail">
+            <span class="weapon-select-selected-label" data-i18n="weaponSelect.selected">Selected:</span>
+            <span id="weapon-select-selected-name">Ink Blaster</span>
+            <span id="weapon-select-sub" class="weapon-select-sub"></span>
+            <span id="weapon-select-special" class="weapon-select-special"></span>
+          </div>
+          <div class="weapon-select-actions">
+            <span id="weapon-select-remaining" class="weapon-select-remaining">10s</span>
+            <button id="btn-weapon-confirm" class="btn-play"><span id="btn-weapon-confirm-label" data-i18n="weaponSelect.confirm">CONFIRM</span></button>
+            <button id="btn-weapon-lobby" class="btn-secondary"><span id="btn-weapon-lobby-label" data-i18n="weaponSelect.backToLobby">BACK TO LOBBY</span></button>
+          </div>
+        </div>
+      </div>
+
       <!-- Pointer Lock Starter Prompt -->
       <div id="pointer-lock-prompt" class="screen-overlay hidden">
         <div class="prompt-box">

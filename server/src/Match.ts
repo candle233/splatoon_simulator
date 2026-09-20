@@ -8,7 +8,8 @@ import {
   MatchPhase,
   MatchStateSnapshot,
   MODE_CONFIGS,
-  Team
+  Team,
+  WEAPON_SELECT_DURATION
 } from '@ink/shared';
 import type { GameMode, GameOverPayload, MapId, ZoneRect } from '@ink/shared';
 import { PaintGrid } from './PaintGrid.js';
@@ -214,6 +215,14 @@ export class Match {
 
       case MatchPhase.GAME_OVER: {
         if (now >= this.phaseEndsAt) {
+          this.enterWeaponSelect(now);
+          phaseChanged = true;
+        }
+        break;
+      }
+
+      case MatchPhase.WEAPON_SELECT: {
+        if (now >= this.phaseEndsAt) {
           this.restartMatch(now);
           phaseChanged = true;
         }
@@ -301,6 +310,12 @@ export class Match {
       this.onResetCallback();
     }
     this.startCountdown(now);
+  }
+
+  /** Transition from GAME_OVER into the weapon loadout selection screen. */
+  enterWeaponSelect(now: number = Date.now()): void {
+    this.phase = MatchPhase.WEAPON_SELECT;
+    this.phaseEndsAt = now + WEAPON_SELECT_DURATION * 1000;
   }
 
   getSnapshot(now: number = Date.now()): MatchStateSnapshot {

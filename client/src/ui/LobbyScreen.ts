@@ -15,6 +15,7 @@ import {
 import type { MapId, SkillId, WeaponType } from '@ink/shared';
 import { applyI18n, getLang, langLabel, locDesc, locName, setLang, t, LANGS } from '../i18n.js';
 import { renderCodex } from './CodexData.js';
+import { Lobby3D } from './3DLobby.js';
 import type { ScreenManager } from './ScreenManager.js';
 
 export interface LobbyScreenCallbacks {
@@ -38,14 +39,14 @@ const MAX_SKILLS = 3;
  * silhouette; the card falls back to a tinted plate if the file is missing.
  */
 const WEAPON_THUMBS: Record<string, string> = {
-  shooter: '/assets/weapons/splattershot.jpg',
-  roller: '/assets/weapons/splat_roller.jpg',
-  charger: '/assets/weapons/splat_charger.jpg',
-  slosher: '/assets/weapons/slosher.jpg',
-  sprayer: '/assets/weapons/splattershot.jpg',
-  cannon: '/assets/weapons/splat_roller.jpg',
-  marksman: '/assets/weapons/splat_charger.jpg',
-  scatter: '/assets/weapons/slosher.jpg'
+  shooter: '/assets/weapons/shooter.svg',
+  roller: '/assets/weapons/roller.svg',
+  charger: '/assets/weapons/charger.svg',
+  slosher: '/assets/weapons/slosher.svg',
+  sprayer: '/assets/weapons/sprayer.svg',
+  cannon: '/assets/weapons/cannon.svg',
+  marksman: '/assets/weapons/marksman.svg',
+  scatter: '/assets/weapons/scatter.svg'
 };
 
 export class LobbyScreen {
@@ -71,6 +72,10 @@ export class LobbyScreen {
   private avatarFileInput: HTMLInputElement | null;
   private langSwitch: HTMLElement | null;
   private backBtn: HTMLButtonElement | null;
+
+  /** 3D Splatoon-style lobby scene rendered behind the DOM overlay. */
+  private lobby3D?: Lobby3D;
+  private canvasContainer?: HTMLElement;
 
   private callbacks: LobbyScreenCallbacks;
   private screens?: ScreenManager;
@@ -678,6 +683,11 @@ export class LobbyScreen {
       this.playerCountEl.textContent = `${state.players.length}`;
     }
 
+    // Update 3D camera zoom based on player count
+    if (this.lobby3D) {
+      this.lobby3D.setPlayerCount(state.players.length);
+    }
+
     if (this.countdownEl) {
       if (state.countdown > 0) {
         this.countdownEl.classList.remove('hidden');
@@ -775,9 +785,14 @@ export class LobbyScreen {
   show(): void {
     if (this.screens) this.screens.show('lobby');
     else this.container?.classList.remove('hidden');
+
+    // Initialise the 3D lobby background on first show
+    this.ensureLobby3D();
   }
 
   hide(): void {
+    // Stop the 3D scene so we don't waste GPU on a hidden screen
+    this.stopLobby3D();
     if (this.screens) this.screens.hide('lobby');
     else this.container?.classList.add('hidden');
   }
@@ -792,5 +807,73 @@ export class LobbyScreen {
     else this.container?.classList.remove('hidden');
     renderCodex();
     document.getElementById('codex-modal')?.classList.remove('hidden');
+  }
+
+  // -------------------------------------------------------------------
+  // 3D lobby scene management
+  // -------------------------------------------------------------------
+
+  /**
+   * Lazily creates the 3D Splatoon-style lobby scene and inserts a canvas
+   * container behind the DOM lobby-card overlay.
+   */
+  private ensureLobby3D(): void {
+    if (this.lobby3D) return;
+    const host = this.container;
+    if (!host) return;
+
+    this.canvasContainer = document.createElement('div');
+    this.canvasContainer.id = 'lobby-3d-canvas-container';
+    this.canvasContainer.style.cssText =
+      'position:absolute;inset:0;z-index:0;overflow:hidden;';
+    host.insertBefore(this.canvasContainer, host.firstChild);
+
+    this.lobby3D = new Lobby3D({
+      container: this.canvasContainer,
+      teamPinkHex: 0xff007f,
+      teamCyanHex: 0x00ffff
+    });
+
+    this.addSquidToggle();
+
+    // Pass current player count so the camera zooms appropriately
+    if (this.lastLobbyState) {
+      this.lobby3D.setPlayerCount(this.lastLobbyState.players.length);
+    }
+  }
+
+  /** Stops and removes the 3D scene (called from hide()). */
+  private stopLobby3D(): void {
+    this.lobby3D?.dispose();
+    this.lobby3D = undefined;
+    this.canvasContainer?.remove();
+    this.canvasContainer = undefined;
+  }
+
+  /** Inserts the squid / humanoid form toggle button into the lobby header. */
+  private addSquidToggle(): void {
+    const existing = this.container?.querySelector<HTMLButtonElement>('#btn-squid-toggle');
+    if (existing) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'btn-squid-toggle';
+    btn.className = 'btn-codex';
+    btn.innerHTML =
+      '<span role="img" aria-label="squid">\u{1F991}</span> <span data-i18n="lobby.squidToggle">Squid Form</span>';
+    btn.addEventListener('click', (): void => {
+      this.lobby3D?.toggleSquidMode();
+      const label = btn.querySelector('[data-i18n]');
+      if (label) {
+        label.textContent = this.lobby3D?.squidMode ? 'Humanoid Form' : 'Squid Form';
+      }
+    });
+
+    const headerRight = this.container?.querySelector<HTMLElement>('.header-right');
+    if (headerRight) {
+      headerRight.insertBefore(btn, headerRight.firstChild);
+    } else {
+      this.container?.appendChild(btn);
+    }
+    applyI18n(btn);
   }
 }

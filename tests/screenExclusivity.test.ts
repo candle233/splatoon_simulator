@@ -141,6 +141,18 @@ describe('screenRouteForPhase: match phase to screen routing', () => {
     });
   });
 
+  it('shows the weapon select screen during WEAPON_SELECT and hides menus', () => {
+    expect(screenRouteForPhase(MatchPhase.WEAPON_SELECT, MatchPhase.GAME_OVER, menuHidden)).toEqual({
+      kind: 'show',
+      id: 'weaponSelect'
+    });
+    // Even with a menu visible, weapon select owns the screen
+    expect(screenRouteForPhase(MatchPhase.WEAPON_SELECT, MatchPhase.PLAYING, menuVisible)).toEqual({
+      kind: 'show',
+      id: 'weaponSelect'
+    });
+  });
+
   it('returns to the lobby when a match ends and the phase resets to WAITING', () => {
     // This is the refresh-mid-match path: the lobby must come back as the one
     // visible screen, never layered under the title.

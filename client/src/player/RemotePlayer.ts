@@ -1,16 +1,26 @@
 import { PlayerMode, Team, WeaponType } from '@ink/shared';
 import { InterpolatedPlayerState } from '../network/SnapshotBuffer.js';
 import { PlayerView } from './PlayerView.js';
+import * as THREE from 'three';
 
 export class RemotePlayer {
   readonly id: string;
   readonly team: Team;
   readonly view: PlayerView;
+  /** Optional alternate character model pair (kept for future standalone paths). */
+  readonly characterModel: { inkling: THREE.Group; squid: THREE.Group } | null;
 
   private lastPos = { x: 0, y: 0, z: 0 };
   private lastTime = 0;
   private _alive: boolean = true;
   private _specialMeter: number = 0;
+  private _squidForm: boolean = false;
+  private _transitionTimer: number = 0;
+
+  /** Current visible form: true = squid, false = humanoid. */
+  get isSquidForm(): boolean {
+    return this._squidForm;
+  }
 
   get position() {
     return this.view.group.position;
@@ -41,6 +51,8 @@ export class RemotePlayer {
     this.team = team;
     this.view = new PlayerView(team);
     this.view.setWeaponType(weaponType);
+    // characterModel is null when using PlayerView; kept for future standalone paths.
+    this.characterModel = null;
   }
 
   update(state: InterpolatedPlayerState, time: number): void {
@@ -76,6 +88,33 @@ export class RemotePlayer {
 
   triggerRecoil(): void {
     this.view.triggerRecoil();
+  }
+
+  /**
+   * Switches the character between humanoid and squid form with a scale-based
+   * transition animation. Delegates to the view's setMode for the authoritative
+   * visual.
+   *
+   * @param enabled - true to enter squid form, false to return to humanoid
+   */
+  setSquidForm(enabled: boolean): void {
+    this._squidForm = enabled;
+    this._transitionTimer = 0.3; // 0.3s transition
+    if (enabled) {
+      this.view.setMode(PlayerMode.SUBMERGED);
+    } else {
+      this.view.setMode(PlayerMode.HUMANOID);
+    }
+  }
+
+  /**
+   * Advances any in-progress form transition. Call from the render loop.
+   * @returns true when the transition is complete.
+   */
+  tickTransition(dt: number): boolean {
+    if (this._transitionTimer <= 0) return true;
+    this._transitionTimer = Math.max(0, this._transitionTimer - dt);
+    return this._transitionTimer <= 0;
   }
 
   dispose(): void {

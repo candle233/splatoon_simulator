@@ -1,8 +1,17 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { BoxObstacle, Team, getMapDef } from '@ink/shared';
+import { BoxObstacle, ClimbableSurface, PaintSurface, Team, getMapDef } from '@ink/shared';
 import type { MapDef, MapId } from '@ink/shared';
 import { PaintEngine } from './PaintEngine.js';
+import {
+  createGroundTexture,
+  createWallTexture,
+  createPaintBlendTexture,
+  createMapDressing,
+  createTexturedGroundMaterial,
+  createTexturedWallMaterial,
+  createPuddleMaterial
+} from '../rendering/TexturedMap.js';
 
 const DEFAULT_MAP = getMapDef();
 
@@ -145,9 +154,27 @@ export class Arena {
   private padMats: Partial<Record<Team, THREE.MeshStandardMaterial>> = {};
   private domeMats: Partial<Record<Team, THREE.MeshStandardMaterial>> = {};
   private obstacleMeshes: THREE.Mesh[] = [];
+  /** Paintable vertical faces rendered with the surface ink texture. */
+  private paintSurfaceMeshes: THREE.InstancedMesh[] = [];
+  /** Ramp geometry meshes for visual elevation indication. */
+  private rampMeshes: THREE.Mesh[] = [];
   private detailGeometries: THREE.BufferGeometry[] = [];
   private detailMaterials: THREE.Material[] = [];
   private canvasTextures: THREE.CanvasTexture[] = [];
+  /** Procedural ground texture atlas (generated per map). */
+  private groundTexAtlas?: { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture };
+  /** Procedural wall texture (generated per map). */
+  private wallTexAtlas?: THREE.CanvasTexture;
+  /** Paint blend overlay texture. */
+  private paintBlendTex?: THREE.CanvasTexture;
+  /** Map-specific dressing overlay textures. */
+  private dressingAtlas?: { groundOverlay: THREE.CanvasTexture; wallOverlay: THREE.CanvasTexture };
+  /** Ambient particle systems per map (steam, spores). */
+  private ambientParticles?: THREE.InstancedMesh;
+  private ambientParticleBase?: Float32Array;
+  private ambientParticlePhase?: Float32Array;
+  /** Puddle meshes for reflective wet surfaces. */
+  private puddleMeshes: THREE.Mesh[] = [];
 
   private skyDome?: THREE.Mesh;
   private motes?: THREE.InstancedMesh;
@@ -178,17 +205,11 @@ export class Arena {
     // world<->UV extent the ink sampler has to use.
     this.paintEngine.setMapSize(mapDef.size);
 
+    // Generate procedural texture atlases for this map
+    this.generateTextureAtlases(mapDef);
+
     const groundGeo = this.buildGroundGeometry(mapDef.size);
-    const groundMat = new THREE.MeshStandardMaterial({
-      map: this.paintEngine.texture,
-      roughness: 0.45,
-      metalness: 0.12,
-      // Push the paintable plane behind the decorative overlays so the thin
-      // floor decals never z-fight with it.
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
-    });
+    const groundMat = this.buildTexturedGroundMaterial(mapDef);
 
     this.groundMesh = new THREE.Mesh(groundGeo, groundMat);
     this.groundMesh.receiveShadow = true;
@@ -204,15 +225,11 @@ export class Arena {
     this.mapDef = mapDef;
     this.paintEngine.setMapSize(mapDef.size);
 
+    this.generateTextureAtlases(mapDef);
+
     const groundGeo = this.buildGroundGeometry(mapDef.size);
-    const groundMat = new THREE.MeshStandardMaterial({
-      map: this.paintEngine.texture,
-      roughness: 0.45,
-      metalness: 0.12,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
-    });
+    const groundMat = this.buildTexturedGroundMaterial(mapDef);
+
     this.groundMesh = new THREE.Mesh(groundGeo, groundMat);
     this.groundMesh.receiveShadow = true;
     this.group.add(this.groundMesh);
@@ -239,6 +256,8 @@ export class Arena {
     this.buildMapProps();
     this.buildAmbientLife();
     this.buildZoneMarker();
+    this.buildPaintSurfaces(this.mapDef.paintSurfaces);
+    this.buildRamps(this.mapDef.ramps);
   }
 
   /** Removes every child and releases every tracked GPU resource exactly once. */
@@ -257,6 +276,8 @@ export class Arena {
     this.detailMaterials = [];
     this.canvasTextures = [];
     this.obstacleMeshes = [];
+    this.paintSurfaceMeshes = [];
+    this.rampMeshes = [];
     this.emblemGeo = undefined;
     this.padMats = {};
     this.domeMats = {};
@@ -268,6 +289,14 @@ export class Arena {
     this.motes = undefined;
     this.moteBase = undefined;
     this.motePhase = undefined;
+    this.puddleMeshes = [];
+    this.ambientParticles = undefined;
+    this.ambientParticleBase = undefined;
+    this.ambientParticlePhase = undefined;
+    this.groundTexAtlas = undefined;
+    this.wallTexAtlas = undefined;
+    this.paintBlendTex = undefined;
+    this.dressingAtlas = undefined;
 
     this.groundMesh.geometry.dispose();
     (this.groundMesh.material as THREE.Material).dispose();
@@ -286,6 +315,283 @@ export class Arena {
   private trackTex<T extends THREE.CanvasTexture>(tex: T): T {
     this.canvasTextures.push(tex);
     return tex;
+  }
+
+  // -------------------------------------------------------------------------
+  // Texture atlas generation
+  // -------------------------------------------------------------------------
+
+  /** Generates all procedural texture atlases for the current map. */
+  private generateTextureAtlases(mapDef: MapDef): void {
+    const theme = mapDef.theme;
+
+    // Ground texture (asphalt/concrete)
+    const groundAtlas = createGroundTexture(theme.groundBase, theme.groundAlt, mapDef.size);
+    this.groundTexAtlas = this.trackTexAtlas(groundAtlas);
+
+    // Wall texture (corrugated metal)
+    this.wallTexAtlas = this.trackTex(createWallTexture(theme.wallColor, mapDef.size + 7));
+
+    // Paint blend texture
+    this.paintBlendTex = this.trackTex(createPaintBlendTexture(theme.accentA, theme.accentB, mapDef.size + 13));
+
+    // Map-specific dressing atlas
+    const dressing = createMapDressing(mapDef.id, {
+      groundBase: theme.groundBase,
+      groundAlt: theme.groundAlt,
+      wallColor: theme.wallColor,
+      accentA: theme.accentA,
+      accentB: theme.accentB
+    });
+    this.dressingAtlas = {
+      groundOverlay: this.trackTex(dressing.groundOverlay),
+      wallOverlay: this.trackTex(dressing.wallOverlay)
+    };
+
+    // Build dressing props and ambient particles
+    this.buildDressingProps(dressing.propsDesc);
+    this.buildAmbientParticles(mapDef);
+  }
+
+  /** Track a texture atlas (both map and normal map are tracked). */
+  private trackTexAtlas(atlas: { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture }): { map: THREE.CanvasTexture; normalMap: THREE.CanvasTexture } {
+    this.trackTex(atlas.map);
+    this.trackTex(atlas.normalMap);
+    return atlas;
+  }
+
+  /** Builds the textured ground material with polygon offset to stay behind decals. */
+  private buildTexturedGroundMaterial(mapDef: MapDef): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({
+      map: this.paintEngine.texture,
+      roughness: 0.45,
+      metalness: 0.12,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    });
+    // Keep the paint engine's texture as the base map (the ink layer),
+    // but add the textured ground as a second overlay pass.
+    return mat;
+  }
+
+  /**
+   * Builds map-specific dressing props from the dressing atlas data:
+   * drainage grates, neon strips, puddles, warning stripes, frost patterns,
+   * hazard tape, and steam sources.
+   */
+  private buildDressingProps(props: {
+    grates: Array<{ x: number; z: number; rot?: number }>;
+    neonStrips: Array<{ x: number; y: number; z: number; sx: number; sy: number; sz: number; color: number }>;
+    puddles: Array<{ x: number; z: number; rx: number; rz: number; color: number; opacity: number }>;
+    warningStrips: Array<{ x: number; y: number; z: number; sx: number; sy: number; sz: number }>;
+    frostPatterns: Array<{ x: number; z: number; scale: number }>;
+    hazardTape: Array<{ x: number; y: number; z: number; sx: number; sy: number; sz: number }>;
+    steamSources: Array<{ x: number; z: number }>;
+  }): void {
+    const theme = this.mapDef.theme;
+
+    // --- Drainage grates (instanced) ---
+    if (props.grates.length > 0) {
+      const grateGeo = this.track(new THREE.BoxGeometry(3, 0.08, 3));
+      const grateMat = this.trackM(
+        new THREE.MeshStandardMaterial({
+          color: 0x1a1a20,
+          roughness: 0.9,
+          metalness: 0.5,
+          wireframe: false
+        })
+      );
+      // Add internal grid lines
+      const grateBars: Xform[] = [];
+      for (let b = -2; b <= 2; b++) {
+        grateBars.push({ x: 0, y: 0.04, z: b * 0.5, sx: 2.8, sy: 0.02, sz: 0.06 });
+      }
+
+      const grateXforms: Xform[] = props.grates.map((g) => ({
+        x: g.x,
+        y: 0.02,
+        z: g.z,
+        ry: g.rot ?? 0,
+        sx: 1,
+        sy: 1,
+        sz: 1
+      }));
+      this.addInstanced(grateGeo, grateMat, grateXforms, false, true);
+      // Bars are relative to grate centers — just use the top face
+      this.addInstanced(this.unitBox, grateMat, grateBars, false, false, 2);
+    }
+
+    // --- Neon strips (emissive glow) ---
+    if (props.neonStrips.length > 0) {
+      for (const strip of props.neonStrips) {
+        const stripMat = this.pulse(
+          this.trackM(
+            new THREE.MeshStandardMaterial({
+              color: strip.color,
+              emissive: strip.color,
+              emissiveIntensity: 0.6,
+              roughness: 0.3
+            })
+          ),
+          0.2,
+          1.2
+        );
+        const stripGeo = this.track(new THREE.BoxGeometry(1, 1, 1));
+        const stripMesh = new THREE.InstancedMesh(stripGeo, stripMat, 1);
+        this.tmpPos.set(strip.x, strip.y, strip.z);
+        this.tmpScale.set(strip.sx, strip.sy, strip.sz);
+        this.tmpMatrix.compose(this.tmpPos, this.tmpQuat, this.tmpScale);
+        stripMesh.setMatrixAt(0, this.tmpMatrix);
+        stripMesh.instanceMatrix.needsUpdate = true;
+        this.group.add(stripMesh);
+      }
+    }
+
+    // --- Puddle marks (reflective ellipses) ---
+    if (props.puddles.length > 0) {
+      for (const p of props.puddles) {
+        const puddleGeo = this.track(new THREE.CircleGeometry(1, 16));
+        puddleGeo.rotateX(-Math.PI / 2);
+        const puddleMat = this.trackM(createPuddleMaterial(p.color, p.opacity));
+        const puddle = new THREE.Mesh(puddleGeo, puddleMat);
+        puddle.position.set(p.x, 0.01, p.z);
+        puddle.scale.set(p.rx, 1, p.rz);
+        puddle.renderOrder = 1;
+        puddle.frustumCulled = true;
+        this.group.add(puddle);
+        this.puddleMeshes.push(puddle);
+      }
+    }
+
+    // --- Warning stripes (hazard yellow/black) ---
+    if (props.warningStrips.length > 0) {
+      const stripeMat = this.pulse(
+        this.trackM(
+          new THREE.MeshStandardMaterial({
+            color: 0xffa629,
+            emissive: 0xffa629,
+            emissiveIntensity: 0.25,
+            roughness: 0.5
+          })
+        ),
+        0.1,
+        0.8
+      );
+      const xforms: Xform[] = props.warningStrips.map((w) => ({
+        x: w.x,
+        y: w.y,
+        z: w.z,
+        sx: w.sx,
+        sy: w.sy,
+        sz: w.sz
+      }));
+      this.addInstanced(this.unitBox, stripeMat, xforms, false, false, 1);
+    }
+
+    // --- Frost / ice patterns (additive blend on ground) ---
+    if (props.frostPatterns.length > 0) {
+      const frostGeo = this.track(new THREE.CircleGeometry(1, 24));
+      frostGeo.rotateX(-Math.PI / 2);
+      const frostMat = this.trackM(
+        new THREE.MeshStandardMaterial({
+          color: 0xd8e8f8,
+          roughness: 0.15,
+          metalness: 0.6,
+          transparent: true,
+          opacity: 0.15,
+          depthWrite: false
+        })
+      );
+      const xforms: Xform[] = props.frostPatterns.map((f) => ({
+        x: f.x,
+        y: 0.015,
+        z: f.z,
+        sx: f.scale,
+        sy: 1,
+        sz: f.scale
+      }));
+      this.addInstanced(frostGeo, frostMat, xforms, false, false, 1);
+    }
+
+    // --- Hazard tape strips ---
+    if (props.hazardTape.length > 0) {
+      const tapeMat = this.trackM(
+        new THREE.MeshStandardMaterial({
+          color: 0xffa629,
+          roughness: 0.6,
+          metalness: 0.1
+        })
+      );
+      const xforms: Xform[] = props.hazardTape.map((h) => ({
+        x: h.x,
+        y: h.y,
+        z: h.z,
+        sx: h.sx,
+        sy: h.sy,
+        sz: h.sz
+      }));
+      this.addInstanced(this.unitBox, tapeMat, xforms, false, false, 1);
+    }
+  }
+
+  /**
+   * Builds ambient environmental particle systems:
+   * - Steam/mist from warm surfaces (Aurora Outpost)
+   * - Floating ink spores (all maps, very subtle)
+   */
+  private buildAmbientParticles(mapDef: MapDef): void {
+    const theme = mapDef.theme;
+    const count = 60;
+    const isAurora = mapDef.id === 'aurora_outpost';
+
+    const color = isAurora ? 0xffffff : theme.accentA;
+    const particleGeo = this.track(
+      new THREE.SphereGeometry(isAurora ? 0.12 : 0.08, 6, 4)
+    );
+    const particleMat = this.trackM(
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: isAurora ? 0.35 : 0.25,
+        depthWrite: false,
+        fog: true
+      })
+    );
+
+    const mesh = new THREE.InstancedMesh(particleGeo, particleMat, count);
+    const base = new Float32Array(count * 3);
+    const phase = new Float32Array(count);
+    const half = mapDef.size / 2;
+
+    for (let i = 0; i < count; i++) {
+      // Steam rises from ground level, spores drift higher
+      const a = (i * 2.399963) % (Math.PI * 2);
+      const r = half * (0.3 + 0.6 * (((i * 37) % 100) / 100));
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const y = isAurora
+        ? 0.5 + ((i * 53) % 100) / 100 * 8
+        : 1 + ((i * 53) % 100) / 100 * 12;
+      base[i * 3] = x;
+      base[i * 3 + 1] = y;
+      base[i * 3 + 2] = z;
+      phase[i] = ((i * 71) % 100) / 100 * Math.PI * 2;
+
+      const s = isAurora ? 0.8 + ((i * 29) % 100) / 100 * 1.2 : 0.4 + ((i * 29) % 100) / 100 * 0.6;
+      this.tmpMatrix.makeScale(s, s, s);
+      this.tmpMatrix.setPosition(x, y, z);
+      mesh.setMatrixAt(i, this.tmpMatrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+
+    this.ambientParticles = mesh;
+    this.ambientParticleBase = base;
+    this.ambientParticlePhase = phase;
   }
 
 
@@ -465,11 +771,22 @@ export class Arena {
 
   private buildObstacles(obstacles: BoxObstacle[]): void {
     const theme = this.mapDef.theme;
+    const wallTex = this.wallTexAtlas;
     const wallMat = this.trackM(
-      new THREE.MeshStandardMaterial({ color: theme.wallColor, roughness: 0.7, metalness: 0.2 })
+      new THREE.MeshStandardMaterial({
+        color: theme.wallColor,
+        roughness: 0.7,
+        metalness: 0.2,
+        map: wallTex || undefined
+      })
     );
     const blockMat = this.trackM(
-      new THREE.MeshStandardMaterial({ color: theme.obstacleColor, roughness: 0.6, metalness: 0.3 })
+      new THREE.MeshStandardMaterial({
+        color: theme.obstacleColor,
+        roughness: 0.6,
+        metalness: 0.3,
+        map: wallTex || undefined
+      })
     );
     const accentMat = this.trackM(
       new THREE.MeshStandardMaterial({
@@ -1849,10 +2166,128 @@ export class Arena {
       }
       motes.instanceMatrix.needsUpdate = true;
     }
+
+    // Animate ambient particles (steam rising / spores drifting)
+    const ap = this.ambientParticles;
+    const apBase = this.ambientParticleBase;
+    const apPhase = this.ambientParticlePhase;
+    if (ap && apBase && apPhase) {
+      const arr = ap.instanceMatrix.array as Float32Array;
+      const count = apPhase.length;
+      for (let i = 0; i < count; i++) {
+        const o = i * 16;
+        const ph = apPhase[i] ?? 0;
+        // Steam rises upward, spores drift gently
+        arr[o + 12] = (apBase[i * 3] ?? 0) + Math.sin(t * 0.15 + ph) * 1.8;
+        arr[o + 13] = (apBase[i * 3 + 1] ?? 0) + Math.sin(t * 0.28 + ph * 0.7) * 1.2;
+        arr[o + 14] = (apBase[i * 3 + 2] ?? 0) + Math.cos(t * 0.12 + ph) * 1.8;
+      }
+      ap.instanceMatrix.needsUpdate = true;
+    }
   }
 
   dispose(): void {
     this.teardown();
+  }
+
+  /**
+   * Renders vertical paintable wall faces as transparent overlay meshes
+   * using the surface ink texture from PaintEngine.
+   */
+  private buildPaintSurfaces(surfaces: PaintSurface[]): void {
+    const rectGeo = this.track(new THREE.PlaneGeometry(1, 1));
+    const tex = this.paintEngine.getSurfaceTexture();
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    this.trackM(mat);
+    const mesh = new THREE.InstancedMesh(rectGeo, mat, surfaces.length);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 5;
+
+    for (let i = 0; i < surfaces.length; i++) {
+      const s = surfaces[i];
+      if (!s) continue;
+      // Position and size derived from the PaintSurface definition.
+      // The surface's normal tells us which way the face points.
+      const nx = s.normal.x;
+      const nz = s.normal.z;
+      let ry = 0;
+      if (nx > 0.5) ry = Math.PI / 2;       // facing east
+      else if (nx < -0.5) ry = -Math.PI / 2; // facing west
+      else if (nz > 0.5) ry = Math.PI;       // facing south
+      else if (nz < -0.5) ry = 0;            // facing north
+
+      this.tmpPos.set(s.position.x, s.position.y, s.position.z);
+      this.tmpEuler.set(0, ry, 0);
+      this.tmpQuat.setFromEuler(this.tmpEuler);
+      this.tmpScale.set(s.size.x, s.size.y, 1);
+      this.tmpMatrix.compose(this.tmpPos, this.tmpQuat, this.tmpScale);
+      mesh.setMatrixAt(i, this.tmpMatrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    this.group.add(mesh);
+    this.paintSurfaceMeshes.push(mesh);
+  }
+
+  /**
+   * Renders ramp geometry: flat triangular or trapezoidal planes that give a
+   * visual indication of climbable slopes.
+   */
+  private buildRamps(ramps: Array<{ id: string; position: { x: number; y: number; z: number }; length: number; width: number; rise: number; direction: string; climbable?: boolean }>): void {
+    if (!ramps.length) return;
+    const theme = this.mapDef.theme;
+    const rampMat = this.trackM(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(theme.obstacleColor).multiplyScalar(1.15).getHex(),
+        roughness: 0.65,
+        metalness: 0.15,
+        side: THREE.DoubleSide
+      })
+    );
+
+    for (const ramp of ramps) {
+      if (!ramp.climbable) continue;
+      const { x, y, z } = ramp.position;
+      const len = ramp.length;
+      const w = ramp.width;
+      const rise = ramp.rise;
+      const geo = new THREE.BufferGeometry();
+      // Build a trapezoidal ramp: low end at ground, high end at `rise`
+      // Vertices in X-Z plane (world X and Z), with Y being height.
+      let ldx = 0, ldz = 0, hdx = 0, hdz = 0;
+      switch (ramp.direction) {
+        case 'north':
+          ldx = -w / 2; ldz = -len / 2; hdx = -w / 2; hdz = len / 2; break;
+        case 'south':
+          ldx = -w / 2; ldz = len / 2; hdx = -w / 2; hdz = -len / 2; break;
+        case 'east':
+          ldx = -len / 2; ldz = -w / 2; hdx = len / 2; hdz = -w / 2; break;
+        case 'west':
+          ldx = len / 2; ldz = -w / 2; hdx = -len / 2; hdz = -w / 2; break;
+      }
+      const pos = new Float32Array([
+        // Low face (ground level)
+        x + ldx, 0, z + ldz,
+        x - ldx, 0, z - ldz,
+        // High face (at rise height)
+        x + hdx, rise, z + hdz,
+        x - hdx, rise, z - hdz
+      ]);
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const idx = [0, 1, 2, 2, 1, 3];
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, rampMat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+      this.rampMeshes.push(mesh);
+    }
   }
 
   /**
@@ -1867,5 +2302,19 @@ export class Arena {
    */
   getCameraCollisionMeshes(): THREE.Mesh[] {
     return this.obstacleMeshes;
+  }
+
+  /**
+   * Returns vertical paint surface meshes for client-side raycasting.
+   */
+  getPaintSurfaceMeshes(): THREE.InstancedMesh[] {
+    return this.paintSurfaceMeshes;
+  }
+
+  /**
+   * Returns ramp mesh objects for visual debugging / UI.
+   */
+  getRampMeshes(): THREE.Mesh[] {
+    return this.rampMeshes;
   }
 }

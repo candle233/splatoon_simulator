@@ -1,7 +1,7 @@
 export const PROTOCOL_VERSION = 1;
 
-export const TICK_RATE = 20;
-export const FIXED_DT = 1 / TICK_RATE; // 0.05s
+export const TICK_RATE = 25;
+export const FIXED_DT = 1 / TICK_RATE; // 0.04s
 
 export const ARENA_SIZE = 100;
 export const ARENA_HALF_SIZE = ARENA_SIZE / 2; // 50
@@ -45,6 +45,7 @@ export const INPUT_STALE_MS = 500;
 export const COUNTDOWN_DURATION = 3.0; // s
 export const MATCH_DURATION = 180.0; // s
 export const GAME_OVER_DURATION = 8.0; // s
+export const WEAPON_SELECT_DURATION = 10.0; // s
 
 export const MAX_PLAYERS = 8;
 export const TEAM_SIZE = 4;

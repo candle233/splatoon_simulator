@@ -20,6 +20,26 @@ import {
 } from '@ink/shared';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
 import { PlayerView } from './PlayerView.js';
+import { PINK_COLOR, CYAN_COLOR } from './CharacterModels.js';
+import * as THREE from 'three';
+
+/**
+ * Body-part vertical offsets within the character model, used for
+ * client-predicted camera targeting and weapon attachment:
+ * - Body center: Y=0.6 (torso)
+ * - Head: Y=1.1
+ * - Weapon mount: X=0.32, Y=0.85, Z=-0.3 (right hand, from PlayerView anchor)
+ */
+export const BODY_CENTER_Y = 0.6;
+export const HEAD_Y = 1.1;
+export const WEAPON_MOUNT_OFFSET: Readonly<Vec3> = { x: 0.32, y: 0.85, z: -0.3 };
+
+const RAMP_LIFT_SPEED = 0.4;
+const RAMP_STICK_MIN_SPEED = 0.5;
+const WALL_RIDE_RANGE = 2.5;
+const WALL_RIDE_LIFT_SPEED = 0.8;
+const WALL_RIDE_FORWARD_SPEED = 0.3;
+const WALL_RIDE_MIN_SPEED = 0.3;
 
 export class LocalPlayer {
   readonly id: string;
@@ -53,6 +73,14 @@ export class LocalPlayer {
 
   private collisionWorld: ClientCollisionWorld;
   private pendingInputs: { seq: number; input: PlayerInput; dt: number; groundInk: Team }[] = [];
+
+  /** Smoothed position that gradually converges to server-reported position. */
+  private _smoothPos: Vec3 = { x: 0, y: 0, z: 0 };
+  /** Last server-reported position, used for velocity estimation. */
+  private _lastSnapPos: Vec3 = { x: 0, y: 0, z: 0 };
+  private _prevSnapPos: Vec3 | null = null;
+  private _lastSnapTime = performance.now();
+  private _prevSnapTime = performance.now();
 
   constructor(
     id: string,
@@ -100,6 +128,35 @@ export class LocalPlayer {
     if (input.jump && stepGrounded) {
       stepVel.y = JUMP_VELOCITY;
       stepGrounded = false;
+    }
+
+    // Ramp climbing: when on a ramp and moving along its travel direction,
+    // lift the player so they walk up naturally.
+    if (stepGrounded) {
+      const ramp = this.collisionWorld.getRampAt(this.position);
+      if (ramp) {
+        const horizSpeed = Math.sqrt(stepVel.x ** 2 + stepVel.z ** 2);
+        if (horizSpeed >= RAMP_STICK_MIN_SPEED) {
+          const dot = this.rampDirectionDot(ramp, stepVel.x, stepVel.z);
+          if (dot > 0) {
+            stepVel.y = RAMP_LIFT_SPEED * Math.min(dot, 1);
+          }
+        }
+      }
+    }
+
+    // Wall-ride: when airborne and adjacent to a climbable surface, apply
+    // small upward lift and push toward the wall.
+    if (!stepGrounded) {
+      const surf = this.collisionWorld.getClimbableSurfaceAt(this.position, WALL_RIDE_RANGE);
+      if (surf && Math.abs(input.moveZ) >= WALL_RIDE_MIN_SPEED) {
+        const sdx = surf.position.x - this.position.x;
+        const sdz = surf.position.z - this.position.z;
+        const dist = Math.sqrt(sdx * sdx + sdz * sdz) || 1;
+        stepVel.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
+        stepVel.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
+        stepVel.y = Math.min(stepVel.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+      }
     }
 
     if (!stepGrounded) {
@@ -178,6 +235,37 @@ export class LocalPlayer {
     this.view.triggerRecoil();
   }
 
+  /**
+   * Returns the world-space weapon mount position (right hand).
+   * Body center is at Y=BODY_CENTER_Y, head at Y=HEAD_Y in local space.
+   * Uses PLAYER_HEIGHT (1.8) for total character height above ground.
+   */
+  getWeaponMountWorldPosition(out: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
+    return out.set(
+      this.position.x + WEAPON_MOUNT_OFFSET.x,
+      this.position.y + WEAPON_MOUNT_OFFSET.y,
+      this.position.z + WEAPON_MOUNT_OFFSET.z
+    );
+  }
+
+  /** World-space body center (torso) position for camera targeting. */
+  getBodyCenterWorldPosition(out: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
+    return out.set(this.position.x, this.position.y + BODY_CENTER_Y, this.position.z);
+  }
+
+  /** World-space head position (for eye-level aiming). */
+  getHeadWorldPosition(out: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
+    return out.set(this.position.x, this.position.y + HEAD_Y, this.position.z);
+  }
+
+  /**
+   * Gets the total character height above the feet.
+   * Uses PLAYER_HEIGHT for humanoid form; SQUID_HEIGHT when submerged.
+   */
+  getCharacterHeight(): number {
+    return this.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
+  }
+
   applyServerState(snapshot: PlayerSnapshot, lastAckSeq?: number): void {
     this.hp = snapshot.hp;
     this.ink = snapshot.ink;
@@ -204,6 +292,11 @@ export class LocalPlayer {
 
     if (!this.alive) {
       this.pendingInputs = [];
+      
+      this._lastSnapTime = performance.now();
+      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      this._prevSnapPos = null;
+      this._smoothPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
       this.position = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
       this.mode = PlayerMode.DEAD;
       this.syncViewPosition();
@@ -241,28 +334,98 @@ export class LocalPlayer {
     const errZ = replayedPos.z - this.position.z;
     const errDistSq = errX * errX + errY * errY + errZ * errZ;
 
-    if (errDistSq > 0.04) {
-      // Hard correction for large deviation (> 0.2m)
-      this.position = replayedPos;
+    const errDist = Math.sqrt(errDistSq);
+    const isDeadToAlive = !this.alive && snapshot.alive;
+
+    if (isDeadToAlive) {
+      // Smooth respawn transition: don't snap — drift the position toward
+      // spawn over the next frames using the _smoothPos buffer.
+      this._smoothPos = {
+        x: this.position.x,
+        y: this.position.y,
+        z: this.position.z
+      };
+      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      this._prevSnapPos = null;
+      this._lastSnapTime = performance.now();
+      
       this.velocity = replayedVel;
       this.grounded = replayedGrounded;
       this.mode = replayedMode;
-      this.syncViewPosition();
       this.view.setMode(this.mode);
-    } else if (errDistSq > 0.0004) {
-      // Smooth EMA correction for tiny discrepancies to prevent jitter (Subagent 38)
-      this.position.x = this.position.x * 0.8 + replayedPos.x * 0.2;
-      this.position.y = this.position.y * 0.8 + replayedPos.y * 0.2;
-      this.position.z = this.position.z * 0.8 + replayedPos.z * 0.2;
+      this._applySmoothStep(replayedPos, 1.0); // first frame applies full correction
+      this.syncViewPosition();
+      return;
+    }
+
+    if (errDistSq > 0.0625) {
+      // Hard correction: large deviation (> 0.25m = 0.5m threshold squared)
+      // This catches genuine desyncs (lag spikes, reconnect) where prediction
+      // is wrong — snap immediately rather than glide.
+      this.position = { ...replayedPos };
+      this._smoothPos = { ...replayedPos };
+      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      this._prevSnapPos = null;
+      this._lastSnapTime = performance.now();
+      
       this.velocity = replayedVel;
       this.grounded = replayedGrounded;
+      this.mode = replayedMode;
+      this.view.setMode(this.mode);
+      this.syncViewPosition();
+    } else if (errDistSq > 0.0004) {
+      // Smooth interpolation for moderate deviations (0.0004 to 0.25m range)
+      // Use quadratic easing instead of fixed EMA for more natural convergence.
+      const t = Math.min(1, errDist / 0.25); // normalised deviation [0,1]
+      const ease = t * t * (3 - 2 * t); // smoothstep
+      const alpha = 0.15 + ease * 0.65; // higher deviation → stronger pull
+      this.position.x = this.position.x * (1 - alpha) + replayedPos.x * alpha;
+      this.position.y = this.position.y * (1 - alpha) + replayedPos.y * alpha;
+      this.position.z = this.position.z * (1 - alpha) + replayedPos.z * alpha;
+      this._smoothPos = { ...this.position };
+      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      
+      this.velocity = replayedVel;
+      this.grounded = replayedGrounded;
+      this.mode = replayedMode;
+      this.view.setMode(this.mode);
       this.syncViewPosition();
     }
+  }
+
+  /**
+   * Applies a single smooth-step toward `target` with the given `t` factor
+   * (0..1, 1 = full snap).  Uses quadratic easing so position changes
+   * are monotonic and visually smooth — no visible jump.
+   */
+  private _applySmoothStep(target: Vec3, t: number): void {
+    const s = t * t * (3 - 2 * t); // smoothstep
+    this.position.x = this.position.x + (target.x - this.position.x) * s;
+    this.position.y = this.position.y + (target.y - this.position.y) * s;
+    this.position.z = this.position.z + (target.z - this.position.z) * s;
+    this._smoothPos = { ...this.position };
   }
 
   private syncViewPosition(): void {
     this.view.group.position.set(this.position.x, this.position.y, this.position.z);
     this.view.group.rotation.y = this.yaw;
+  }
+
+  /**
+   * Returns the dot product of the ramp's travel direction with the player's
+   * horizontal velocity, normalized to [0,1] when they're aligned.
+   */
+  private rampDirectionDot(ramp: { direction: 'north' | 'south' | 'east' | 'west' }, vx: number, vz: number): number {
+    const horiz = Math.sqrt(vx * vx + vz * vz);
+    if (horiz < 0.001) return 0;
+    const nx = vx / horiz;
+    const nz = vz / horiz;
+    switch (ramp.direction) {
+      case 'north': return -nz;
+      case 'south': return nz;
+      case 'east':  return nx;
+      case 'west':  return -nx;
+    }
   }
 
   updateVisuals(time: number): void {
