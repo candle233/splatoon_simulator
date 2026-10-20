@@ -10,6 +10,17 @@ export default defineConfig({
       '@ink/shared': path.resolve(__dirname, '../shared/src')
     }
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+          shared: ['@ink/shared']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 500
+  },
   server: {
     port: 5273,
     host: true,
