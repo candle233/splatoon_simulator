@@ -1,4 +1,5 @@
-import { PlayerInput, WEAPON_CONFIGS, WeaponType, clamp } from '@ink/shared';
+import { EmoteType, PlayerInput, WEAPON_CONFIGS, WeaponType, clamp, isValidEmoteType } from '@ink/shared';
+import type { Vec3 } from '@ink/shared';
 
 /** Known main-weapon ids, derived from the shared config so new weapons need no edit here. */
 const VALID_WEAPON_IDS = new Set<string>(Object.keys(WEAPON_CONFIGS));
@@ -42,6 +43,7 @@ export function sanitizePlayerInput(input: unknown): PlayerInput | null {
   const fire = Boolean(raw.fire);
   const subWeapon = Boolean(raw.subWeapon);
   const special = Boolean(raw.special);
+  const dodge = Boolean(raw.dodge);
   const chargeLevel = Number.isFinite(Number(raw.chargeLevel)) ? clamp(Number(raw.chargeLevel), 0, 1) : undefined;
   const weaponType =
     typeof raw.weaponType === 'string' && VALID_WEAPON_IDS.has(raw.weaponType)
@@ -71,8 +73,38 @@ export function sanitizePlayerInput(input: unknown): PlayerInput | null {
     fire,
     subWeapon,
     special,
+    dodge,
     chargeLevel,
     weaponType,
     clientTime: Number.isFinite(clientTime) ? clientTime : Date.now()
   };
+}
+
+/** Largest arena half-edge a map ping may target; anything beyond is out of bounds. */
+const MAX_PING_ABS = 512;
+
+export interface SanitizedEmote {
+  type: EmoteType;
+  position?: Vec3;
+}
+
+/**
+ * Validates a client emote request. Only the emote type and (for pings) a sane
+ * world position survive; identity fields (playerId / name / team) are read
+ * from the authoritative server-side roster, never from the payload.
+ */
+export function sanitizeEmote(raw: unknown): SanitizedEmote | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  if (!isValidEmoteType(data.type)) return null;
+
+  if (typeof data.type === 'string' && data.type.startsWith('ping_')) {
+    const x = Number(data.x);
+    const z = Number(data.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+    if (Math.abs(x) > MAX_PING_ABS || Math.abs(z) > MAX_PING_ABS) return null;
+    return { type: data.type, position: { x, y: 0, z } };
+  }
+
+  return { type: data.type };
 }

@@ -141,10 +141,69 @@ export class WeaponSimulation {
     return skillMultiplier(skills, 'special_power');
   }
 
-  /** Damage actually applied after the victim's defense gear skill. */
-  private applyTargetDamage(target: PlayerState, raw: number, now: number): void {
+  /**
+   * Damage actually applied after the victim's defense gear skill.
+   *
+   * `fromPos` is where the damage came from (shooter muzzle, blast centre…).
+   * When the victim is a Brella with the ink shield up, damage from the front
+   * hemisphere is absorbed by the shield instead: shield HP drains by the raw
+   * amount and the victim takes nothing. Attacks from above pierce the canopy,
+   * and undirected damage (ground DoT) never hits the shield at all.
+   *
+   * @returns true when the shield absorbed the hit.
+   */
+  private applyTargetDamage(target: PlayerState, raw: number, now: number, fromPos?: Vec3): boolean {
+    if (this.shieldAbsorbs(target, raw, now, fromPos)) {
+      return true;
+    }
     target.hp -= raw * skillMultiplier(target.skills, 'defense');
     target.lastDamageTime = now;
+    return false;
+  }
+
+  /**
+   * True when the victim's Brella shield soaks this hit entirely. The shield
+   * covers the front 180° arc (positive dot between the attack direction and
+   * the victim's facing), blocks nothing from above, drains by the blocked
+   * amount and breaks — starting its recharge cooldown — when drained.
+   */
+  private shieldAbsorbs(target: PlayerState, raw: number, now: number, fromPos?: Vec3): boolean {
+    if (fromPos === undefined || raw <= 0) return false;
+    if (!target.shieldActive || now >= target.shieldEndsAt) {
+      if (target.shieldActive && now >= target.shieldEndsAt) {
+        // Duration elapsed: close the shield and start the recharge.
+        target.shieldActive = false;
+        const cfg = WEAPON_CONFIGS[target.weaponType]?.shieldCooldown ?? 5;
+        target.shieldReadyAt = Math.max(target.shieldReadyAt, now + cfg * 1000);
+      }
+      return false;
+    }
+
+    const dx = fromPos.x - target.position.x;
+    const dy = fromPos.y - target.position.y;
+    const dz = fromPos.z - target.position.z;
+    // Attacks from well above the canopy slip over the top of the umbrella.
+    if (dy > 1.6) return false;
+
+    // Front 180° arc: positive dot between the victim's facing and the
+    // horizontal direction toward the source of the damage.
+    const horiz = Math.sqrt(dx * dx + dz * dz);
+    if (horiz > 1e-4) {
+      const fx = -Math.sin(target.yaw);
+      const fz = -Math.cos(target.yaw);
+      const dot = (fx * dx + fz * dz) / horiz;
+      if (dot <= 0) return false;
+    }
+
+    target.shieldHp -= raw;
+    if (target.shieldHp <= 0) {
+      // Shield breaks: down until the recharge elapses.
+      target.shieldActive = false;
+      target.shieldHp = 0;
+      const cfg = WEAPON_CONFIGS[target.weaponType]?.shieldCooldown ?? 5;
+      target.shieldReadyAt = now + cfg * 1000;
+    }
+    return true;
   }
 
   private awardSpecialForPaint(player: PlayerState, newlyPaintedCells: number): void {
@@ -224,9 +283,13 @@ export class WeaponSimulation {
       return this.fireMortar(shooter, allPlayers, now);
     } else if (weaponType === 'scatter') {
       return this.fireScatter(shooter, allPlayers, now);
+    } else if (weaponType === 'brella') {
+      return this.fireBrella(shooter, allPlayers, now);
+    } else if (weaponType === 'dualies') {
+      return this.fireDualies(shooter, allPlayers, now);
     } else {
-      // shooter / sprayer / marksman share the automatic hitscan path with
-      // their own config (fireRate, spread, range, damage all differ).
+      // shooter / sprayer / marksman / dualies share the automatic hitscan path
+      // with their own config (fireRate, spread, range, damage all differ).
       return this.fireShooter(shooter, allPlayers, now, config);
     }
   }
@@ -389,7 +452,7 @@ export class WeaponSimulation {
       const target = allPlayers.find((p) => p.id === hit.hitPlayerId);
       if (target && target.alive && !target.isInvulnerable(now)) {
         result.hitPlayerId = target.id;
-        this.applyTargetDamage(target, this.mainDamage(shooter, config.damage), now);
+        this.applyTargetDamage(target, this.mainDamage(shooter, config.damage), now, shooter.position);
 
         if (target.hp <= 0) {
           target.hp = 0;
@@ -445,6 +508,142 @@ export class WeaponSimulation {
     }
 
     return result;
+  }
+
+  /**
+   * Brella: a single shot through the shared hitscan path, then the canopy
+   * opens (autoOpen). The shield only deploys when its recharge has elapsed;
+   * while it is up, damage from the front 180° arc is absorbed by the shield
+   * (see shieldAbsorbs).
+   */
+  private fireBrella(
+    shooter: PlayerState,
+    allPlayers: PlayerState[],
+    now: number
+  ): ShotResult {
+    const result = this.fireShooter(shooter, allPlayers, now, WEAPON_CONFIGS.brella);
+    if (result.fired) {
+      this.openBrellaShield(shooter, now);
+    }
+    return result;
+  }
+
+  /**
+   * Deploys the Brella ink shield, if it is off cooldown and not already up.
+   * Returns true when a fresh shield opened.
+   */
+  openBrellaShield(player: PlayerState, now: number = Date.now()): boolean {
+    if (player.weaponType !== 'brella' || !player.alive) return false;
+    if (player.shieldActive || now < player.shieldReadyAt) return false;
+
+    const cfg = WEAPON_CONFIGS.brella;
+    player.shieldActive = true;
+    player.shieldHp = cfg.shieldHp ?? 100;
+    player.shieldEndsAt = now + (cfg.shieldDuration ?? 3) * 1000;
+    // Ready again after the full cycle; an early break shortens this.
+    player.shieldReadyAt = player.shieldEndsAt + (cfg.shieldCooldown ?? 5) * 1000;
+    return true;
+  }
+
+  /** Closes an active shield immediately and starts the recharge cooldown. */
+  closeBrellaShield(player: PlayerState, now: number = Date.now()): void {
+    if (!player.shieldActive) return;
+    player.shieldActive = false;
+    const cfg = WEAPON_CONFIGS.brella;
+    player.shieldReadyAt = Math.max(player.shieldReadyAt, now + (cfg.shieldCooldown ?? 5) * 1000);
+  }
+
+  /**
+   * Dualies: alternate the left/right barrel (visual only) and fire through the
+   * shared hitscan path. The brief post-dodge recovery gates the next shot.
+   */
+  private fireDualies(
+    shooter: PlayerState,
+    allPlayers: PlayerState[],
+    now: number
+  ): ShotResult {
+    if (now < shooter.dodgeRecoveryUntil) {
+      return { fired: false, paintEvents: [] };
+    }
+    shooter.dualieBarrelSide = shooter.dualieBarrelSide === 1 ? -1 : 1;
+    return this.fireShooter(shooter, allPlayers, now, WEAPON_CONFIGS.dualies);
+  }
+
+  /**
+   * Dualies dodge roll: consume ink, dash horizontally along the movement
+   * direction for `dodgeDistance` over the invulnerability window, and leave a
+   * paint trail along the path. The dash itself is integrated by the movement
+   * simulation from the `dodgeDir` captured here.
+   *
+   * @param moveX moveX / moveZ of the input that triggered the dodge (player
+   *              local space); the facing direction is used when neutral.
+   */
+  processDodge(
+    player: PlayerState,
+    now: number = Date.now(),
+    moveX = 0,
+    moveZ = 0
+  ): { dodged: boolean; paintEvents: PaintEvent[]; from?: Vec3; to?: Vec3 } {
+    if (!player.alive || player.mode !== PlayerMode.HUMANOID) {
+      return { dodged: false, paintEvents: [] };
+    }
+    if (player.weaponType !== 'dualies' || now < player.dodgeReadyAt) {
+      return { dodged: false, paintEvents: [] };
+    }
+
+    const cfg = WEAPON_CONFIGS.dualies;
+    const cost = this.mainInkCost(player, cfg.dodgeInkCost ?? 15);
+    if (player.ink < cost) {
+      return { dodged: false, paintEvents: [] };
+    }
+
+    // Dash direction: movement input first, facing as the fallback.
+    const cosYaw = Math.cos(player.yaw);
+    const sinYaw = Math.sin(player.yaw);
+    const inputRight = moveX;
+    const inputForward = -moveZ;
+    let dirX = cosYaw * inputRight - sinYaw * inputForward;
+    let dirZ = -sinYaw * inputRight - cosYaw * inputForward;
+    const len = Math.sqrt(dirX * dirX + dirZ * dirZ);
+    if (len > 1e-4) {
+      dirX /= len;
+      dirZ /= len;
+    } else {
+      dirX = -sinYaw;
+      dirZ = -cosYaw;
+    }
+
+    player.ink -= cost;
+    player.dodgeDir = { x: dirX, y: 0, z: dirZ };
+    player.dodgeUntil = now + (cfg.dodgeInvulnMs ?? 200);
+    player.invulnerableUntil = Math.max(player.invulnerableUntil, player.dodgeUntil);
+    player.dodgeReadyAt = now + (cfg.dodgeCooldownMs ?? 800);
+    player.dodgeRecoveryUntil = player.dodgeUntil + 100;
+
+    const from: Vec3 = { x: player.position.x, y: player.position.y, z: player.position.z };
+    const to: Vec3 = { x: from.x + dirX * (cfg.dodgeDistance ?? 6), y: from.y, z: from.z + dirZ * (cfg.dodgeDistance ?? 6) };
+
+    // Paint trail along the dodge path: a few splats between start and end so
+    // the streak reads on the turf the moment the roll starts.
+    const paintEvents: PaintEvent[] = [];
+    const seed = (now ^ 0xd0d63) >>> 0;
+    const steps = 4;
+    const radius = this.paintRadiusOf(player.skills, cfg.paintRadius) * 0.7;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      paintEvents.push(
+        this.createPaintEvent(
+          player.team,
+          from.x + (to.x - from.x) * t,
+          from.z + (to.z - from.z) * t,
+          radius,
+          (seed + i * 7919) >>> 0
+        )
+      );
+      this.awardSpecialForPaint(player, this.lastCreatedNewlyPainted);
+    }
+
+    return { dodged: true, paintEvents, from, to };
   }
 
   /**
@@ -568,7 +767,7 @@ export class WeaponSimulation {
       if (!target || !target.alive || target.isInvulnerable(now)) continue;
 
       result.hitPlayerId = target.id;
-      this.applyTargetDamage(target, this.mainDamage(shooter, rawDmg), now);
+      this.applyTargetDamage(target, this.mainDamage(shooter, rawDmg), now, shooter.position);
 
       if (target.hp <= 0) {
         target.hp = 0;
@@ -726,7 +925,7 @@ export class WeaponSimulation {
         : splashDamage * (0.4 + 0.6 * ratio);
 
       result.hitPlayerId = p.id;
-      this.applyTargetDamage(p, this.mainDamage(shooter, raw), now);
+      this.applyTargetDamage(p, this.mainDamage(shooter, raw), now, impactPoint);
 
       if (p.hp <= 0) {
         p.hp = 0;
@@ -850,7 +1049,7 @@ export class WeaponSimulation {
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist <= 1.8 && Math.abs(target.position.y - shooter.position.y) < 2.0) {
           result.hitPlayerId = target.id;
-          this.applyTargetDamage(target, this.mainDamage(shooter, config.rollDamage || 120), now);
+          this.applyTargetDamage(target, this.mainDamage(shooter, config.rollDamage || 120), now, shooter.position);
 
           if (target.hp <= 0) {
             target.hp = 0;
@@ -928,7 +1127,7 @@ export class WeaponSimulation {
             result.hitPlayerId = target.id;
             const distRatio = Math.min(1.0, hit.distance / config.range);
             const dmg = Math.round(this.mainDamage(shooter, config.damage) * (1.0 - distRatio * 0.4)); // 100 dmg close, 60 dmg far
-            this.applyTargetDamage(target, dmg, now);
+            this.applyTargetDamage(target, dmg, now, shooter.position);
 
             if (target.hp <= 0) {
               target.hp = 0;
@@ -1042,7 +1241,7 @@ export class WeaponSimulation {
       const target = allPlayers.find((p) => p.id === hit.hitPlayerId);
       if (target && target.alive && !target.isInvulnerable(now)) {
         result.hitPlayerId = target.id;
-        this.applyTargetDamage(target, chargeDamage, now);
+        this.applyTargetDamage(target, chargeDamage, now, shooter.position);
 
         if (target.hp <= 0) {
           target.hp = 0;
@@ -1221,7 +1420,7 @@ export class WeaponSimulation {
 
     if (damagedPlayer && damagedPlayer.alive && !damagedPlayer.isInvulnerable(now)) {
       result.hitPlayerId = damagedPlayer.id;
-      this.applyTargetDamage(damagedPlayer, this.mainDamage(shooter, config.damage), now);
+      this.applyTargetDamage(damagedPlayer, this.mainDamage(shooter, config.damage), now, impactPoint);
 
       if (damagedPlayer.hp <= 0) {
         damagedPlayer.hp = 0;
@@ -1320,6 +1519,13 @@ export class WeaponSimulation {
         x: -sinYaw * config.throwSpeed,
         y: 0,
         z: -cosYaw * config.throwSpeed
+      };
+    } else if (subType === 'torpedo') {
+      // Torpedo launches steeply upward, then homes in on the nearest enemy.
+      vel = {
+        x: fwdX * config.throwSpeed * 0.35,
+        y: config.throwSpeed * 0.9,
+        z: fwdZ * config.throwSpeed * 0.35
       };
     } else if (subType === 'ink_mine' || subType === 'ink_puddle') {
       // Deployables drop close to the thrower so they land where they were aimed
@@ -1577,7 +1783,7 @@ export class WeaponSimulation {
               const dz = p.position.z - sub.position.z;
               if (dx * dx + dz * dz <= poolRadius * poolRadius) {
                 const dmg = (this.subDamage(sub.ownerSkills, config.damage) * dt) / config.fuseTime;
-                this.applyTargetDamage(p, dmg, now);
+                this.applyTargetDamage(p, dmg, now, sub.position);
                 hits.push({ shooterId: sub.ownerId, victimId: p.id });
 
                 if (p.hp <= 0) {
@@ -1645,6 +1851,105 @@ export class WeaponSimulation {
           );
           paintEvents.push(hopEvt);
         }
+      } else if (sub.type === 'torpedo') {
+        // Homing torpedo: launches steeply upward, then steers toward the
+        // nearest enemy with a limited turn rate, painting a flight trail.
+        // Detonates on enemy contact, ground contact, or fuse timeout.
+        let homing = false;
+        let tx = 0;
+        let ty = 0;
+        let tz = 0;
+        if (now - sub.spawnTime > 250) {
+          // Homing kicks in past the launch apex.
+          let bestDistSq = 18 * 18;
+          let best: PlayerState | null = null;
+          for (const p of allPlayers) {
+            if (p.team === sub.team || !p.alive || p.isInvulnerable(now)) continue;
+            const dx = p.position.x - sub.position.x;
+            const dz = p.position.z - sub.position.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq < bestDistSq) {
+              bestDistSq = distSq;
+              best = p;
+            }
+          }
+          if (best) {
+            homing = true;
+            tx = best.position.x - sub.position.x;
+            ty = best.position.y + 0.9 - sub.position.y;
+            tz = best.position.z - sub.position.z;
+          }
+        }
+
+        const speed =
+          Math.sqrt(
+            sub.velocity.x * sub.velocity.x +
+              sub.velocity.y * sub.velocity.y +
+              sub.velocity.z * sub.velocity.z
+          ) || config.throwSpeed;
+
+        if (homing) {
+          // Rotate the velocity vector toward the target by a fixed turn rate.
+          const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
+          const ndx = tx / tLen;
+          const ndy = ty / tLen;
+          const ndz = tz / tLen;
+          const vLen = speed || 1;
+          const cvx = sub.velocity.x / vLen;
+          const cvy = sub.velocity.y / vLen;
+          const cvz = sub.velocity.z / vLen;
+          const dot = Math.max(-1, Math.min(1, cvx * ndx + cvy * ndy + cvz * ndz));
+          const ang = Math.acos(dot);
+          if (ang > 1e-4) {
+            const t = Math.min(1, (5.5 * dt) / ang);
+            const mx = cvx + (ndx - cvx) * t;
+            const my = cvy + (ndy - cvy) * t;
+            const mz = cvz + (ndz - cvz) * t;
+            const mLen = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
+            sub.velocity.x = (mx / mLen) * speed;
+            sub.velocity.y = (my / mLen) * speed;
+            sub.velocity.z = (mz / mLen) * speed;
+          }
+          sub.velocity.y += -6.0 * dt;
+        } else {
+          sub.velocity.y += -20.0 * dt;
+        }
+
+        sub.position.x += sub.velocity.x * dt;
+        sub.position.y += sub.velocity.y * dt;
+        sub.position.z += sub.velocity.z * dt;
+
+        // Paint trail so the homing arc reads on the turf
+        const trailEvt = this.createPaintEvent(
+          sub.team,
+          sub.position.x,
+          sub.position.z,
+          this.paintRadiusOf(sub.ownerSkills, 1.2),
+          (now ^ 0x7029) >>> 0
+        );
+        paintEvents.push(trailEvt);
+
+        const groundY = this.collisionWorld.getGroundHeightAt(sub.position.x, sub.position.z, sub.position.y);
+        if (sub.position.y <= groundY) {
+          exploded = true;
+        }
+
+        // Proximity contact trigger (3D, so a torpedo can burst mid-flight)
+        const trigger = config.triggerRadius ?? 2.2;
+        for (const p of allPlayers) {
+          if (p.team === sub.team || !p.alive || p.isInvulnerable(now)) continue;
+          const dx = p.position.x - sub.position.x;
+          const dy = p.position.y - sub.position.y;
+          const dz = p.position.z - sub.position.z;
+          if (dx * dx + dy * dy + dz * dz <= trigger * trigger) {
+            exploded = true;
+            break;
+          }
+        }
+
+        if (now >= sub.fuseEndsAt) {
+          exploded = true;
+        }
       } else {
         // Splat bomb & Burst bomb parabolic ballistic flight
         sub.velocity.y += -20.0 * dt;
@@ -1711,8 +2016,9 @@ export class WeaponSimulation {
           if (dist <= splashRadius) {
             const ratio = 1 - dist / splashRadius;
             const dmg = this.subDamage(sub.ownerSkills, config.damage) * (0.4 + 0.6 * ratio);
-            p.hp -= dmg;
-            p.lastDamageTime = now;
+            // Sub blasts come from the projectile: a Brella shield soaks them
+            // when the bomb lands in front, but an overhead burst still lands.
+            this.applyTargetDamage(p, dmg, now, sub.position);
             hits.push({ shooterId: sub.ownerId, victimId: p.id });
 
             if (p.hp <= 0) {
@@ -1920,7 +2226,7 @@ export class WeaponSimulation {
     hits: { shooterId: string; victimId: string }[],
     deaths: { victimId: string; killerId?: string }[]
   ): void {
-    this.applyTargetDamage(victim, rawDamage, now);
+    this.applyTargetDamage(victim, rawDamage, now, spec.position);
     hits.push({ shooterId: spec.ownerId, victimId: victim.id });
 
     if (victim.hp <= 0) {

@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import {
+  EmotePayload,
   GameOverPayload,
   LobbyPlayerState,
   LobbyStatePayload,
@@ -14,6 +15,7 @@ import {
   SubWeaponEventPayload,
   WelcomePayload
 } from '@ink/shared';
+import type { EmoteType } from '@ink/shared';
 
 export interface NetworkCallbacks {
   onWelcome: (payload: WelcomePayload) => void;
@@ -32,6 +34,7 @@ export interface NetworkCallbacks {
   onSubWeaponEvent?: (payload: SubWeaponEventPayload) => void;
   onSpecialEvent?: (payload: SpecialEventPayload) => void;
   onSurfacePaint?: (updates: Array<{ id: string; paint: [number, number] }>) => void;
+  onEmote?: (payload: EmotePayload) => void;
   onConnect?: () => void;
   onDisconnect: () => void;
   onConnectError: (err: Error) => void;
@@ -148,6 +151,10 @@ export class NetworkClient {
       }
     );
 
+    this.socket.on(PROTOCOL_EVENTS.S2C_EMOTE, (payload: EmotePayload) => {
+      this.callbacks.onEmote?.(payload);
+    });
+
     this.socket.on(
       PROTOCOL_EVENTS.S2C_PONG,
       (data: { clientTime: number; serverTime: number }) => {
@@ -194,6 +201,20 @@ export class NetworkClient {
   sendRemoveBot(): void {
     if (this.socket.connected) {
       this.socket.emit(PROTOCOL_EVENTS.C2S_LOBBY_REMOVE_BOT, {});
+    }
+  }
+
+  /**
+   * Quick-chat request (Booyah / Ouch / map pings). The server rate-limits and
+   * re-broadcasts with authoritative identity, so this only carries the type
+   * and the ping world position.
+   */
+  sendEmote(type: EmoteType, position?: { x: number; z: number }): void {
+    if (!this.socket.connected) return;
+    if (position) {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_EMOTE, { type, x: position.x, z: position.z });
+    } else {
+      this.socket.emit(PROTOCOL_EVENTS.C2S_EMOTE, { type });
     }
   }
 

@@ -1,4 +1,5 @@
 import {
+  EMOTE_DISPLAY_MS,
   ENEMY_INK_DOT,
   HEALTH_REGEN_DELAY,
   HEALTH_REGEN_RATE,
@@ -14,7 +15,7 @@ import {
   WeaponType,
   skillMultiplier
 } from '@ink/shared';
-import type { SkillId } from '@ink/shared';
+import type { EmoteType, SkillId } from '@ink/shared';
 
 export class PlayerState {
   readonly id: string;
@@ -50,6 +51,26 @@ export class PlayerState {
   invulnerableUntil = 0;
   respawnAt = 0;
 
+  // Brella ink-shield state (server-authoritative; mirrored to the snapshot)
+  shieldActive = false;
+  shieldHp = 0;
+  /** Timestamp after which the shield auto-closes. */
+  shieldEndsAt = 0;
+  /** Earliest timestamp the shield may deploy again (cooldown after close/break). */
+  shieldReadyAt = 0;
+
+  // Dualies dodge-roll state
+  /** Timestamp until which the dodge dash (and its invulnerability) lasts. */
+  dodgeUntil = 0;
+  /** Timestamp after which another dodge may start (cooldown). */
+  dodgeReadyAt = 0;
+  /** Normalized horizontal dash direction, captured at dodge start. */
+  dodgeDir: Vec3 = { x: 0, y: 0, z: 0 };
+  /** Brief post-dodge recovery before firing is allowed again. */
+  dodgeRecoveryUntil = 0;
+  /** Which barrel fired last (visual alternation for the twin pistols). */
+  dualieBarrelSide: 1 | -1 = 1;
+
   lastShotTime = 0;
   lastDamageTime = 0;
   lastFiredTime = 0;
@@ -63,6 +84,10 @@ export class PlayerState {
 
   kills = 0;
   deaths = 0;
+
+  /** Most recent quick-chat emote (relayed to late joiners via the snapshot). */
+  lastEmote?: EmoteType;
+  lastEmoteAt = 0;
 
   lastProcessedInputSeq = 0;
 
@@ -104,6 +129,14 @@ export class PlayerState {
     this.fireHeld = false;
     this.lastPaintU = undefined;
     this.lastPaintV = undefined;
+    this.shieldActive = false;
+    this.shieldHp = 0;
+    this.shieldEndsAt = 0;
+    this.shieldReadyAt = 0;
+    this.dodgeUntil = 0;
+    this.dodgeReadyAt = 0;
+    this.dodgeDir = { x: 0, y: 0, z: 0 };
+    this.dodgeRecoveryUntil = 0;
   }
 
   /**
@@ -185,6 +218,11 @@ export class PlayerState {
   }
 
   toSnapshot(): PlayerSnapshot {
+    const now = Date.now();
+    const emoteFresh =
+      this.lastEmote !== undefined &&
+      this.lastEmoteAt > 0 &&
+      now - this.lastEmoteAt <= EMOTE_DISPLAY_MS;
     return {
       id: this.id,
       team: this.team,
@@ -205,8 +243,17 @@ export class PlayerState {
       invulnerable: this.isInvulnerable(),
       kills: this.kills,
       deaths: this.deaths,
+      // Brella shield / Dualies dodge state: cheap scalars, mirrored so remote
+      // clients can render the canopy and the dodge tilt without predicting.
+      shieldActive: this.shieldActive || undefined,
+      shieldHp: this.shieldActive ? Math.max(0, Math.round(this.shieldHp)) : undefined,
+      dodging: this.dodgeUntil > now || undefined,
       isBot: this.isBot || undefined,
-      skills: this.skills.length > 0 ? this.skills : undefined
+      skills: this.skills.length > 0 ? this.skills : undefined,
+      // Only surface a fresh emote: a stale callout on the snapshot path would
+      // make a long-lived entry replay forever on every new viewer.
+      lastEmote: emoteFresh ? this.lastEmote : undefined,
+      lastEmoteAt: emoteFresh ? this.lastEmoteAt : undefined
     };
   }
 }

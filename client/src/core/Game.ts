@@ -1,5 +1,6 @@
 import {
   ARENA_OBSTACLES,
+  EMOTE_DISPLAY_MS,
   GameOverPayload,
   LobbyStatePayload,
   MatchPhase,
@@ -26,7 +27,8 @@ import {
   worldToUV,
   WEAPON_SELECT_DURATION
 } from '@ink/shared';
-import type { GameMode, MapDef, MapId } from '@ink/shared';
+import type { EmotePayload, EmoteType, GameMode, MapDef, MapId } from '@ink/shared';
+import * as THREE from 'three';
 
 import { VisualWeapon } from '../combat/Weapon.js';
 import { ParticleSystem } from '../combat/ParticleSystem.js';
@@ -42,6 +44,7 @@ import { WeaponSelectScreen } from '../ui/WeaponSelectScreen.js';
 import { HUD } from '../ui/HUD.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
 import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
+import { EmoteDisplay, EmoteScreenPoint, EmoteHeadPoint } from '../ui/EmoteDisplay.js';
 import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
 import { lobbyAudio } from '../ui/LobbyAudio.js';
@@ -77,6 +80,7 @@ export class Game {
   private crosshair = new Crosshair();
   private hud = new HUD();
   private minimap: Minimap;
+  private emoteDisplay = new EmoteDisplay();
   private settingsModal: SettingsModal;
   private botController: BotController;
   private botRemotePlayers = new Map<string, RemotePlayer>();
@@ -97,6 +101,8 @@ export class Game {
   private remotePlayers = new Map<string, RemotePlayer>();
   private playerMeta = new Map<string, { name: string; team: Team }>();
   private lastLocalMode = PlayerMode.HUMANOID;
+  /** Latest quick-chat timestamp already surfaced per player (dedupes the 20 Hz snapshot path). */
+  private emoteSeenAt = new Map<string, number>();
 
   private inputSeq = 0;
   private matchPhase: MatchPhase = MatchPhase.WAITING;
@@ -158,6 +164,11 @@ export class Game {
   private readonly scratchMuzzle: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly scratchMuzzleDir: Vec3 = { x: 0, y: 0, z: 0 };
   private readonly scratchAimPoint: Vec3 = { x: 0, y: 0, z: 0 };
+  /** Emote bubble projection scratch (reused, never allocated in the loop). */
+  private readonly emoteScreenPoint: EmoteScreenPoint = { x: 0, y: 0, visible: false };
+  private readonly emoteHeadPoint: EmoteHeadPoint = { x: 0, y: 0, z: 0 };
+  private readonly emoteProjectVec = new THREE.Vector3();
+  private readonly emoteInvQuat = new THREE.Quaternion();
   /** Frame-time sampling for the debug hook (rolling window). */
   private frameTimeHistory: number[] = [];
   private frameTimeMax = 0;
@@ -197,6 +208,10 @@ export class Game {
         this.cycleWeapon(dir);
       }
     });
+    // Quick-chat: D-pad Up / Arrow Up = Booyah!, Down = Ouch!, G = map ping.
+    // The server relays every emote back to all clients (including the sender),
+    // so the local bubble is rendered by the S2C handler only.
+    this.inputManager.setOnEmote((type) => this.handleLocalEmote(type));
 
     this.settingsModal = new SettingsModal({
       onSensitivityChange: (val) => {
@@ -314,6 +329,7 @@ export class Game {
       onSubWeaponEvent: (evt) => this.handleSubWeaponEvent(evt),
       onSpecialEvent: (evt) => this.handleSpecialEvent(evt),
       onSurfacePaint: (updates) => this.paintEngine.applySurfacePaintUpdate(updates),
+      onEmote: (payload) => this.handleEmote(payload),
       onConnect: () => {
         this.hud.hideSyncBanner();
       },
@@ -346,11 +362,12 @@ export class Game {
           this.scoreboard.setVisible(true);
         }
       }
-      // In-match quick weapon switching on 1-8, in the same order the lobby
+      // In-match quick weapon switching on 1-9 + 0, in the same order the lobby
       // grid lists the roster so the keys match what the player just saw.
       const weaponKeys: Record<string, WeaponType> = {};
       (Object.keys(WEAPON_CONFIGS) as WeaponType[]).forEach((id, i) => {
         if (i < 9) weaponKeys[`Digit${i + 1}`] = id;
+        else if (i === 9) weaponKeys.Digit0 = id;
       });
       const weapon = weaponKeys[e.code];
       if (weapon && !e.repeat && this.localPlayer) {
@@ -682,6 +699,32 @@ export class Game {
       this.inputSeq++;
       const input = this.inputManager.getCurrentInput(this.inputSeq);
       input.weaponType = this.localPlayer.weaponType || 'shooter';
+
+      // Dualies dodge roll: predict the dash window locally so the sideways
+      // burst reads on the first frame; the server stays authoritative.
+      if (input.dodge && weaponType === 'dualies' && this.localPlayer.alive) {
+        const dodgeCfg = WEAPON_CONFIGS.dualies;
+        const cosYaw = Math.cos(this.localPlayer.yaw);
+        const sinYaw = Math.sin(this.localPlayer.yaw);
+        const inputRight = input.moveX;
+        const inputForward = -input.moveZ;
+        let dirX = cosYaw * inputRight - sinYaw * inputForward;
+        let dirZ = -sinYaw * inputRight - cosYaw * inputForward;
+        const dirLen = Math.hypot(dirX, dirZ);
+        if (dirLen > 1e-4) {
+          dirX /= dirLen;
+          dirZ /= dirLen;
+        } else {
+          dirX = -sinYaw;
+          dirZ = -cosYaw;
+        }
+        this.localPlayer.dodgeDir = { x: dirX, y: 0, z: dirZ };
+        this.localPlayer.dodgeUntil = performance.now() + (dodgeCfg.dodgeInvulnMs ?? 200);
+        // Tilt toward the tapped side; fall back to the dodge vector's side.
+        const tapDir = this.inputManager.consumeDodgeDirection();
+        const rightness = dirX * cosYaw - dirZ * sinYaw;
+        this.localPlayer.view.setDodging(true, tapDir !== 0 ? tapDir : rightness >= 0 ? 1 : -1);
+      }
 
       const isMoving = (input.moveX !== 0 || input.moveZ !== 0) && this.localPlayer.grounded;
       const isMidair = !this.localPlayer.grounded;
@@ -1231,6 +1274,10 @@ export class Game {
       }
       if (this.squidIndicators.length > squidCount) this.squidIndicators.length = squidCount;
       this.hud.updateTeamSquids(this.squidIndicators);
+
+      // 6.5 Quick-chat bubbles (DOM, projected from world space). Uses the
+      // camera transform updated this frame; pooling keeps it allocation-free.
+      this.emoteDisplay.update(now, this.projectEmoteToScreen, this.resolveEmoteHead);
     }
 
     // 7. Paint Texture Upload (ONLY IF DIRTY, AT MOST ONCE PER RENDER FRAME!)
@@ -1302,6 +1349,8 @@ export class Game {
       if (p.id !== payload.playerId) {
         this.handlePlayerJoined(p);
       }
+      // Late joiner: still show a callout used moments before we joined.
+      this.maybeShowSnapshotEmote(p, payload.serverTime);
     }
 
     // 5. Set match state
@@ -1376,6 +1425,8 @@ export class Game {
       } else if (snap.name) {
         this.remotePlayers.get(snap.id)?.setName(snap.name);
       }
+      // Late-joiner / rejoin surfacing of a recent quick-chat callout.
+      this.maybeShowSnapshotEmote(snap, payload.serverTime);
     }
 
     this.handleMatchState(payload.match);
@@ -1477,6 +1528,175 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Quick-chat / Emotes (Booyah! / Ouch! / tactical map pings)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Local player's quick-chat request. Booyah/Ouch travel as plain callouts;
+   * a tactical ping is resolved from the camera aim ray to a world position
+   * and sent as "Enemy here!" when it lands near an enemy, "This way!"
+   * otherwise. The server rate-limits and relays back to everyone.
+   */
+  private handleLocalEmote(type: 'booyah' | 'ouch' | 'ping'): void {
+    if (!this.localPlayer) return;
+    if (this.lobbyScreen.isVisible() || this.titleScreen.isVisible()) return;
+
+    if (type === 'ping') {
+      const aimRay = this.cameraController.getAimRay();
+      const hit = this.collisionWorld.castRay(aimRay, 60);
+      const range = 60;
+      const px = hit.hit
+        ? hit.point.x
+        : aimRay.origin.x + aimRay.direction.x * range;
+      const pz = hit.hit
+        ? hit.point.z
+        : aimRay.origin.z + aimRay.direction.z * range;
+
+      let emote: EmoteType = 'ping_area';
+      const enemyTeam = this.localPlayer.team === Team.PINK ? Team.CYAN : Team.PINK;
+      for (const remote of this.remotePlayers.values()) {
+        if (remote.team !== enemyTeam || !remote.alive) continue;
+        if (Math.hypot(remote.position.x - px, remote.position.z - pz) < 3.5) {
+          emote = 'ping_enemy';
+          break;
+        }
+      }
+      if (emote === 'ping_area') {
+        for (const bot of this.botController.getBots()) {
+          if (bot.team !== enemyTeam || !bot.alive) continue;
+          if (Math.hypot(bot.position.x - px, bot.position.z - pz) < 3.5) {
+            emote = 'ping_enemy';
+            break;
+          }
+        }
+      }
+      this.networkClient.sendEmote(emote, { x: px, z: pz });
+      return;
+    }
+
+    this.networkClient.sendEmote(type);
+  }
+
+  /**
+   * Relay handler for every emote (sender included): renders the 3D bubble,
+   * feeds "Booyah!" to the kill feed and marks pings / "Ouch!" SOS positions
+   * on the radar for teammates.
+   */
+  private handleEmote(payload: EmotePayload): void {
+    this.emoteSeenAt.set(payload.playerId, payload.timestamp);
+
+    // 3D bubble above the sender's head (fall back to the pinged position).
+    if (this.resolveEmoteHead(payload.playerId, this.emoteHeadPoint)) {
+      this.emoteDisplay.show(
+        payload.playerId,
+        payload.playerName,
+        payload.team,
+        payload.type,
+        this.emoteHeadPoint.x,
+        this.emoteHeadPoint.y,
+        this.emoteHeadPoint.z
+      );
+    } else if (payload.position) {
+      this.emoteDisplay.show(
+        payload.playerId,
+        payload.playerName,
+        payload.team,
+        payload.type,
+        payload.position.x,
+        payload.position.y + 2.05,
+        payload.position.z
+      );
+    }
+
+    if (payload.type === 'booyah') {
+      // Non-combat kill-feed entry for encouragement callouts.
+      this.hud.addKillFeedEntry(
+        payload.playerName,
+        payload.team,
+        t('emote.booyah'),
+        payload.team,
+        '⭐'
+      );
+      return;
+    }
+
+    // Map markers: teammates only — an enemy's ping never touches our radar.
+    if (!payload.position || !this.localPlayer || payload.team !== this.localPlayer.team) {
+      return;
+    }
+    if (
+      payload.type === 'ping_enemy' ||
+      payload.type === 'ping_area' ||
+      payload.type === 'ping_defend' ||
+      payload.type === 'ouch'
+    ) {
+      this.minimap.addPing(payload.type, payload.position.x, payload.position.z, payload.team);
+    }
+  }
+
+  /**
+   * Surfaces a snapshot-carried emote for late joiners (once per emote: the
+   * 20 Hz snapshot repeats `lastEmote` for EMOTE_DISPLAY_MS and the dedupe
+   * map keyed by the server timestamp keeps it from replaying).
+   */
+  private maybeShowSnapshotEmote(snap: PlayerSnapshot, serverNow: number): void {
+    if (!snap.lastEmote || !snap.lastEmoteAt) return;
+    if (serverNow - snap.lastEmoteAt > EMOTE_DISPLAY_MS) return;
+    if (snap.lastEmoteAt <= (this.emoteSeenAt.get(snap.id) ?? 0)) return;
+    this.handleEmote({
+      playerId: snap.id,
+      playerName: snap.name ?? '',
+      team: snap.team,
+      type: snap.lastEmote,
+      timestamp: snap.lastEmoteAt
+    });
+  }
+
+  /** Follows the sender's head so bubbles track moving players. */
+  private resolveEmoteHead = (playerId: string, out: EmoteHeadPoint): boolean => {
+    const lp = this.localPlayer;
+    if (lp && playerId === lp.id) {
+      out.x = lp.position.x;
+      out.y = lp.position.y + 2.05;
+      out.z = lp.position.z;
+      return true;
+    }
+    const remote = this.remotePlayers.get(playerId) ?? this.botRemotePlayers.get(playerId);
+    if (remote) {
+      out.x = remote.position.x;
+      out.y = remote.position.y + 2.05;
+      out.z = remote.position.z;
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * Projects a world point to CSS-pixel screen coordinates using the current
+   * camera transform (position/quaternion set earlier this frame). Writes into
+   * `out`; reusable scratch vectors keep the render loop allocation-free.
+   */
+  private projectEmoteToScreen = (wx: number, wy: number, wz: number, out: EmoteScreenPoint): void => {
+    const cam = this.renderer.camera;
+    // View space: subtract camera position, rotate by the inverse orientation.
+    this.emoteProjectVec.set(wx, wy, wz).sub(cam.position);
+    this.emoteInvQuat.copy(cam.quaternion).invert();
+    this.emoteProjectVec.applyQuaternion(this.emoteInvQuat);
+    // In front of the camera only (view space looks down -z).
+    if (this.emoteProjectVec.z >= -0.05) {
+      out.visible = false;
+      return;
+    }
+    const depth = -this.emoteProjectVec.z;
+    const fovScale = 1 / Math.tan((cam.fov * Math.PI) / 360);
+    const ndcX = ((this.emoteProjectVec.x * fovScale) / depth) / cam.aspect;
+    const ndcY = (this.emoteProjectVec.y * fovScale) / depth;
+    out.x = (ndcX * 0.5 + 0.5) * window.innerWidth;
+    out.y = (-ndcY * 0.5 + 0.5) * window.innerHeight;
+    out.visible = ndcX >= -1.05 && ndcX <= 1.05 && ndcY >= -1.05 && ndcY <= 1.05;
+  };
+
   private handlePlayerJoined(snap: PlayerSnapshot): void {
     if (this.remotePlayers.has(snap.id)) return;
 
@@ -1491,6 +1711,7 @@ export class Game {
   }
 
   private handlePlayerLeft(playerId: string): void {
+    this.emoteSeenAt.delete(playerId);
     const remote = this.remotePlayers.get(playerId);
     if (remote) {
       this.renderer.scene.remove(remote.view.group);
@@ -1625,6 +1846,11 @@ export class Game {
       this.totalPaintEventsReceived = 0;
       this.respawnEndsAt = 0;
       this.hud.hideDeathOverlay();
+      // Quick-chat state resets with the round.
+      this.emoteSeenAt.clear();
+      this.emoteDisplay.clear();
+      this.minimap.clearPings();
+      this.inputManager.resetEmoteCooldown();
     } else if (prevPhase !== MatchPhase.WEAPON_SELECT && state.phase === MatchPhase.WEAPON_SELECT) {
       // Entering weapon select for the first time this round
       if (!this.weaponSelectScreen) {
@@ -1828,6 +2054,7 @@ export class Game {
     this.paintEngine.dispose();
     this.weaponVisual.dispose();
     this.particleSystem.dispose();
+    this.emoteDisplay.clear();
     this.localPlayer?.dispose();
     for (const r of this.remotePlayers.values()) {
       r.dispose();

@@ -40,14 +40,20 @@ export type WeaponType =
   | 'sprayer'
   | 'cannon'
   | 'marksman'
-  | 'scatter';
+  | 'scatter'
+  /** Umbrella weapon: single shot plus a deployable ink shield. */
+  | 'brella'
+  /** Twin pistols: enables the dodge roll with brief invulnerability. */
+  | 'dualies';
 export type SubWeaponType =
   | 'splat_bomb'
   | 'burst_bomb'
   | 'curling_bomb'
   | 'ink_mine'
   | 'bounce_bomb'
-  | 'ink_puddle';
+  | 'ink_puddle'
+  /** Homing torpedo that steers toward the nearest enemy (Brella sub). */
+  | 'torpedo';
 export type SpecialWeaponType =
   | 'inkstrike'
   | 'ink_storm'
@@ -63,6 +69,12 @@ export type GameMode =
   /** Coverage is sampled on a timer; only the last sample decides the winner. */
   | 'final_push';
 export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost';
+
+/**
+ * Quick-chat / emote types. `booyah` and `ouch` are the two voice-channel-free
+ * callouts; the `ping_*` variants are tactical map markers placed on the radar.
+ */
+export type EmoteType = 'booyah' | 'ouch' | 'ping_enemy' | 'ping_area' | 'ping_defend';
 export type SkillId =
   | 'ink_saver'
   | 'ink_recovery'
@@ -148,6 +160,8 @@ export interface PlayerInput {
   special?: boolean;
   chargeLevel?: number;
   weaponType?: WeaponType;
+  /** One-shot dodge-roll request (Dualies). Consumed by the server per press. */
+  dodge?: boolean;
 }
 
 export interface PlayerSnapshot {
@@ -169,9 +183,22 @@ export interface PlayerSnapshot {
   specialMeter?: number;
   specialActive?: boolean;
   chargeLevel?: number;
+  /** Brella ink shield state: up now, and how much HP it has left. */
+  shieldActive?: boolean;
+  shieldHp?: number;
+  /** True while a Dualies dodge roll is in progress. */
+  dodging?: boolean;
   name?: string;
   isBot?: boolean;
   skills?: SkillId[];
+  /**
+   * Most recent emote this player used. Carried on the 20 Hz snapshot so late
+   * joiners (and rejoining players) still see the last callout above the
+   * character; the client ages it out visually.
+   */
+  lastEmote?: EmoteType;
+  /** Server timestamp (ms) of `lastEmote`; lets the client skip stale entries. */
+  lastEmoteAt?: number;
 }
 
 export interface PaintEvent {
@@ -314,6 +341,21 @@ export interface ShotEventPayload {
   team: Team;
   weaponType?: WeaponType;
   chargeLevel?: number;
+}
+
+/**
+ * Quick-chat relay payload. The server never trusts `playerName`/`team` from
+ * the wire — they are overwritten with the authoritative roster values before
+ * the event is broadcast back out.
+ */
+export interface EmotePayload {
+  playerId: string;
+  playerName: string;
+  team: Team;
+  type: EmoteType;
+  /** World position for map pings; undefined for booyah/ouch callouts. */
+  position?: Vec3;
+  timestamp: number;
 }
 
 // Aliases & Domain Specifications for Subagent 01

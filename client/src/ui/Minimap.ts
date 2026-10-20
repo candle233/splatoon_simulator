@@ -1,4 +1,4 @@
-import { ARENA_SIZE, BoxObstacle, ClimbableSurface, Team, Vec3, spawnXForSize } from '@ink/shared';
+import { ARENA_SIZE, BoxObstacle, ClimbableSurface, EmoteType, Team, Vec3, spawnXForSize } from '@ink/shared';
 import { PaintEngine } from '../world/PaintEngine.js';
 import { t } from '../i18n.js';
 
@@ -9,6 +9,20 @@ export interface MinimapPlayerData {
   alive: boolean;
   isSubmerged?: boolean;
 }
+
+/** A tactical map ping placed by a teammate's quick-chat. */
+interface MinimapPing {
+  type: EmoteType;
+  /** World coordinates of the pinged spot. */
+  x: number;
+  z: number;
+  team: Team;
+  /** performance.now() (ms) when the ping arrived. */
+  at: number;
+}
+
+const PING_LIFETIME_MS = 3000;
+const MAX_PINGS = 12;
 
 export class Minimap {
   private container: HTMLElement;
@@ -24,6 +38,7 @@ export class Minimap {
   private zone: { x: number; z: number; w: number; d: number } | undefined;
   private zoneOwner: Team | null = null;
   private climbables: ClimbableSurface[] = [];
+  private pings: MinimapPing[] = [];
 
   constructor(paintEngine: PaintEngine) {
     this.paintEngine = paintEngine;
@@ -122,6 +137,21 @@ export class Minimap {
   /** Sets climbable vertical walls for tactical route display. */
   setClimbables(surfaces: ClimbableSurface[]): void {
     this.climbables = surfaces || [];
+  }
+
+  /**
+   * Adds a tactical quick-chat ping ('ouch' SOS, 'ping_enemy', 'ping_area',
+   * 'ping_defend') at world coordinates. Markers pulse 3 times, then fade out
+   * after 3s; the list is capped so a ping flood cannot grow it unbounded.
+   */
+  addPing(type: EmoteType, x: number, z: number, team: Team): void {
+    this.pings.push({ type, x, z, team, at: performance.now() });
+    if (this.pings.length > MAX_PINGS) this.pings.shift();
+  }
+
+  /** Removes all map pings (match reset). */
+  clearPings(): void {
+    this.pings.length = 0;
   }
 
   update(
@@ -338,6 +368,48 @@ export class Minimap {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
+    // 6.5 Draw tactical quick-chat pings (pulse 3x, fade after 3s)
+    if (this.pings.length > 0) {
+      let write = 0;
+      for (const ping of this.pings) {
+        const age = now - ping.at;
+        if (age > PING_LIFETIME_MS) continue; // expired: compact in place
+        this.pings[write++] = ping;
+
+        const px = toPx(ping.x);
+        const py = toPy(ping.z);
+        // Tail fade over the last 600ms of life.
+        const fade = age > PING_LIFETIME_MS - 600 ? (PING_LIFETIME_MS - age) / 600 : 1;
+        // 3 pulses across the 3s lifetime (1 Hz).
+        const pulseT = (age % 1000) / 1000;
+        const pulseR = 5 + pulseT * 8;
+        const alpha = Math.max(0, 1 - pulseT) * 0.75 * fade;
+        const teamColor = ping.team === Team.PINK ? '#ff007f' : '#00ffff';
+
+        // Expanding pulse ring, team-colored
+        ctx.beginPath();
+        ctx.arc(px, py, pulseR, 0, Math.PI * 2);
+        ctx.strokeStyle = teamColor;
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+
+        // Solid core disc with team-colored border
+        ctx.globalAlpha = fade;
+        ctx.beginPath();
+        ctx.arc(px, py, 5.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 17, 24, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = teamColor;
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+
+        this.drawPingIcon(ctx, px, py, ping.type, teamColor);
+        ctx.globalAlpha = 1.0;
+      }
+      this.pings.length = write;
+    }
+
     // 7. Draw Remote Players (Teammate Beacons vs Enemy Indicators)
     for (const rp of remotePlayers) {
       if (!rp.alive) continue;
@@ -491,5 +563,70 @@ export class Minimap {
     ctx.fillStyle = 'rgba(180, 200, 230, 0.7)';
     ctx.textAlign = 'right';
     ctx.fillText('4-TIER 12m', w - 4, h - 4);
+  }
+
+  /**
+   * Stylized vector glyphs inside the ping marker:
+   * enemy = red skull, area = yellow arrow, defend = blue shield, ouch = SOS mark.
+   */
+  private drawPingIcon(
+    ctx: CanvasRenderingContext2D,
+    px: number,
+    py: number,
+    type: EmoteType,
+    teamColor: string
+  ): void {
+    switch (type) {
+      case 'ping_enemy': {
+        // Red skull: dome + jaw + eye sockets
+        ctx.fillStyle = '#ff3344';
+        ctx.beginPath();
+        ctx.arc(px, py - 0.8, 2.9, Math.PI, 0);
+        ctx.lineTo(px + 2.9, py + 1.6);
+        ctx.lineTo(px + 1.4, py + 1.6);
+        ctx.lineTo(px + 0.9, py + 3.2);
+        ctx.lineTo(px - 0.9, py + 3.2);
+        ctx.lineTo(px - 1.4, py + 1.6);
+        ctx.lineTo(px - 2.9, py + 1.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#0f1118';
+        ctx.fillRect(px - 2, py - 1.4, 1.3, 1.3);
+        ctx.fillRect(px + 0.7, py - 1.4, 1.3, 1.3);
+        break;
+      }
+      case 'ping_area': {
+        // Yellow chevron arrow ("this way")
+        ctx.fillStyle = '#ffea00';
+        ctx.beginPath();
+        ctx.moveTo(px, py - 3.4);
+        ctx.lineTo(px + 3.1, py + 2.4);
+        ctx.lineTo(px, py + 0.9);
+        ctx.lineTo(px - 3.1, py + 2.4);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case 'ping_defend': {
+        // Blue shield
+        ctx.fillStyle = '#3b9dff';
+        ctx.beginPath();
+        ctx.moveTo(px - 3, py - 3);
+        ctx.lineTo(px + 3, py - 3);
+        ctx.lineTo(px + 3, py + 0.4);
+        ctx.lineTo(px, py + 3.4);
+        ctx.lineTo(px - 3, py + 0.4);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      default: {
+        // 'ouch' SOS: exclamation mark in the team color
+        ctx.fillStyle = teamColor;
+        ctx.fillRect(px - 0.8, py - 3.4, 1.6, 4.4);
+        ctx.fillRect(px - 0.8, py + 2, 1.6, 1.6);
+        break;
+      }
+    }
   }
 }

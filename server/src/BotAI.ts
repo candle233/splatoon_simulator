@@ -196,6 +196,7 @@ export class BotAI {
     input.fire = false;
     input.special = false;
     input.subWeapon = false;
+    input.dodge = false;
     input.clientTime = now;
 
     if (!bot.alive || bot.mode === PlayerMode.DEAD) {
@@ -368,13 +369,20 @@ export class BotAI {
       (bot.weaponType === 'charger' ? 26 : bot.weaponType === 'roller' ? 2.5 : bot.weaponType === 'slosher' ? 12 : 13);
 
     if (now >= mem.nextStrafeFlipAt) {
+      // Dualies strafe more aggressively: faster flips keep them slippery.
       mem.strafeDir = mem.strafeDir === 1 ? -1 : 1;
-      mem.nextStrafeFlipAt = now + 900 + Math.random() * 1400;
+      mem.nextStrafeFlipAt =
+        now + (bot.weaponType === 'dualies' ? 500 + Math.random() * 700 : 900 + Math.random() * 1400);
     }
 
     let forward = 0;
     if (dist > preferred + 3) forward = -1;
     else if (dist < preferred - 2) forward = 1;
+
+    // Brella bots hold range while wounded: back off behind the canopy.
+    if (bot.weaponType === 'brella' && bot.hp < 50 && forward === 0) {
+      forward = -1;
+    }
 
     input.moveX = mem.strafeDir * (forward === 0 ? 1 : 0.55);
     input.moveZ = forward;
@@ -383,6 +391,18 @@ export class BotAI {
     if (mLen > 1) {
       input.moveX /= mLen;
       input.moveZ /= mLen;
+    }
+
+    // Dualies dodge: react to recent damage while the roll is off cooldown,
+    // dodging sideways relative to the enemy.
+    if (
+      bot.weaponType === 'dualies' &&
+      now - bot.lastDamageTime < 800 &&
+      now >= bot.dodgeReadyAt &&
+      bot.ink >= (weaponConfig.dodgeInkCost ?? 15)
+    ) {
+      input.dodge = true;
+      input.moveX = mem.strafeDir;
     }
 
     // Fire control
@@ -396,6 +416,10 @@ export class BotAI {
         input.chargeLevel = 0.9 + Math.random() * 0.1;
         mem.chargeStartAt = now + 300 + Math.random() * 400;
       }
+    } else if (bot.weaponType === 'brella') {
+      // Keep firing: each shot re-opens the canopy shield (autoOpen), so the
+      // shield cycles for free as long as the bot is engaging.
+      input.fire = true;
     } else {
       input.fire = true;
     }

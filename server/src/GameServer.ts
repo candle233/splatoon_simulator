@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import { Server, Socket } from 'socket.io';
 import {
+  EMOTE_COOLDOWN_MS,
   FIXED_DT,
   GameOverPayload,
   INPUT_STALE_MS,
@@ -32,7 +33,7 @@ import {
   isValidWeaponType,
   sanitizeSkills
 } from '@ink/shared';
-import type { GameMode, MapId } from '@ink/shared';
+import type { EmotePayload, GameMode, MapId } from '@ink/shared';
 
 import { CollisionWorld } from './Collision.js';
 import { BotAI } from './BotAI.js';
@@ -42,7 +43,7 @@ import { PaintGrid } from './PaintGrid.js';
 import { PlayerState } from './PlayerState.js';
 import { RateLimiter } from './RateLimiter.js';
 import { WeaponSimulation } from './WeaponSimulation.js';
-import { sanitizeAvatar, sanitizePlayerInput } from './validation.js';
+import { sanitizeAvatar, sanitizeEmote, sanitizePlayerInput } from './validation.js';
 
 const BOT_WEAPONS: WeaponType[] = [
   'shooter',
@@ -52,7 +53,9 @@ const BOT_WEAPONS: WeaponType[] = [
   'sprayer',
   'cannon',
   'marksman',
-  'scatter'
+  'scatter',
+  'brella',
+  'dualies'
 ];
 
 export class GameServer {
@@ -391,6 +394,45 @@ export class GameServer {
       });
     });
 
+    // Quick-chat relay (Booyah / Ouch / map pings). Two gates: the token
+    // bucket absorbs bursts, and the explicit EMOTE_COOLDOWN_MS check enforces
+    // the 1-emote-per-0.5s rate limit (the shared bucket alone refills far
+    // faster). Identity fields are overwritten with roster values so a client
+    // cannot spoof another player's callout.
+    socket.on(PROTOCOL_EVENTS.C2S_EMOTE, (raw: unknown) => {
+      if (!this.rateLimiter.consume(`emote:${playerId}`, 1)) return;
+
+      const sender = this.players.get(playerId);
+      if (!sender) return;
+
+      const now = Date.now();
+      if (sender.lastEmoteAt > 0 && now - sender.lastEmoteAt < EMOTE_COOLDOWN_MS) return;
+
+      const sanitized = sanitizeEmote(raw);
+      if (!sanitized) return;
+
+      sender.lastEmote = sanitized.type;
+      sender.lastEmoteAt = now;
+
+      // "Ouch!" carries the sender's current position so teammates' radars can
+      // mark where help is needed; pings carry the clicked spot.
+      const position =
+        sanitized.position ??
+        (sanitized.type === 'ouch'
+          ? { x: sender.position.x, y: sender.position.y, z: sender.position.z }
+          : undefined);
+
+      const payload: EmotePayload = {
+        playerId: sender.id,
+        playerName: sender.name,
+        team: sender.team,
+        type: sanitized.type,
+        position,
+        timestamp: now
+      };
+      this.io.emit(PROTOCOL_EVENTS.S2C_EMOTE, payload);
+    });
+
     socket.on('disconnect', () => {
       this.handlePlayerDisconnect(playerId);
     });
@@ -523,6 +565,7 @@ export class GameServer {
     this.playerLastActiveTime.delete(playerId);
     this.rateLimiter.remove(`input:${playerId}`);
     this.rateLimiter.remove(`ping:${playerId}`);
+    this.rateLimiter.remove(`emote:${playerId}`);
 
     // If no humans remain after removal, tear down the bot match.
     const humansLeft = this.roster().some((p) => !p.isBot);
@@ -732,7 +775,8 @@ export class GameServer {
               moveZ: 0,
               jump: false,
               fire: false,
-              squid: false
+              squid: false,
+              dodge: false
             };
           }
         }
@@ -916,10 +960,27 @@ export class GameServer {
       }
     }
 
+    // Process Dualies dodge roll
+    if (input.dodge && this.match.phase === MatchPhase.PLAYING) {
+      const dodgeRes = this.weaponSim.processDodge(player, now, input.moveX, input.moveZ);
+      if (dodgeRes.dodged) {
+        for (const pe of dodgeRes.paintEvents) {
+          this.recordPaintEvent(pe);
+        }
+      }
+    }
+
+    // Brella shield housekeeping: auto-close once the duration elapses so the
+    // snapshot stops reporting an active canopy; the recharge follows.
+    if (player.shieldActive && now >= player.shieldEndsAt) {
+      this.weaponSim.closeBrellaShield(player, now);
+    }
+
     // Edge flags are one-shot per press; clear them on the stored snapshot so
     // the next tick (before a newer input arrives) cannot consume them again.
     input.subWeapon = false;
     input.special = false;
+    input.dodge = false;
   }
 
   private recordPaintEvent(event: PaintEvent): void {

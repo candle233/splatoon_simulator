@@ -12,6 +12,7 @@ import {
   SkillId,
   Team,
   Vec3,
+  WEAPON_CONFIGS,
   WeaponType,
   computeMovementVelocity,
   enforceSpawnBarrier,
@@ -65,6 +66,9 @@ export class LocalPlayer {
   specialMeter = 0;
   specialActive = false;
   chargeLevel = 0;
+  // Dualies dodge roll prediction state (mirrors the server's PlayerState).
+  dodgeUntil = 0;
+  dodgeDir: Vec3 = { x: 0, y: 0, z: 0 };
   /**
    * Gear skills as reported by the server snapshot. Client-side prediction must
    * use the same run_speed / swim_speed multipliers or every prediction frame
@@ -145,6 +149,17 @@ export class LocalPlayer {
     stepVel.x = vx;
     stepVel.y = vel.y;
     stepVel.z = vz;
+
+    // Dualies dodge roll: while the dodge window is open, the captured dash
+    // vector overrides normal movement so prediction matches the server.
+    const nowMs = performance.now();
+    if (this.dodgeUntil > nowMs && (this.dodgeDir.x !== 0 || this.dodgeDir.z !== 0)) {
+      const dodgeCfg = WEAPON_CONFIGS.dualies;
+      const windowSec = Math.max(0.05, (dodgeCfg.dodgeInvulnMs ?? 200) / 1000);
+      const dodgeSpeed = (dodgeCfg.dodgeDistance ?? 6) / windowSec;
+      stepVel.x = this.dodgeDir.x * dodgeSpeed;
+      stepVel.z = this.dodgeDir.z * dodgeSpeed;
+    }
 
     let stepGrounded = grounded;
     if (input.jump && stepGrounded) {
@@ -374,6 +389,13 @@ export class LocalPlayer {
     if (snapshot.chargeLevel !== undefined) {
       this.chargeLevel = snapshot.chargeLevel;
     }
+    // Brella shield / Dualies dodge state, mirrored from the authoritative
+    // snapshot; the local prediction keeps its own dodge vector in sync below.
+    if (snapshot.dodging === undefined) {
+      this.dodgeUntil = 0;
+      this.dodgeDir = { x: 0, y: 0, z: 0 };
+    }
+    this.view.setShieldActive(Boolean(snapshot.shieldActive), (snapshot.shieldHp ?? 100) / 100);
     // The server omits `skills` when the loadout is empty, so clear rather than
     // keep a stale loadout after the player unequips everything.
     this.skills = snapshot.skills ?? [];

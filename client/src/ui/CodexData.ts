@@ -172,7 +172,9 @@ function weaponItems(): CodexItem[] {
     sprayer: 'sprayer',
     cannon: 'cannon',
     marksman: 'marksman',
-    scatter: 'scatter'
+    scatter: 'scatter',
+    brella: 'shooter',
+    dualies: 'shooter'
   };
   return (Object.keys(WEAPON_CONFIGS) as WeaponType[]).map((id) => {
     const cfg = WEAPON_CONFIGS[id];
@@ -227,6 +229,10 @@ function weaponImg(id: WeaponType): string {
       return '/assets/weapons/marksman.jpg';
     case 'scatter':
       return '/assets/weapons/scatter.jpg';
+    case 'brella':
+      return '/assets/weapons/brella.jpg';
+    case 'dualies':
+      return '/assets/weapons/dualies.jpg';
     default:
       return '/assets/weapons/splattershot.jpg';
   }
@@ -244,6 +250,8 @@ function subImg(id: SubWeaponType): string {
       return '/assets/weapons/bounce_bomb.jpg';
     case 'ink_puddle':
       return '/assets/weapons/ink_puddle.jpg';
+    case 'torpedo':
+      return '/assets/weapons/torpedo.jpg';
     default:
       return '/assets/weapons/splat_bomb.jpg';
   }

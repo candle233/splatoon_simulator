@@ -8,6 +8,7 @@ import {
   SQUID_HEIGHT,
   Team,
   Vec3,
+  WEAPON_CONFIGS,
   clamp,
   computeMovementVelocity,
   enforceSpawnBarrier,
@@ -129,6 +130,17 @@ export class MovementSimulation {
     const { vx, vz } = computeMovementVelocity(player.yaw, input.moveX, input.moveZ, currentSpeed);
     player.velocity.x = vx;
     player.velocity.z = vz;
+
+    // 6.5 Dualies dodge roll: while the dodge window is open, the dash vector
+    // captured at dodge start overrides normal movement so the roll carries the
+    // player through enemy fire at a fixed speed.
+    if (player.dodgeUntil > now && (player.dodgeDir.x !== 0 || player.dodgeDir.z !== 0)) {
+      const dodgeCfg = WEAPON_CONFIGS.dualies;
+      const windowSec = Math.max(0.05, (dodgeCfg.dodgeInvulnMs ?? 200) / 1000);
+      const dodgeSpeed = (dodgeCfg.dodgeDistance ?? 6) / windowSec;
+      player.velocity.x = player.dodgeDir.x * dodgeSpeed;
+      player.velocity.z = player.dodgeDir.z * dodgeSpeed;
+    }
 
     // 7. Jump
     if (input.jump && player.grounded) {

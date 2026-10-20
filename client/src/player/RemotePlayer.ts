@@ -80,6 +80,9 @@ export class RemotePlayer {
     this.view.setMode(state.alive ? state.mode : PlayerMode.DEAD);
     this.view.updateLocomotion(dt, speed, state.position.y <= 0.2, state.pitch);
     this.view.updateVisuals(state.invulnerable, time, state.ink ?? 100);
+    // Brella shield canopy / Dualies dodge tilt, mirrored from the snapshot.
+    this.view.setShieldActive(Boolean(state.shieldActive), (state.shieldHp ?? 100) / 100);
+    this.view.setDodging(Boolean(state.dodging));
   }
 
   setName(name: string): void {

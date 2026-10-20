@@ -241,7 +241,7 @@ const scratchPos = new THREE.Vector3();
 const scratchScale = new THREE.Vector3();
 
 /**
- * Direct per-weapon-type group mapping. Each of the eight weapon types now has
+ * Direct per-weapon-type group mapping. Each of the ten weapon types now has
  * its own dedicated visual model so players can tell them apart at a glance.
  */
 const WEAPON_GROUPS: Record<WeaponType, string> = {
@@ -252,7 +252,9 @@ const WEAPON_GROUPS: Record<WeaponType, string> = {
   marksman: 'marksman',
   roller: 'roller',
   charger: 'charger',
-  slosher: 'slosher'
+  slosher: 'slosher',
+  brella: 'brella',
+  dualies: 'dualies'
 };
 
 function addPart(
@@ -370,6 +372,10 @@ export class PlayerView {
   private cannonGroup = new THREE.Group();
   private marksmanGroup = new THREE.Group();
   private scatterGroup = new THREE.Group();
+  private brellaGroup = new THREE.Group();
+  private dualiesGroup = new THREE.Group();
+  private brellaCanopyGroup = new THREE.Group();
+  private brellaShieldMesh?: THREE.Mesh;
   private muzzleFlashMesh!: THREE.Mesh;
   private rollerCylinderMesh?: THREE.Mesh;
   private chargerLaserMesh?: THREE.Mesh;
@@ -400,6 +406,11 @@ export class PlayerView {
 
   private currentMode: PlayerMode = PlayerMode.HUMANOID;
   private currentWeapon: WeaponType = 'shooter';
+
+  // Brella shield / Dualies dodge visual state
+  private shieldActive = false;
+  private shieldHpFrac = 1;
+  private dodgeTiltTimer = 0;
 
   // Animation state
   private walkPhase = 0;
@@ -1157,6 +1168,114 @@ export class PlayerView {
     this.scatterGroup.visible = false;
     this.weaponAnchor.add(this.scatterGroup);
 
+    // 2.9 Brella — umbrella launcher: canopy group animates open/closed, and a
+    // translucent forward shield disc appears while the shield is active.
+    const brellaBarrel = new THREE.Mesh(cyl(0.045, 0.055, 0.4, 10), P.mats.dark);
+    brellaBarrel.rotation.z = Math.PI / 2;
+    brellaBarrel.position.z = -0.25;
+    this.brellaGroup.add(brellaBarrel);
+    const brellaReceiver = new THREE.Mesh(box(0.13, 0.15, 0.3), P.mats.team);
+    this.brellaGroup.add(brellaReceiver);
+    const brellaRim = new THREE.Mesh(torus(0.055, 0.012, 6, 14), P.mats.trim);
+    brellaRim.position.z = -0.45;
+    this.brellaGroup.add(brellaRim);
+    const brellaShaft = new THREE.Mesh(cyl(0.022, 0.022, 0.5, 8), P.mats.soft);
+    brellaShaft.position.set(0, -0.12, 0.1);
+    this.brellaGroup.add(brellaShaft);
+    const brellaGrip = new THREE.Mesh(torus(0.06, 0.018, 6, 12, Math.PI), P.mats.rubber);
+    brellaGrip.position.set(0, -0.36, 0.1);
+    brellaGrip.rotation.z = Math.PI;
+    this.brellaGroup.add(brellaGrip);
+    const brellaTrigger = new THREE.Mesh(box(0.03, 0.05, 0.03), P.mats.trim);
+    brellaTrigger.position.set(0, -0.09, 0.16);
+    this.brellaGroup.add(brellaTrigger);
+
+    // Canopy (own group so it can pop open / fold closed with a scale-y anim)
+    const canopyMat = new THREE.MeshStandardMaterial({
+      color: this.teamColorHex,
+      roughness: 0.4,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide
+    });
+    this.materials.push(canopyMat);
+    const canopy = new THREE.Mesh(cone(0.42, 0.22, 8), canopyMat);
+    canopy.position.set(0, 0.26, -0.18);
+    this.brellaCanopyGroup.add(canopy);
+    const canopyRim = new THREE.Mesh(torus(0.4, 0.018, 6, 16), P.mats.dark);
+    canopyRim.rotation.x = Math.PI / 2;
+    canopyRim.position.set(0, 0.2, -0.18);
+    this.brellaCanopyGroup.add(canopyRim);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const rib = new THREE.Mesh(cyl(0.008, 0.008, 0.42, 5), P.mats.dark);
+      rib.position.set(Math.cos(a) * 0.19, 0.15, -0.18 + Math.sin(a) * 0.19);
+      rib.rotation.z = Math.cos(a) * 0.85;
+      rib.rotation.x = -Math.sin(a) * 0.85;
+      this.brellaCanopyGroup.add(rib);
+    }
+    const finial = new THREE.Mesh(sph(0.025, 6, 6), P.mats.trim);
+    finial.position.set(0, 0.38, -0.18);
+    this.brellaCanopyGroup.add(finial);
+    this.brellaGroup.add(this.brellaCanopyGroup);
+    this.brellaGroup.visible = false;
+    this.weaponAnchor.add(this.brellaGroup);
+
+    // Forward shield canopy: translucent team shell between the player and
+    // enemies while the Brella shield is up (slightly emissive read).
+    const shieldMat = new THREE.MeshBasicMaterial({
+      color: this.teamColorHex,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    this.materials.push(shieldMat);
+    this.brellaShieldMesh = new THREE.Mesh(cone(0.55, 0.5, 10), shieldMat);
+    this.brellaShieldMesh.rotation.x = Math.PI / 2;
+    this.brellaShieldMesh.position.set(0, 1.05, -1.15);
+    this.brellaShieldMesh.visible = false;
+    this.humanoidGroup.add(this.brellaShieldMesh);
+
+    // 2.10 Dualies — twin compact pistols, left + right
+    const makeDualie = (side: number): THREE.Group => {
+      const pistol = new THREE.Group();
+      const slide = new THREE.Mesh(box(0.07, 0.09, 0.24), P.mats.dark);
+      pistol.add(slide);
+      const receiver = new THREE.Mesh(box(0.075, 0.05, 0.16), P.mats.team);
+      receiver.position.y = 0.065;
+      pistol.add(receiver);
+      const barrel = new THREE.Mesh(cyl(0.024, 0.026, 0.12, 8), P.mats.dark);
+      barrel.rotation.z = Math.PI / 2;
+      barrel.position.z = -0.17;
+      pistol.add(barrel);
+      const muzzle = new THREE.Mesh(cyl(0.018, 0.032, 0.03, 8), P.mats.trim);
+      muzzle.rotation.z = Math.PI / 2;
+      muzzle.position.z = -0.24;
+      pistol.add(muzzle);
+      const grip = new THREE.Mesh(box(0.06, 0.16, 0.08), P.mats.rubber);
+      grip.position.set(0, -0.11, 0.07);
+      grip.rotation.x = 0.3;
+      pistol.add(grip);
+      const guard = new THREE.Mesh(torus(0.032, 0.008, 6, 10, Math.PI), P.mats.trim);
+      guard.position.set(0, -0.06, 0.02);
+      pistol.add(guard);
+      const sight = new THREE.Mesh(box(0.012, 0.025, 0.012), P.mats.trim);
+      sight.position.set(0, 0.1, -0.2);
+      pistol.add(sight);
+      pistol.position.set(side * 0.13, -0.02, -0.05);
+      pistol.rotation.y = side * -0.14;
+      return pistol;
+    };
+    this.dualiesGroup.add(makeDualie(-1));
+    this.dualiesGroup.add(makeDualie(1));
+    const dualieBridge = new THREE.Mesh(box(0.16, 0.04, 0.1), P.mats.soft);
+    dualieBridge.position.set(0, 0.04, 0.06);
+    this.dualiesGroup.add(dualieBridge);
+    this.dualiesGroup.visible = false;
+    this.weaponAnchor.add(this.dualiesGroup);
+
     // Muzzle flash
     const flashGeo = new THREE.OctahedronGeometry(0.18);
     this.geometries.push(flashGeo);
@@ -1377,6 +1496,13 @@ export class PlayerView {
     this.cannonGroup.visible    = key === 'cannon';
     this.marksmanGroup.visible  = key === 'marksman';
     this.scatterGroup.visible   = key === 'scatter';
+    this.brellaGroup.visible    = key === 'brella';
+    this.dualiesGroup.visible   = key === 'dualies';
+    // The shield canopy only makes sense while a Brella is in hand; the active
+    // state itself is driven by setShieldActive.
+    if (key !== 'brella' && this.brellaShieldMesh) {
+      this.brellaShieldMesh.visible = false;
+    }
   }
 
   triggerRecoil(recoilAmount = 0.18): void {
@@ -1385,6 +1511,37 @@ export class PlayerView {
     this.muzzleFlashMesh.position.z = -0.6 - this.getMuzzleZOffset(this.currentWeapon);
     this.muzzleFlashMesh.visible = true;
   }
+
+  /**
+   * Brella shield visual: shows the translucent forward canopy while active,
+   * dimming it as the shield HP drains toward breaking.
+   */
+  setShieldActive(active: boolean, hpFrac = 1): void {
+    this.shieldActive = active;
+    this.shieldHpFrac = Math.max(0, Math.min(1, hpFrac));
+    if (this.brellaShieldMesh) {
+      const show = active && WEAPON_GROUPS[this.currentWeapon] === 'brella' &&
+        this.currentMode === PlayerMode.HUMANOID;
+      this.brellaShieldMesh.visible = show;
+      if (show) {
+        const mat = this.brellaShieldMesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = 0.12 + 0.22 * this.shieldHpFrac;
+      }
+    }
+  }
+
+  /**
+   * Dualies dodge roll visual: a short sideways body tilt that decays quickly.
+   * `dir` is -1 (left) or 1 (right) in screen space.
+   */
+  setDodging(dodging: boolean, dir: 1 | -1 = 1): void {
+    if (dodging && this.dodgeTiltTimer <= 0) {
+      this.dodgeTiltTimer = 0.25;
+      this.dodgeTiltDir = dir;
+    }
+  }
+
+  private dodgeTiltDir: 1 | -1 = 1;
 
   /**
    * Triggers an arcade-style ink hit flash on the character model upon taking damage.
@@ -1535,6 +1692,8 @@ export class PlayerView {
       case 'cannon':   return 0.35;
       case 'marksman': return 0.35;
       case 'scatter':  return 0.1;
+      case 'brella':   return 0.25;
+      case 'dualies':  return 0.1;
       default:         return 0.05;
     }
   }
@@ -1605,6 +1764,26 @@ export class PlayerView {
         baseLeftY = 0.1;
         leftElbow = -0.4;
         break;
+      case 'brella':
+        // Umbrella held upright at the shoulder with a two-handed grip
+        baseRightX = -0.5;
+        baseRightY = -0.2;
+        rightElbow = -0.45;
+        baseLeftX = -0.45;
+        baseLeftY = 0.25;
+        baseLeftZ = -0.15;
+        leftElbow = -0.55;
+        break;
+      case 'dualies':
+        // Compact two-pistol stance: arms tight, elbows tucked
+        baseRightX = -0.75;
+        baseRightY = -0.3;
+        rightElbow = -0.4;
+        baseLeftX = -0.75;
+        baseLeftY = 0.3;
+        baseLeftZ = -0.1;
+        leftElbow = -0.4;
+        break;
     }
 
     const now = performance.now();
@@ -1660,6 +1839,25 @@ export class PlayerView {
       if (!tuft) continue;
       tuft.rotation.x = (this.hairBaseX[i] ?? -0.34) + this.tentacleSway + Math.sin(idle * 2 + i) * 0.05;
       tuft.rotation.z = (this.hairBaseZ[i] ?? 0) + Math.sin(idle * 1.6 + i) * 0.07;
+    }
+
+    // Dualies dodge roll: brief sideways tilt that springs back
+    if (this.dodgeTiltTimer > 0) {
+      this.dodgeTiltTimer = Math.max(0, this.dodgeTiltTimer - dt);
+      const tilt = Math.sin((this.dodgeTiltTimer / 0.25) * Math.PI) * 0.45;
+      this.humanoidGroup.rotation.z = tilt * this.dodgeTiltDir;
+    } else if (this.humanoidGroup.rotation.z !== 0) {
+      this.humanoidGroup.rotation.z *= 0.7;
+      if (Math.abs(this.humanoidGroup.rotation.z) < 0.01) {
+        this.humanoidGroup.rotation.z = 0;
+      }
+    }
+
+    // Brella canopy: pops open while a Brella is in hand, folds closed otherwise
+    if (WEAPON_GROUPS[this.currentWeapon] === 'brella') {
+      this.brellaCanopyGroup.scale.y = THREE.MathUtils.lerp(this.brellaCanopyGroup.scale.y, 1, 0.2);
+    } else {
+      this.brellaCanopyGroup.scale.y = THREE.MathUtils.lerp(this.brellaCanopyGroup.scale.y, 0.1, 0.3);
     }
 
     // Physically roll the Ink Roller cylinder

@@ -16,6 +16,11 @@ export interface InterpolatedPlayerState {
   weaponType?: WeaponType;
   ink?: number;
   name?: string;
+  /** Brella ink shield state (mirrored from the snapshot, no interpolation). */
+  shieldActive?: boolean;
+  shieldHp?: number;
+  /** True while a Dualies dodge roll is in progress. */
+  dodging?: boolean;
 }
 
 /**
@@ -53,6 +58,9 @@ function writeSnapshotState(
   out.weaponType = snap.weaponType;
   out.ink = snap.ink;
   out.name = snap.name;
+  out.shieldActive = snap.shieldActive;
+  out.shieldHp = snap.shieldHp;
+  out.dodging = snap.dodging;
   return out;
 }
 

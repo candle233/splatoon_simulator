@@ -1,5 +1,14 @@
 import { PlayerInput, WeaponType, clamp } from '@ink/shared';
 
+/** Edge-triggered quick-chat requests the InputManager surfaces to the Game. */
+export type EmoteRequest = 'booyah' | 'ouch' | 'ping';
+
+/** Client-side mirror of the server's 0.5s emote rate limit (no useless network spam). */
+const EMOTE_CLIENT_COOLDOWN_MS = 500;
+
+/** Max ms between two A/D presses that counts as a dodge-roll double tap. */
+const DODGE_TAP_WINDOW_MS = 280;
+
 export class InputManager {
   private element: HTMLElement;
   private pointerLocked = false;
@@ -26,6 +35,13 @@ export class InputManager {
   private subWeaponFired = false;
   private specialFired = false;
 
+  // Dualies dodge roll: double-tap A/D detection + one-shot pending flag
+  private lastTapAAt = 0;
+  private lastTapDAt = 0;
+  private dodgePending = false;
+  /** -1 = dodge left, 1 = dodge right (screen space). */
+  private dodgeDir: 1 | -1 = 1;
+
   public yaw = 0;
   public pitch = 0;
   public chargeLevel = 0;
@@ -39,9 +55,21 @@ export class InputManager {
   private onDebugToggleCallback?: () => void;
   private onLockChangeCallback?: (locked: boolean) => void;
   private onWeaponCycleCallback?: (dir: number) => void;
+  private onEmoteCallback?: (type: EmoteRequest) => void;
+  /** Timestamp of the last accepted quick-chat request (client-side rate limit). */
+  private lastEmoteAt = 0;
 
   setSensitivity(sens: number): void {
     this.mouseSensitivity = sens;
+  }
+
+  setOnEmote(callback: (type: EmoteRequest) => void): void {
+    this.onEmoteCallback = callback;
+  }
+
+  /** Clears the client-side emote cooldown (match reset). */
+  resetEmoteCooldown(): void {
+    this.lastEmoteAt = 0;
   }
 
   setActiveWeapon(weapon: WeaponType): void {
@@ -154,6 +182,48 @@ export class InputManager {
       return;
     }
 
+    // Quick-chat edge triggers (one-shot per press). D-pad Up / Arrow Up =
+    // Booyah!, D-pad Down / Arrow Down = Ouch!, G = tactical map ping. The
+    // 0.5s client throttle mirrors the server's rate limit.
+    if (!e.repeat && (this.pointerLocked || this.active)) {
+      const emote =
+        e.code === 'ArrowUp' || e.code === 'DpadUp'
+          ? 'booyah'
+          : e.code === 'ArrowDown' || e.code === 'DpadDown'
+            ? 'ouch'
+            : e.code === 'KeyG'
+              ? 'ping'
+              : null;
+      if (emote) {
+        e.preventDefault();
+        const now = performance.now();
+        if (now - this.lastEmoteAt >= EMOTE_CLIENT_COOLDOWN_MS) {
+          this.lastEmoteAt = now;
+          if (this.onEmoteCallback) this.onEmoteCallback(emote);
+        }
+        return;
+      }
+
+      // Dualies dodge roll: double-tap A / D within the tap window while the
+      // twin pistols are in hand. One-shot per detection.
+      if (e.code === 'KeyA' || e.code === 'KeyD') {
+        const now = performance.now();
+        const lastTap = e.code === 'KeyA' ? this.lastTapAAt : this.lastTapDAt;
+        if (now - lastTap <= DODGE_TAP_WINDOW_MS) {
+          // Consume the tap so a third press does not chain a second dodge.
+          if (e.code === 'KeyA') this.lastTapAAt = 0;
+          else this.lastTapDAt = 0;
+          if (this.activeWeaponType === 'dualies' && !this.dodgePending) {
+            this.dodgePending = true;
+            this.dodgeDir = e.code === 'KeyA' ? -1 : 1;
+          }
+        } else {
+          if (e.code === 'KeyA') this.lastTapAAt = now;
+          else this.lastTapDAt = now;
+        }
+      }
+    }
+
     if (e.code in this.keys) {
       this.keys[e.code] = true;
     }
@@ -236,6 +306,9 @@ export class InputManager {
     this.isCharging = false;
     this.releasedChargerShot = false;
     this.releasedChargeLevel = 0;
+    this.dodgePending = false;
+    this.lastTapAAt = 0;
+    this.lastTapDAt = 0;
   };
 
   getCurrentInput(seq: number): PlayerInput {
@@ -298,6 +371,14 @@ export class InputManager {
       this.specialFired = false;
     }
 
+    // Dodge roll: one-shot flag consumed here so each double tap sends a
+    // single dodge request alongside the movement keys still held.
+    let dodge = false;
+    if (this.dodgePending) {
+      dodge = true;
+      this.dodgePending = false;
+    }
+
     return {
       seq,
       moveX,
@@ -309,9 +390,20 @@ export class InputManager {
       fire,
       subWeapon,
       special,
+      dodge,
       chargeLevel: chargeToSend,
       clientTime: Date.now()
     };
+  }
+
+  /**
+   * Returns the pending dodge request (one-shot): 0 = none, -1 = left, 1 =
+   * right. The Game uses the direction for the dodge tilt visual.
+   */
+  consumeDodgeDirection(): 0 | 1 | -1 {
+    if (!this.dodgePending) return 0;
+    this.dodgePending = false;
+    return this.dodgeDir;
   }
 
   /**

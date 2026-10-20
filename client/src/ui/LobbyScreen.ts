@@ -49,7 +49,9 @@ const WEAPON_THUMBS: Record<string, string> = {
   sprayer: '/assets/weapons/sprayer.jpg',
   cannon: '/assets/weapons/cannon.jpg',
   marksman: '/assets/weapons/marksman.jpg',
-  scatter: '/assets/weapons/scatter.jpg'
+  scatter: '/assets/weapons/scatter.jpg',
+  brella: '/assets/weapons/brella.jpg',
+  dualies: '/assets/weapons/dualies.jpg'
 };
 
 interface MapMeta {
@@ -162,7 +164,9 @@ const WEAPON_CATEGORIES: Record<WeaponType, { en: string; zh: string; ja: string
   sprayer: { en: 'RAPID MIST SPRAYER', zh: '超连射狂暴速射枪', ja: '超連射スプレー' },
   cannon: { en: 'SIEGE HEAVY MORTAR', zh: '重型范围爆破墨炮', ja: '重装迫撃モーター' },
   marksman: { en: 'TACTICAL MARKSMAN', zh: '半自动精准点射步枪', ja: '精密射撃マークスマン' },
-  scatter: { en: 'POINT-BLANK SCATTER', zh: '近距致命六弹丸散弹', ja: '至近距離ショットガン' }
+  scatter: { en: 'POINT-BLANK SCATTER', zh: '近距致命六弹丸散弹', ja: '至近距離ショットガン' },
+  brella: { en: 'SHIELD BRELLA', zh: '伞盾防御墨枪', ja: 'シールドシューター' },
+  dualies: { en: 'DODGE DUALIES', zh: '翻滚机动双枪', ja: '回避マニューバー' }
 };
 
 interface WeaponStatValues {
@@ -181,7 +185,9 @@ const WEAPON_STAT_VALS: Record<WeaponType, WeaponStatValues> = {
   sprayer: { rangePct: 45, damagePct: 25, fireRatePct: 100, mobilityPct: 95, mobilityTier: { en: 'Extreme', zh: '极高', ja: '極高' } },
   cannon: { rangePct: 55, damagePct: 80, fireRatePct: 15, mobilityPct: 30, mobilityTier: { en: 'Siege', zh: '沉重', ja: '重装' } },
   marksman: { rangePct: 75, damagePct: 60, fireRatePct: 40, mobilityPct: 60, mobilityTier: { en: 'Balanced', zh: '均衡', ja: '標準' } },
-  scatter: { rangePct: 20, damagePct: 95, fireRatePct: 25, mobilityPct: 75, mobilityTier: { en: 'Fast', zh: '敏捷', ja: '敏捷' } }
+  scatter: { rangePct: 20, damagePct: 95, fireRatePct: 25, mobilityPct: 75, mobilityTier: { en: 'Fast', zh: '敏捷', ja: '敏捷' } },
+  brella: { rangePct: 45, damagePct: 45, fireRatePct: 30, mobilityPct: 70, mobilityTier: { en: 'Defensive', zh: '防御', ja: '防御' } },
+  dualies: { rangePct: 40, damagePct: 30, fireRatePct: 55, mobilityPct: 100, mobilityTier: { en: 'Evasive', zh: '闪避', ja: '回避' } }
 };
 
 export class LobbyScreen {

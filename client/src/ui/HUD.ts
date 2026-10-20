@@ -351,7 +351,9 @@ export class HUD {
       sprayer: '/assets/weapons/sprayer.jpg',
       cannon: '/assets/weapons/cannon.jpg',
       marksman: '/assets/weapons/marksman.jpg',
-      scatter: '/assets/weapons/scatter.jpg'
+      scatter: '/assets/weapons/scatter.jpg',
+      brella: '/assets/weapons/brella.jpg',
+      dualies: '/assets/weapons/dualies.jpg'
     };
     const subThumbMap: Record<string, string> = {
       splat_bomb: '/assets/weapons/splat_bomb.jpg',
@@ -359,7 +361,8 @@ export class HUD {
       burst_bomb: '/assets/weapons/burst_bomb.jpg',
       ink_mine: '/assets/weapons/ink_mine.jpg',
       bounce_bomb: '/assets/weapons/bounce_bomb.jpg',
-      ink_puddle: '/assets/weapons/ink_puddle.jpg'
+      ink_puddle: '/assets/weapons/ink_puddle.jpg',
+      torpedo: '/assets/weapons/torpedo.jpg'
     };
     const specialThumbMap: Record<SpecialWeaponType, string> = {
       inkstrike: '/assets/weapons/inkstrike.jpg',

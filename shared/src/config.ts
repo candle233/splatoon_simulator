@@ -52,6 +52,11 @@ export const TEAM_SIZE = 4;
 /** Maximum bots a host may field (shared with MAX_PLAYERS budget). */
 export const MAX_BOTS = 6;
 
+/** Minimum interval between a player's emotes, in ms (server-enforced rate limit). */
+export const EMOTE_COOLDOWN_MS = 500;
+/** Server timestamp age (ms) after which a snapshot-carried emote is no longer surfaced. */
+export const EMOTE_DISPLAY_MS = 3000;
+
 export const PAINT_GRID_RES = 1024;
 export const CANVAS_RES = 2048;
 
@@ -89,7 +94,7 @@ export const SHOT_INTERVAL = FIRE_INTERVAL;
 export const CONTINUOUS_PAINT_MAX_DIST_UV = 0.18; // ~18m max continuous segment
 
 // Weapon & Skill Configurations
-import type { GameMode, WeaponType, SubWeaponType, SpecialWeaponType } from './types.js';
+import type { EmoteType, GameMode, WeaponType, SubWeaponType, SpecialWeaponType } from './types.js';
 
 export interface WeaponStats {
   id: WeaponType;
@@ -126,6 +131,22 @@ export interface WeaponStats {
   splashDamage?: number;
   /** Distance a bot brain tries to hold with this weapon. */
   preferredRange?: number;
+  // Brella-specific: shield deploy mechanic
+  /** Seconds the shield stays up before auto-closing. */
+  shieldDuration?: number;
+  /** Seconds the shield needs to recharge after it closes or breaks. */
+  shieldCooldown?: number;
+  /** Shield hit points — blocked damage drains it; 0 breaks the shield. */
+  shieldHp?: number;
+  // Dualie-specific: dodge roll mechanic
+  /** Ink consumed per dodge roll. */
+  dodgeInkCost?: number;
+  /** Horizontal dash distance of one dodge roll (m). */
+  dodgeDistance?: number;
+  /** Invulnerability window during the dodge (ms). */
+  dodgeInvulnMs?: number;
+  /** Minimum time between dodges (ms). */
+  dodgeCooldownMs?: number;
 }
 
 export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
@@ -284,6 +305,49 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponStats> = {
     pelletCount: 6,
     falloffMin: 0.35,
     preferredRange: 6
+  },
+  brella: {
+    id: 'brella',
+    name: 'Splat Brella',
+    nameZh: '伞墨枪',
+    nameJa: 'スプラシューター',
+    sub: 'torpedo',
+    special: 'ink_barrier',
+    damage: 28,
+    inkCost: 3,
+    range: 35,
+    fireRate: 4,
+    paintRadius: 2.5,
+    spread: 0.04,
+    description: 'Umbrella launcher. Fires a single ink pellet, then deploys a frontal shield that soaks enemy shots.',
+    descriptionZh: '伞形发射器，单发墨弹后展开正面护盾抵挡敌方攻击。',
+    descriptionJa: '傘型ランチャー。単発の弾を撃った後、正面に敵弾を防ぐシールドを展開する。',
+    preferredRange: 14,
+    shieldDuration: 3.0,
+    shieldCooldown: 5.0,
+    shieldHp: 100
+  },
+  dualies: {
+    id: 'dualies',
+    name: 'Splat Dualies',
+    nameZh: '双枪',
+    nameJa: 'スプラマニューバー',
+    sub: 'burst_bomb',
+    special: 'ink_nova',
+    damage: 18,
+    inkCost: 2,
+    range: 30,
+    fireRate: 8,
+    paintRadius: 1.8,
+    spread: 0.05,
+    description: 'Twin pistols. Alternate barrels for a steady stream and dodge roll sideways to evade incoming fire.',
+    descriptionZh: '双持手枪，双枪交替连射，侧向翻滚躲避来袭攻击。',
+    descriptionJa: '二丁拳銃。交互に発射し、横に回避ロールして敵弾をかわす。',
+    preferredRange: 11,
+    dodgeInkCost: 15,
+    dodgeDistance: 6.0,
+    dodgeInvulnMs: 200,
+    dodgeCooldownMs: 800
   }
 };
 
@@ -401,6 +465,21 @@ export const SUB_WEAPON_CONFIGS: Record<SubWeaponType, SubWeaponStats> = {
     description: 'Landing puddle that floods a wide patch of turf and slows enemies standing in it.',
     descriptionZh: '落地形成大范围墨沼，持续涂地并使踩入的敌人减速。',
     descriptionJa: '着地で広範囲を塗るインク沼。踏み込んだ敵の動きを鈍らせる。'
+  },
+  torpedo: {
+    id: 'torpedo',
+    name: 'Point Torpedo',
+    nameZh: '追踪鱼雷',
+    nameJa: 'ポイントトーピード',
+    inkCost: 45,
+    throwSpeed: 15,
+    fuseTime: 3.5,
+    damage: 85,
+    splashRadius: 3.4,
+    triggerRadius: 2.2,
+    description: 'Homing torpedo. Launches upward, then steers toward the nearest enemy and bursts on contact.',
+    descriptionZh: '追踪鱼雷，上抛后自动锁定最近的敌人，接触即爆。',
+    descriptionJa: '追尾トーピード。上へ打ち出され、最も近い敵へ誘導して接触で爆発する。'
   }
 };
 
@@ -610,4 +689,11 @@ export function isValidSubWeaponType(id: unknown): id is SubWeaponType {
 /** Type guard over the special-weapon roster. */
 export function isValidSpecialType(id: unknown): id is SpecialWeaponType {
   return typeof id === 'string' && Object.prototype.hasOwnProperty.call(SPECIAL_CONFIGS, id);
+}
+
+const EMOTE_TYPES: readonly string[] = ['booyah', 'ouch', 'ping_enemy', 'ping_area', 'ping_defend'];
+
+/** Type guard over the quick-chat roster; keeps hostile payloads out of the relay. */
+export function isValidEmoteType(id: unknown): id is EmoteType {
+  return typeof id === 'string' && EMOTE_TYPES.includes(id);
 }

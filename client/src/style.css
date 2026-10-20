@@ -4983,3 +4983,194 @@ kbd {
 }
 
 
+
+/* ==========================================================================
+   Emote / Quick-Chat System (Subagent 07)
+   - #emote-layer: full-screen non-interactive overlay for 3D-projected bubbles
+   - .emote-bubble: pooled positioned divs, moved by JS each frame
+   - .emote-inner: CSS-driven float / shake / fade animations
+   - #emote-hints: bottom-center D-pad style key hints
+   ========================================================================== */
+
+#emote-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 28;
+}
+
+.emote-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.emote-bubble.hidden,
+.emote-bubble.offscreen {
+  display: none;
+}
+
+.emote-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  border-radius: 14px;
+  background: rgba(18, 20, 28, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  transform: translate(-50%, -115%);
+  animation: emote-float 2.4s ease-out forwards;
+}
+
+.emote-bubble.team-pink .emote-inner {
+  border-color: #ff007f;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 12px rgba(255, 0, 127, 0.4);
+}
+
+.emote-bubble.team-cyan .emote-inner {
+  border-color: #00ffff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45), 0 0 12px rgba(0, 255, 255, 0.4);
+}
+
+.emote-name {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #cfd8ff;
+  white-space: nowrap;
+}
+
+.emote-bubble.team-pink .emote-name {
+  color: #ff9ecb;
+}
+
+.emote-bubble.team-cyan .emote-name {
+  color: #9ef2ff;
+}
+
+.emote-text {
+  font-size: 14px;
+  font-weight: 900;
+  color: #ffffff;
+  white-space: nowrap;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
+}
+
+.emote-bubble.emote-booyah .emote-text {
+  color: #ffe14d;
+  text-shadow: 0 0 10px rgba(255, 225, 77, 0.65);
+}
+
+.emote-bubble.emote-ouch .emote-text {
+  color: #ff5560;
+  text-shadow: 0 0 10px rgba(255, 85, 96, 0.65);
+}
+
+.emote-bubble.emote-ping .emote-text {
+  color: #8fd4ff;
+}
+
+/* Booyah: pops in, floats up, fades out */
+@keyframes emote-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -90%) scale(0.55);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -110%) scale(1.08);
+  }
+  18% {
+    transform: translate(-50%, -116%) scale(1);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -132%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -170%) scale(1);
+  }
+}
+
+/* Ouch: same lifecycle but with a distress shake */
+.emote-bubble.emote-ouch .emote-inner {
+  animation: emote-shake 2.4s ease-out forwards;
+}
+
+@keyframes emote-shake {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -90%) scale(0.55) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-53%, -110%) scale(1.08) rotate(-7deg);
+  }
+  14% {
+    transform: translate(-47%, -112%) scale(1.06) rotate(7deg);
+  }
+  18% {
+    transform: translate(-53%, -114%) rotate(-5deg);
+  }
+  22% {
+    transform: translate(-47%, -116%) rotate(5deg);
+  }
+  26% {
+    transform: translate(-50%, -120%) rotate(0deg);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -132%) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -160%) rotate(0deg);
+  }
+}
+
+/* Bottom-center D-pad style quick-chat hints */
+#emote-hints {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 24;
+}
+
+.emote-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(18, 20, 28, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #dfe6ff;
+  backdrop-filter: blur(6px);
+}
+
+.emote-hint .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  font-size: 11px;
+  font-weight: 900;
+  color: #ffffff;
+}

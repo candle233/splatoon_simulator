@@ -7,6 +7,7 @@ export const PROTOCOL_EVENTS = {
   C2S_LOBBY_ADD_BOT: 'c2s:lobby_add_bot',
   C2S_LOBBY_REMOVE_BOT: 'c2s:lobby_remove_bot',
   C2S_MATCH_CONFIG: 'c2s:match_config',
+  C2S_EMOTE: 'c2s:emote',
 
   // Server to Client
   S2C_WELCOME: 's2c:welcome',
@@ -25,7 +26,8 @@ export const PROTOCOL_EVENTS = {
   S2C_LOBBY_STATE: 's2c:lobby_state',
   S2C_SUB_WEAPON_EVENT: 's2c:sub_weapon_event',
   S2C_SPECIAL_EVENT: 's2c:special_event',
-  S2C_SURFACE_PAINT: 's2c:surface_paint'
+  S2C_SURFACE_PAINT: 's2c:surface_paint',
+  S2C_EMOTE: 's2c:emote'
 } as const;
 
 export type ProtocolEventName = typeof PROTOCOL_EVENTS[keyof typeof PROTOCOL_EVENTS];

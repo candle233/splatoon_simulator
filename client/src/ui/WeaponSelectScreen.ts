@@ -25,7 +25,9 @@ const THUMB_PATHS: Record<WeaponType, string> = {
   sprayer: '/assets/weapons/sprayer.jpg',
   cannon: '/assets/weapons/cannon.jpg',
   marksman: '/assets/weapons/marksman.jpg',
-  scatter: '/assets/weapons/scatter.jpg'
+  scatter: '/assets/weapons/scatter.jpg',
+  brella: '/assets/weapons/brella.jpg',
+  dualies: '/assets/weapons/dualies.jpg'
 };
 
 export class WeaponSelectScreen {
