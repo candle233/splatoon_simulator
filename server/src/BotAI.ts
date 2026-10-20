@@ -2,8 +2,11 @@ import {
   MAX_INK,
   PlayerInput,
   PlayerMode,
+  RampObstacle,
+  Ray,
   SUB_WEAPON_CONFIGS,
   Team,
+  Vec3,
   WEAPON_CONFIGS,
   clamp
 } from '@ink/shared';
@@ -13,9 +16,62 @@ import { PlayerState } from './PlayerState.js';
 
 type BotStateName = 'PATROL' | 'COMBAT' | 'REFILL';
 
+const EMPTY_PLAYERS: PlayerState[] = [];
+
+export function getRampFoot(ramp: RampObstacle, out?: Vec3): Vec3 {
+  const baseY = ramp.position.y - ramp.rise / 2;
+  const res = out ?? { x: 0, y: 0, z: 0 };
+  res.y = baseY;
+  switch (ramp.direction) {
+    case 'north':
+      res.x = ramp.position.x;
+      res.z = ramp.position.z + ramp.length / 2;
+      return res;
+    case 'south':
+      res.x = ramp.position.x;
+      res.z = ramp.position.z - ramp.length / 2;
+      return res;
+    case 'east':
+      res.x = ramp.position.x - ramp.length / 2;
+      res.z = ramp.position.z;
+      return res;
+    case 'west':
+      res.x = ramp.position.x + ramp.length / 2;
+      res.z = ramp.position.z;
+      return res;
+  }
+}
+
+export function getRampCrest(ramp: RampObstacle, out?: Vec3): Vec3 {
+  const crestY = ramp.position.y + ramp.rise / 2;
+  const res = out ?? { x: 0, y: 0, z: 0 };
+  res.y = crestY;
+  switch (ramp.direction) {
+    case 'north':
+      res.x = ramp.position.x;
+      res.z = ramp.position.z - ramp.length / 2;
+      return res;
+    case 'south':
+      res.x = ramp.position.x;
+      res.z = ramp.position.z + ramp.length / 2;
+      return res;
+    case 'east':
+      res.x = ramp.position.x + ramp.length / 2;
+      res.z = ramp.position.z;
+      return res;
+    case 'west':
+      res.x = ramp.position.x - ramp.length / 2;
+      res.z = ramp.position.z;
+      return res;
+  }
+}
+
 interface BotMemory {
   state: BotStateName;
-  waypoint: { x: number; z: number };
+  waypoint: Vec3;
+  subWaypoint?: Vec3 | null;
+  rampStage?: 'approach' | 'traverse' | null;
+  activeRampId?: string | null;
   nextDecisionAt: number;
   strafeDir: 1 | -1;
   nextStrafeFlipAt: number;
@@ -26,6 +82,7 @@ interface BotMemory {
   stuckX: number;
   stuckZ: number;
   jumpCooldownUntil: number;
+  cachedInput?: PlayerInput;
 }
 
 const BOT_FIRST_NAMES = [
@@ -57,6 +114,12 @@ export function makeBotName(counter: number): string {
 export class BotAI {
   private memories = new Map<string, BotMemory>();
   private counter = 0;
+  private scratchRay: Ray = {
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 0, z: 0 }
+  };
+  private scratchFoot: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchCrest: Vec3 = { x: 0, y: 0, z: 0 };
 
   /** Allocates a name + id pair for a new bot. */
   nextIdentity(): { id: string; name: string } {
@@ -77,7 +140,8 @@ export class BotAI {
     if (!mem) {
       mem = {
         state: 'PATROL',
-        waypoint: { x: 0, z: 0 },
+        waypoint: { x: 0, y: 0, z: 0 },
+        subWaypoint: null,
         nextDecisionAt: 0,
         strafeDir: Math.random() < 0.5 ? 1 : -1,
         nextStrafeFlipAt: 0,
@@ -87,7 +151,18 @@ export class BotAI {
         stuckCheckAt: 0,
         stuckX: 0,
         stuckZ: 0,
-        jumpCooldownUntil: 0
+        jumpCooldownUntil: 0,
+        cachedInput: {
+          seq: 0,
+          moveX: 0,
+          moveZ: 0,
+          yaw: 0,
+          pitch: 0,
+          jump: false,
+          squid: false,
+          fire: false,
+          clientTime: 0
+        }
       };
       this.memories.set(botId, mem);
     }
@@ -110,17 +185,18 @@ export class BotAI {
     const mem = this.getMemory(bot.id);
     mem.seq++;
 
-    const input: PlayerInput = {
-      seq: mem.seq,
-      moveX: 0,
-      moveZ: 0,
-      yaw: bot.yaw,
-      pitch: 0,
-      jump: false,
-      squid: false,
-      fire: false,
-      clientTime: now
-    };
+    const input = mem.cachedInput!;
+    input.seq = mem.seq;
+    input.moveX = 0;
+    input.moveZ = 0;
+    input.yaw = bot.yaw;
+    input.pitch = 0;
+    input.jump = false;
+    input.squid = false;
+    input.fire = false;
+    input.special = false;
+    input.subWeapon = false;
+    input.clientTime = now;
 
     if (!bot.alive || bot.mode === PlayerMode.DEAD) {
       return input;
@@ -137,7 +213,8 @@ export class BotAI {
       if (now - mem.stuckCheckAt > 1600) {
         const moved = Math.hypot(bot.position.x - mem.stuckX, bot.position.z - mem.stuckZ);
         if (moved < 0.8 && mem.state === 'PATROL') {
-          mem.waypoint = this.pickWaypoint(bot, half);
+          mem.subWaypoint = null;
+          mem.waypoint = this.pickWaypoint(bot, half, collisionWorld);
           if (now > mem.jumpCooldownUntil) {
             input.jump = true;
             mem.jumpCooldownUntil = now + 1200;
@@ -174,11 +251,26 @@ export class BotAI {
     }
 
     mem.state = 'PATROL';
-    return this.patrolInput(bot, mem, input, weaponConfig, half, now);
+    return this.patrolInput(bot, mem, input, weaponConfig, collisionWorld, half, now);
   }
 
-  private pickWaypoint(bot: PlayerState, half: number): { x: number; z: number } {
-    // Bias toward the middle of the map where the turf war happens
+  private pickWaypoint(bot: PlayerState, half: number, collisionWorld?: CollisionWorld): Vec3 {
+    const ramps = collisionWorld?.getRamps() ?? [];
+    const roll = Math.random();
+
+    // 40% chance: target an elevated ramp crest or platform top
+    if (ramps.length > 0 && roll < 0.4) {
+      const ramp = ramps[Math.floor(Math.random() * ramps.length)];
+      if (ramp) return getRampCrest(ramp);
+    }
+
+    // 30% chance: target a ramp foot / approach
+    if (ramps.length > 0 && roll < 0.7) {
+      const ramp = ramps[Math.floor(Math.random() * ramps.length)];
+      if (ramp) return getRampFoot(ramp);
+    }
+
+    // 30% chance: midfield turf
     const bias = 0.7;
     const x = clamp(
       bot.position.x + (Math.random() - 0.5) * half * 1.2 - bot.position.x * (1 - bias) * 0.5,
@@ -190,7 +282,8 @@ export class BotAI {
       -half * 0.85,
       half * 0.85
     );
-    return { x, z };
+    const y = collisionWorld ? collisionWorld.getGroundHeightAt(x, z, bot.position.y + 1.5) : 0;
+    return { x, y, z };
   }
 
   private findVisibleEnemy(
@@ -229,11 +322,15 @@ export class BotAI {
     const dz = enemy.position.z - bot.position.z;
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
+    this.scratchRay.origin.x = bot.position.x;
+    this.scratchRay.origin.y = eyeY;
+    this.scratchRay.origin.z = bot.position.z;
+    this.scratchRay.direction.x = dx / len;
+    this.scratchRay.direction.y = dy / len;
+    this.scratchRay.direction.z = dz / len;
+
     const hit = collisionWorld.castRay(
-      {
-        origin: { x: bot.position.x, y: eyeY, z: bot.position.z },
-        direction: { x: dx / len, y: dy / len, z: dz / len }
-      },
+      this.scratchRay,
       dist + 1.5,
       allPlayers,
       bot.team,
@@ -263,15 +360,12 @@ export class BotAI {
     const dy = aimY - eyeY;
     const aimLen = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     input.yaw = Math.atan2(-dx, -dz);
-    input.pitch = clamp(Math.asin(clamp(dy / aimLen, -1, 1)), -0.6, 0.6);
+    input.pitch = clamp(Math.asin(clamp(dy / aimLen, -1, 1)), -1.3, 1.3);
 
     // Preferred engagement range per weapon class (configs may override)
     const preferred =
       weaponConfig.preferredRange ??
       (bot.weaponType === 'charger' ? 26 : bot.weaponType === 'roller' ? 2.5 : bot.weaponType === 'slosher' ? 12 : 13);
-
-    const nx = dx / dist;
-    const nz = dz / dist;
 
     if (now >= mem.nextStrafeFlipAt) {
       mem.strafeDir = mem.strafeDir === 1 ? -1 : 1;
@@ -306,10 +400,15 @@ export class BotAI {
       input.fire = true;
     }
 
-    // Sub weapon toss
-    if (now >= mem.nextSubAt && bot.ink >= SUB_WEAPON_CONFIGS[weaponConfig.sub].inkCost) {
+    // Sub weapon toss with high ground advantage
+    const isHighGround = bot.position.y > enemy.position.y + 1.2;
+    const subCost = SUB_WEAPON_CONFIGS[weaponConfig.sub]?.inkCost ?? 40;
+    if (
+      (isHighGround ? now >= mem.nextSubAt - 2000 : now >= mem.nextSubAt) &&
+      bot.ink >= subCost
+    ) {
       input.subWeapon = true;
-      mem.nextSubAt = now + 6000 + Math.random() * 5000;
+      mem.nextSubAt = now + (isHighGround ? 4500 : 7000) + Math.random() * 3000;
     }
 
     // Special when charged and enemy in range
@@ -325,22 +424,141 @@ export class BotAI {
     mem: BotMemory,
     input: PlayerInput,
     weaponConfig: (typeof WEAPON_CONFIGS)[keyof typeof WEAPON_CONFIGS],
+    collisionWorld: CollisionWorld,
     half: number,
     now: number
   ): PlayerInput {
-    const dx = mem.waypoint.x - bot.position.x;
-    const dz = mem.waypoint.z - bot.position.z;
+    // If the destination elevation differs significantly and we do not have an active ramp route,
+    // route through the best ramp.
+    const elevDiff = mem.waypoint.y - bot.position.y;
+    const ramps = collisionWorld.getRamps();
+    if (Math.abs(elevDiff) > 1.2 && !mem.subWaypoint) {
+      if (ramps.length > 0) {
+        let bestRamp: RampObstacle | null = null;
+        let bestScore = Number.POSITIVE_INFINITY;
+        for (const r of ramps) {
+          const foot = getRampFoot(r, this.scratchFoot);
+          const crest = getRampCrest(r, this.scratchCrest);
+          const distToBot =
+            elevDiff > 0
+              ? Math.hypot(foot.x - bot.position.x, foot.z - bot.position.z)
+              : Math.hypot(crest.x - bot.position.x, crest.z - bot.position.z);
+          const distToTarget =
+            elevDiff > 0
+              ? Math.hypot(crest.x - mem.waypoint.x, crest.z - mem.waypoint.z)
+              : Math.hypot(foot.x - mem.waypoint.x, foot.z - mem.waypoint.z);
+          const score = distToBot + distToTarget * 0.5;
+          if (score < bestScore) {
+            bestScore = score;
+            bestRamp = r;
+          }
+        }
+        if (bestRamp) {
+          mem.activeRampId = bestRamp.id;
+          mem.rampStage = 'approach';
+          mem.subWaypoint = elevDiff > 0 ? getRampFoot(bestRamp) : getRampCrest(bestRamp);
+        }
+      }
+    }
+
+    // Cancel ramp sub-waypoint if bot has already reached target elevation
+    if (mem.subWaypoint && Math.abs(mem.waypoint.y - bot.position.y) <= 0.8) {
+      mem.subWaypoint = null;
+      mem.rampStage = null;
+      mem.activeRampId = null;
+    }
+
+    const target = mem.subWaypoint ?? mem.waypoint;
+    const dx = target.x - bot.position.x;
+    const dz = target.z - bot.position.z;
     const dist = Math.hypot(dx, dz);
 
     if (dist < 2.5) {
-      mem.waypoint = this.pickWaypoint(bot, half);
+      if (mem.subWaypoint) {
+        const activeRamp = ramps.find((r) => r.id === mem.activeRampId) ?? collisionWorld.getRampAt(bot.position);
+        if (!activeRamp) {
+          mem.subWaypoint = null;
+          mem.rampStage = null;
+          mem.activeRampId = null;
+        } else if (mem.rampStage === 'approach') {
+          // Reached ramp entrance (foot or crest), now traverse across the slope to the exit
+          mem.rampStage = 'traverse';
+          mem.subWaypoint = elevDiff > 0 ? getRampCrest(activeRamp) : getRampFoot(activeRamp);
+        } else {
+          // Reached ramp exit, finish ramp routing and proceed to main waypoint
+          mem.subWaypoint = null;
+          mem.rampStage = null;
+          mem.activeRampId = null;
+        }
+      } else {
+        mem.waypoint = this.pickWaypoint(bot, half, collisionWorld);
+      }
     }
 
     if (dist > 0.6) {
-      input.yaw = Math.atan2(-dx, -dz);
+      let desiredYaw = Math.atan2(-dx, -dz);
+
+      // Obstacle avoidance probe ray
+      this.scratchRay.origin.x = bot.position.x;
+      this.scratchRay.origin.y = bot.position.y + 0.8;
+      this.scratchRay.origin.z = bot.position.z;
+      this.scratchRay.direction.x = -Math.sin(desiredYaw);
+      this.scratchRay.direction.y = 0;
+      this.scratchRay.direction.z = -Math.cos(desiredYaw);
+
+      const probeHit = collisionWorld.castRay(
+        this.scratchRay,
+        2.5,
+        EMPTY_PLAYERS,
+        bot.team,
+        bot.id
+      );
+
+      if (probeHit.hit && probeHit.hitObstacleId && !probeHit.isGround) {
+        const leftYaw = desiredYaw + 0.6;
+        const rightYaw = desiredYaw - 0.6;
+
+        this.scratchRay.direction.x = -Math.sin(leftYaw);
+        this.scratchRay.direction.y = 0;
+        this.scratchRay.direction.z = -Math.cos(leftYaw);
+        const leftHit = collisionWorld.castRay(
+          this.scratchRay,
+          2.5,
+          EMPTY_PLAYERS,
+          bot.team,
+          bot.id
+        );
+
+        this.scratchRay.direction.x = -Math.sin(rightYaw);
+        this.scratchRay.direction.y = 0;
+        this.scratchRay.direction.z = -Math.cos(rightYaw);
+        const rightHit = collisionWorld.castRay(
+          this.scratchRay,
+          2.5,
+          EMPTY_PLAYERS,
+          bot.team,
+          bot.id
+        );
+
+        if ((leftHit.distance ?? 2.5) > (rightHit.distance ?? 2.5)) {
+          desiredYaw = leftYaw;
+        } else {
+          desiredYaw = rightYaw;
+        }
+      }
+
+      input.yaw = desiredYaw;
       input.moveZ = -1; // forward in input space
-      // paint the road ahead while patrolling
-      input.pitch = -0.45;
+
+      // Pitch paint: if climbing or aiming at elevated target, pitch up slightly (0.12),
+      // otherwise pitch down (-0.45)
+      const onRamp = !!collisionWorld.getRampAt(bot.position);
+      if (onRamp || target.y > bot.position.y + 0.5) {
+        input.pitch = 0.12;
+      } else {
+        input.pitch = -0.45;
+      }
+
       input.fire = bot.ink > weaponConfig.inkCost * 4;
     }
 

@@ -6,3 +6,4 @@ export * from './maps.js';
 export * from './paint.js';
 export * from './simulation.js';
 export * from './skills.js';
+export * from './SpatialGrid.js';

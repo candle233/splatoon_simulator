@@ -31,6 +31,8 @@ export class MovementSimulation {
   private collisionWorld: CollisionWorld;
   private paintGrid: PaintGrid;
   private mapSize = 100;
+  private scratchPrevPos: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchNewPos: Vec3 = { x: 0, y: 0, z: 0 };
 
   constructor(collisionWorld: CollisionWorld, paintGrid: PaintGrid) {
     this.collisionWorld = collisionWorld;
@@ -48,12 +50,16 @@ export class MovementSimulation {
     position: Vec3,
     maxSurfaces = MAX_PAINT_UPDATE_PER_TICK
   ): { id: string; paint: [number, number] }[] {
-    const surfaces = this.paintGrid.getSurfacePaintSnapshots();
+    const surfaces = this.paintGrid.getSurfaces();
     const out: { id: string; paint: [number, number] }[] = [];
     const range = WALL_RIDE_RANGE;
     for (const s of surfaces) {
-      const dx = position.x - s.position.x;
-      const dz = position.z - s.position.z;
+      const hx = s.size.x * 0.5;
+      const hz = s.size.z * 0.5;
+      const qx = Math.max(s.position.x - hx, Math.min(s.position.x + hx, position.x));
+      const qz = Math.max(s.position.z - hz, Math.min(s.position.z + hz, position.z));
+      const dx = position.x - qx;
+      const dz = position.z - qz;
       if (dx * dx + dz * dz < range * range) {
         out.push({ id: s.id, paint: this.paintGrid.getSurfacePaint(s.id) });
         if (out.length >= maxSurfaces) break;
@@ -92,7 +98,16 @@ export class MovementSimulation {
       groundInk,
       player.team
     );
-    const currentSpeed = getMovementSpeed(player.mode, groundInk, player.team, player.skills);
+    let currentSpeed = getMovementSpeed(player.mode, groundInk, player.team, player.skills);
+    if (
+      player.mode === PlayerMode.HUMANOID &&
+      input.chargeLevel &&
+      input.chargeLevel > 0.05 &&
+      (input.weaponType === 'charger' || player.weaponType === 'charger')
+    ) {
+      const chargeSlow = Math.max(0.5, 1.0 - input.chargeLevel * 0.5);
+      currentSpeed *= chargeSlow;
+    }
 
     // 3. Enemy Ink Damage over Time (DoT) via PlayerState (Subagent 19)
     let diedByEnemyInk = false;
@@ -122,31 +137,55 @@ export class MovementSimulation {
     }
 
     // 8. Ramp climbing: when on a ramp and moving along its travel direction,
-    //    lift the player so they walk up the ramp naturally.
+    //    lift the player so they walk up/down the ramp naturally.
     if (player.grounded) {
       const ramp = this.collisionWorld.getRampAt(player.position);
       if (ramp) {
         const horizSpeed = Math.sqrt(player.velocity.x ** 2 + player.velocity.z ** 2);
         if (horizSpeed >= RAMP_STICK_MIN_SPEED) {
           const dot = this.rampDirectionDot(ramp, player.velocity.x, player.velocity.z);
-          if (dot > 0) {
-            player.velocity.y = RAMP_LIFT_SPEED * Math.min(dot, 1);
-          }
+          const slope = ramp.rise / ramp.length;
+          player.velocity.y = slope * horizSpeed * dot;
         }
       }
     }
 
-    // 9. Wall-ride / slow climb: when airborne and adjacent to a climbable surface,
-    //    apply a small upward lift and push toward the wall.
+    // 9. Wall-ride / squid vertical climb: when airborne and adjacent to a climbable surface,
+    //    squids swim up rapidly while humanoids get wall-hang lift.
     if (!player.grounded) {
       const surf = this.collisionWorld.getClimbableSurfaceAt(player.position, WALL_RIDE_RANGE);
       if (surf && Math.abs(input.moveZ) >= WALL_RIDE_MIN_SPEED) {
-        const sdx = surf.position.x - player.position.x;
-        const sdz = surf.position.z - player.position.z;
-        const dist = Math.sqrt(sdx * sdx + sdz * sdz) || 1;
-        player.velocity.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
-        player.velocity.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
-        player.velocity.y = Math.min(player.velocity.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+        const hx = surf.size.x * 0.5;
+        const hz = surf.size.z * 0.5;
+        const qx = Math.max(surf.position.x - hx, Math.min(surf.position.x + hx, player.position.x));
+        const qz = Math.max(surf.position.z - hz, Math.min(surf.position.z + hz, player.position.z));
+        let sdx = qx - player.position.x;
+        let sdz = qz - player.position.z;
+        let dist = Math.hypot(sdx, sdz);
+        if (dist < 0.001) {
+          sdx = -surf.normal.x;
+          sdz = -surf.normal.z;
+          dist = Math.hypot(sdx, sdz) || 1;
+        }
+        const isSquid = Boolean(input.squid) || player.mode === PlayerMode.SUBMERGED;
+        const topY = surf.position.y + surf.size.y * 0.5;
+        if (isSquid) {
+          player.mode = PlayerMode.SUBMERGED;
+          if (player.position.y >= topY - 0.35) {
+            // Near top ledge: pop/mantle onto roof platform
+            player.velocity.x += (sdx / dist) * 1.8;
+            player.velocity.z += (sdz / dist) * 1.8;
+            player.velocity.y = Math.max(1.8, player.velocity.y * 0.4);
+          } else {
+            player.velocity.x += (sdx / dist) * 0.8;
+            player.velocity.z += (sdz / dist) * 0.8;
+            player.velocity.y = 6.2 - GRAVITY * dt;
+          }
+        } else {
+          player.velocity.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
+          player.velocity.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
+          player.velocity.y = Math.min(player.velocity.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+        }
       }
     }
 
@@ -159,25 +198,38 @@ export class MovementSimulation {
     const radius = PLAYER_RADIUS;
     const height = player.mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
 
-    const prevPos = { ...player.position };
+    this.scratchPrevPos.x = player.position.x;
+    this.scratchPrevPos.y = player.position.y;
+    this.scratchPrevPos.z = player.position.z;
+
     let newX = player.position.x + player.velocity.x * dt;
     let newY = player.position.y + player.velocity.y * dt;
     let newZ = player.position.z + player.velocity.z * dt;
 
     // Sanitize NaN / Infinity
     if (!Number.isFinite(newX) || !Number.isFinite(newY) || !Number.isFinite(newZ)) {
-      newX = prevPos.x;
-      newY = prevPos.y;
-      newZ = prevPos.z;
-      player.velocity = { x: 0, y: 0, z: 0 };
+      newX = this.scratchPrevPos.x;
+      newY = this.scratchPrevPos.y;
+      newZ = this.scratchPrevPos.z;
+      player.velocity.x = 0;
+      player.velocity.y = 0;
+      player.velocity.z = 0;
     }
 
     // Clamp vertical ceiling to avoid flight exploits
     newY = Math.max(-5, Math.min(30, newY));
 
-    const newPos = { x: newX, y: newY, z: newZ };
+    this.scratchNewPos.x = newX;
+    this.scratchNewPos.y = newY;
+    this.scratchNewPos.z = newZ;
 
-    const res = this.collisionWorld.resolvePlayerMovement(player, prevPos, newPos, radius, height);
+    const res = this.collisionWorld.resolvePlayerMovement(
+      player,
+      this.scratchPrevPos,
+      this.scratchNewPos,
+      radius,
+      height
+    );
     player.grounded = res.grounded;
     player.position = enforceSpawnBarrier(player.position, player.team, this.mapSize * 0.4);
 

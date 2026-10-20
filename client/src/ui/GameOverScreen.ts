@@ -61,12 +61,15 @@ export class GameOverScreen {
       if (payload.winner === Team.PINK) {
         this.winnerBannerEl.textContent = t('gameover.pinkWins');
         this.winnerBannerEl.style.color = '#ff007f';
+        this.overlayEl.classList.remove('draw-state');
       } else if (payload.winner === Team.CYAN) {
         this.winnerBannerEl.textContent = t('gameover.cyanWins');
         this.winnerBannerEl.style.color = '#00ffff';
+        this.overlayEl.classList.remove('draw-state');
       } else {
         this.winnerBannerEl.textContent = t('gameover.draw');
         this.winnerBannerEl.style.color = '#ffffff';
+        this.overlayEl.classList.add('draw-state');
       }
     }
 
@@ -101,6 +104,7 @@ export class GameOverScreen {
 
   hide(): void {
     this.overlayEl?.classList.add('hidden');
+    this.overlayEl?.classList.remove('draw-state');
     document.getElementById('game-over-mode')?.classList.add('hidden');
   }
 }

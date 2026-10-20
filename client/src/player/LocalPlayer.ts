@@ -59,6 +59,7 @@ export class LocalPlayer {
   invulnerable = false;
   kills = 0;
   deaths = 0;
+  isClimbingWall = false;
 
   weaponType: WeaponType = 'shooter';
   specialMeter = 0;
@@ -81,6 +82,18 @@ export class LocalPlayer {
   private _prevSnapPos: Vec3 | null = null;
   private _lastSnapTime = performance.now();
   private _prevSnapTime = performance.now();
+  private scratchStepVel: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchNewPos: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchStepResult = {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    grounded: false,
+    mode: PlayerMode.HUMANOID
+  };
+  private scratchCurReplayedPos: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchCurReplayedVel: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchReplayedPos: Vec3 = { x: 0, y: 0, z: 0 };
+  private scratchReplayedVel: Vec3 = { x: 0, y: 0, z: 0 };
 
   constructor(
     id: string,
@@ -115,14 +128,23 @@ export class LocalPlayer {
       groundInk,
       this.team
     );
-    const currentSpeed = getMovementSpeed(mode, groundInk, this.team, this.skills);
+    let effectiveMode = mode;
+    let currentSpeed = getMovementSpeed(mode, groundInk, this.team, this.skills);
+    if (
+      mode === PlayerMode.HUMANOID &&
+      input.chargeLevel &&
+      input.chargeLevel > 0.05 &&
+      input.weaponType === 'charger'
+    ) {
+      const chargeSlow = Math.max(0.5, 1.0 - input.chargeLevel * 0.5);
+      currentSpeed *= chargeSlow;
+    }
     const { vx, vz } = computeMovementVelocity(input.yaw, input.moveX, input.moveZ, currentSpeed);
 
-    const stepVel = {
-      x: vx,
-      y: vel.y,
-      z: vz
-    };
+    const stepVel = this.scratchStepVel;
+    stepVel.x = vx;
+    stepVel.y = vel.y;
+    stepVel.z = vz;
 
     let stepGrounded = grounded;
     if (input.jump && stepGrounded) {
@@ -131,46 +153,72 @@ export class LocalPlayer {
     }
 
     // Ramp climbing: when on a ramp and moving along its travel direction,
-    // lift the player so they walk up naturally.
+    // lift the player so they walk up/down naturally.
     if (stepGrounded) {
       const ramp = this.collisionWorld.getRampAt(this.position);
       if (ramp) {
         const horizSpeed = Math.sqrt(stepVel.x ** 2 + stepVel.z ** 2);
         if (horizSpeed >= RAMP_STICK_MIN_SPEED) {
           const dot = this.rampDirectionDot(ramp, stepVel.x, stepVel.z);
-          if (dot > 0) {
-            stepVel.y = RAMP_LIFT_SPEED * Math.min(dot, 1);
-          }
+          const slope = ramp.rise / ramp.length;
+          stepVel.y = slope * horizSpeed * dot;
         }
       }
     }
 
-    // Wall-ride: when airborne and adjacent to a climbable surface, apply
-    // small upward lift and push toward the wall.
+    // Wall-ride / squid vertical climb: when airborne and adjacent to a climbable surface,
+    // squids swim up rapidly while humanoids get wall-hang lift.
+    let isClimbing = false;
     if (!stepGrounded) {
       const surf = this.collisionWorld.getClimbableSurfaceAt(this.position, WALL_RIDE_RANGE);
       if (surf && Math.abs(input.moveZ) >= WALL_RIDE_MIN_SPEED) {
-        const sdx = surf.position.x - this.position.x;
-        const sdz = surf.position.z - this.position.z;
-        const dist = Math.sqrt(sdx * sdx + sdz * sdz) || 1;
-        stepVel.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
-        stepVel.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
-        stepVel.y = Math.min(stepVel.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+        const hx = surf.size.x * 0.5;
+        const hz = surf.size.z * 0.5;
+        const qx = Math.max(surf.position.x - hx, Math.min(surf.position.x + hx, this.position.x));
+        const qz = Math.max(surf.position.z - hz, Math.min(surf.position.z + hz, this.position.z));
+        let sdx = qx - this.position.x;
+        let sdz = qz - this.position.z;
+        let dist = Math.hypot(sdx, sdz);
+        if (dist < 0.001) {
+          sdx = -surf.normal.x;
+          sdz = -surf.normal.z;
+          dist = Math.hypot(sdx, sdz) || 1;
+        }
+        const isSquid = Boolean(input.squid) || mode === PlayerMode.SUBMERGED;
+        const topY = surf.position.y + surf.size.y * 0.5;
+        if (isSquid) {
+          isClimbing = true;
+          effectiveMode = PlayerMode.SUBMERGED;
+          if (this.position.y >= topY - 0.35) {
+            // Near top ledge: pop/mantle onto roof platform
+            stepVel.x += (sdx / dist) * 1.8;
+            stepVel.z += (sdz / dist) * 1.8;
+            stepVel.y = Math.max(1.8, stepVel.y * 0.4);
+          } else {
+            stepVel.x += (sdx / dist) * 0.8;
+            stepVel.z += (sdz / dist) * 0.8;
+            stepVel.y = 6.2 - GRAVITY * dt;
+          }
+        } else {
+          stepVel.x += (sdx / dist) * WALL_RIDE_FORWARD_SPEED;
+          stepVel.z += (sdz / dist) * WALL_RIDE_FORWARD_SPEED;
+          stepVel.y = Math.min(stepVel.y + WALL_RIDE_LIFT_SPEED * dt * 30, WALL_RIDE_LIFT_SPEED);
+        }
       }
     }
+    this.isClimbingWall = isClimbing;
 
     if (!stepGrounded) {
       stepVel.y += GRAVITY * dt;
     }
 
     const radius = PLAYER_RADIUS;
-    const height = mode === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
+    const height = (effectiveMode ?? mode) === PlayerMode.SUBMERGED ? SQUID_HEIGHT : PLAYER_HEIGHT;
 
-    const newPos = {
-      x: pos.x + stepVel.x * dt,
-      y: pos.y + stepVel.y * dt,
-      z: pos.z + stepVel.z * dt
-    };
+    const newPos = this.scratchNewPos;
+    newPos.x = pos.x + stepVel.x * dt;
+    newPos.y = pos.y + stepVel.y * dt;
+    newPos.z = pos.z + stepVel.z * dt;
 
     const res = this.collisionWorld.resolveMovement(
       pos,
@@ -180,12 +228,16 @@ export class LocalPlayer {
       stepVel
     );
 
-    return {
-      position: enforceSpawnBarrier(res.position, this.team),
-      velocity: res.velocity,
-      grounded: res.grounded,
-      mode
-    };
+    const finalPos = enforceSpawnBarrier(res.position, this.team);
+    this.scratchStepResult.position.x = finalPos.x;
+    this.scratchStepResult.position.y = finalPos.y;
+    this.scratchStepResult.position.z = finalPos.z;
+    this.scratchStepResult.velocity.x = res.velocity.x;
+    this.scratchStepResult.velocity.y = res.velocity.y;
+    this.scratchStepResult.velocity.z = res.velocity.z;
+    this.scratchStepResult.grounded = res.grounded;
+    this.scratchStepResult.mode = effectiveMode ?? mode;
+    return this.scratchStepResult;
   }
 
   predictMovement(input: PlayerInput, dt: number, groundInk: Team): void {
@@ -203,8 +255,12 @@ export class LocalPlayer {
       groundInk
     );
 
-    this.position = res.position;
-    this.velocity = res.velocity;
+    this.position.x = res.position.x;
+    this.position.y = res.position.y;
+    this.position.z = res.position.z;
+    this.velocity.x = res.velocity.x;
+    this.velocity.y = res.velocity.y;
+    this.velocity.z = res.velocity.z;
     this.grounded = res.grounded;
     this.mode = res.mode;
 
@@ -231,8 +287,40 @@ export class LocalPlayer {
     this.view.setWeaponType(weapon);
   }
 
-  triggerShootRecoil(): void {
-    this.view.triggerRecoil();
+  triggerShootRecoil(weaponType?: WeaponType, customStrength?: number): void {
+    const type = weaponType || this.weaponType;
+    let amount = 0.18;
+    if (customStrength !== undefined) {
+      amount = customStrength;
+    } else {
+      switch (type) {
+        case 'cannon':
+          amount = 0.42;
+          break;
+        case 'scatter':
+          amount = 0.36;
+          break;
+        case 'charger':
+          amount = 0.30;
+          break;
+        case 'roller':
+          amount = 0.28;
+          break;
+        case 'slosher':
+          amount = 0.24;
+          break;
+        case 'marksman':
+          amount = 0.22;
+          break;
+        case 'shooter':
+          amount = 0.16;
+          break;
+        case 'sprayer':
+          amount = 0.09;
+          break;
+      }
+    }
+    this.view.triggerRecoil(amount);
   }
 
   /**
@@ -309,29 +397,54 @@ export class LocalPlayer {
     }
 
     // Replay pending inputs starting from authoritative server snapshot
-    let replayedPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
-    let replayedVel = { ...this.velocity };
+    let replayedPosX = snapshot.x;
+    let replayedPosY = snapshot.y;
+    let replayedPosZ = snapshot.z;
+    let replayedVelX = this.velocity.x;
+    let replayedVelY = this.velocity.y;
+    let replayedVelZ = this.velocity.z;
     let replayedGrounded = this.grounded;
     let replayedMode = snapshot.mode;
 
     for (const item of this.pendingInputs) {
+      this.scratchCurReplayedPos.x = replayedPosX;
+      this.scratchCurReplayedPos.y = replayedPosY;
+      this.scratchCurReplayedPos.z = replayedPosZ;
+      this.scratchCurReplayedVel.x = replayedVelX;
+      this.scratchCurReplayedVel.y = replayedVelY;
+      this.scratchCurReplayedVel.z = replayedVelZ;
+
       const stepRes = this.simulateStep(
-        replayedPos,
-        replayedVel,
+        this.scratchCurReplayedPos,
+        this.scratchCurReplayedVel,
         replayedGrounded,
         item.input,
         item.dt,
         item.groundInk
       );
-      replayedPos = stepRes.position;
-      replayedVel = stepRes.velocity;
+      replayedPosX = stepRes.position.x;
+      replayedPosY = stepRes.position.y;
+      replayedPosZ = stepRes.position.z;
+      replayedVelX = stepRes.velocity.x;
+      replayedVelY = stepRes.velocity.y;
+      replayedVelZ = stepRes.velocity.z;
       replayedGrounded = stepRes.grounded;
       replayedMode = stepRes.mode;
     }
 
-    const errX = replayedPos.x - this.position.x;
-    const errY = replayedPos.y - this.position.y;
-    const errZ = replayedPos.z - this.position.z;
+    const replayedPos = this.scratchReplayedPos;
+    replayedPos.x = replayedPosX;
+    replayedPos.y = replayedPosY;
+    replayedPos.z = replayedPosZ;
+
+    const replayedVel = this.scratchReplayedVel;
+    replayedVel.x = replayedVelX;
+    replayedVel.y = replayedVelY;
+    replayedVel.z = replayedVelZ;
+
+    const errX = replayedPosX - this.position.x;
+    const errY = replayedPosY - this.position.y;
+    const errZ = replayedPosZ - this.position.z;
     const errDistSq = errX * errX + errY * errY + errZ * errZ;
 
     const errDist = Math.sqrt(errDistSq);
@@ -349,7 +462,9 @@ export class LocalPlayer {
       this._prevSnapPos = null;
       this._lastSnapTime = performance.now();
       
-      this.velocity = replayedVel;
+      this.velocity.x = replayedVel.x;
+      this.velocity.y = replayedVel.y;
+      this.velocity.z = replayedVel.z;
       this.grounded = replayedGrounded;
       this.mode = replayedMode;
       this.view.setMode(this.mode);
@@ -362,13 +477,25 @@ export class LocalPlayer {
       // Hard correction: large deviation (> 0.25m = 0.5m threshold squared)
       // This catches genuine desyncs (lag spikes, reconnect) where prediction
       // is wrong — snap immediately rather than glide.
-      this.position = { ...replayedPos };
-      this._smoothPos = { ...replayedPos };
-      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      this.position.x = replayedPos.x;
+      this.position.y = replayedPos.y;
+      this.position.z = replayedPos.z;
+      if (this._smoothPos) {
+        this._smoothPos.x = replayedPos.x;
+        this._smoothPos.y = replayedPos.y;
+        this._smoothPos.z = replayedPos.z;
+      } else {
+        this._smoothPos = { x: replayedPos.x, y: replayedPos.y, z: replayedPos.z };
+      }
+      this._lastSnapPos.x = snapshot.x;
+      this._lastSnapPos.y = snapshot.y;
+      this._lastSnapPos.z = snapshot.z;
       this._prevSnapPos = null;
       this._lastSnapTime = performance.now();
       
-      this.velocity = replayedVel;
+      this.velocity.x = replayedVel.x;
+      this.velocity.y = replayedVel.y;
+      this.velocity.z = replayedVel.z;
       this.grounded = replayedGrounded;
       this.mode = replayedMode;
       this.view.setMode(this.mode);
@@ -382,10 +509,20 @@ export class LocalPlayer {
       this.position.x = this.position.x * (1 - alpha) + replayedPos.x * alpha;
       this.position.y = this.position.y * (1 - alpha) + replayedPos.y * alpha;
       this.position.z = this.position.z * (1 - alpha) + replayedPos.z * alpha;
-      this._smoothPos = { ...this.position };
-      this._lastSnapPos = { x: snapshot.x, y: snapshot.y, z: snapshot.z };
+      if (this._smoothPos) {
+        this._smoothPos.x = this.position.x;
+        this._smoothPos.y = this.position.y;
+        this._smoothPos.z = this.position.z;
+      } else {
+        this._smoothPos = { x: this.position.x, y: this.position.y, z: this.position.z };
+      }
+      this._lastSnapPos.x = snapshot.x;
+      this._lastSnapPos.y = snapshot.y;
+      this._lastSnapPos.z = snapshot.z;
       
-      this.velocity = replayedVel;
+      this.velocity.x = replayedVel.x;
+      this.velocity.y = replayedVel.y;
+      this.velocity.z = replayedVel.z;
       this.grounded = replayedGrounded;
       this.mode = replayedMode;
       this.view.setMode(this.mode);

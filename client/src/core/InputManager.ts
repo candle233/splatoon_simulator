@@ -1,4 +1,4 @@
-import { PlayerInput, clamp } from '@ink/shared';
+import { PlayerInput, WeaponType, clamp } from '@ink/shared';
 
 export class InputManager {
   private element: HTMLElement;
@@ -14,7 +14,9 @@ export class InputManager {
     ShiftLeft: false,
     ShiftRight: false,
     KeyQ: false,
-    KeyE: false
+    KeyE: false,
+    KeyZ: false,
+    KeyC: false
   };
 
   private mouseLeftDown = false;
@@ -31,13 +33,43 @@ export class InputManager {
   private releasedChargerShot = false;
   private releasedChargeLevel = 0;
   private activeIsCharger = false;
+  private activeWeaponType: WeaponType = 'shooter';
 
   private mouseSensitivity = 0.0022;
   private onDebugToggleCallback?: () => void;
   private onLockChangeCallback?: (locked: boolean) => void;
+  private onWeaponCycleCallback?: (dir: number) => void;
 
   setSensitivity(sens: number): void {
     this.mouseSensitivity = sens;
+  }
+
+  setActiveWeapon(weapon: WeaponType): void {
+    this.activeWeaponType = weapon;
+  }
+
+  setOnWeaponCycle(callback: (dir: number) => void): void {
+    this.onWeaponCycleCallback = callback;
+  }
+
+  isChargingWeapon(): boolean {
+    return this.isCharging;
+  }
+
+  resetCharge(): void {
+    this.isCharging = false;
+    this.chargeLevel = 0;
+    this.releasedChargerShot = false;
+    this.releasedChargeLevel = 0;
+  }
+
+  isAimingDownSights(weaponType?: WeaponType): boolean {
+    const isLocked = this.pointerLocked || this.active;
+    if (!isLocked) return false;
+    if (this.keys.KeyZ || this.keys.KeyC) return true;
+    const type = weaponType || this.activeWeaponType;
+    if (type === 'marksman' && this.mouseRightDown) return true;
+    return false;
   }
 
   constructor(
@@ -57,6 +89,7 @@ export class InputManager {
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onMouseMove);
+    window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('contextmenu', this.onContextMenu);
 
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
@@ -74,6 +107,15 @@ export class InputManager {
 
   private onContextMenu = (e: MouseEvent): void => {
     e.preventDefault();
+  };
+
+  private onWheel = (e: WheelEvent): void => {
+    if (!this.pointerLocked && !this.active) return;
+    if (Math.abs(e.deltaY) < 5) return;
+    const dir = e.deltaY > 0 ? 1 : -1;
+    if (this.onWeaponCycleCallback) {
+      this.onWeaponCycleCallback(dir);
+    }
   };
 
   requestPointerLock(): void {
@@ -237,7 +279,8 @@ export class InputManager {
       fire = this.mouseLeftDown && (this.pointerLocked || this.active);
     }
 
-    const subPressed = this.mouseRightDown || Boolean(this.keys.KeyQ);
+    const isMarksmanAds = this.activeWeaponType === 'marksman' && this.mouseRightDown;
+    const subPressed = (!isMarksmanAds && this.mouseRightDown) || Boolean(this.keys.KeyQ);
     let subWeapon = false;
     if (subPressed && !this.subWeaponFired && (this.pointerLocked || this.active)) {
       subWeapon = true;
@@ -308,6 +351,7 @@ export class InputManager {
     window.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('contextmenu', this.onContextMenu);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     window.removeEventListener('blur', this.resetInputs);

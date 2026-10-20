@@ -23,6 +23,9 @@ export class PaintGrid {
   /** Per-surface vertical ink coverage: [pinkFraction, cyanFraction]. */
   private surfacePaints = new Map<string, [number, number]>();
 
+  private surfaces = new Map<string, PaintSurface>();
+  private dirtySurfaces = new Set<string>();
+
   constructor(resolution = PAINT_GRID_RES) {
     this.resolution = resolution;
     this.totalCells = resolution * resolution;
@@ -46,11 +49,16 @@ export class PaintGrid {
     this.cyanCount = 0;
     this.neutralCount = this.totalCells;
     this.surfacePaints.clear();
+    this.surfaces.clear();
+    this.dirtySurfaces.clear();
   }
 
   /** Initialize per-surface paint state from the map definition. */
   initSurfaces(surfaces: PaintSurface[]): void {
+    this.surfaces.clear();
+    this.dirtySurfaces.clear();
     for (const s of surfaces) {
+      this.surfaces.set(s.id, s);
       if (!this.surfacePaints.has(s.id)) {
         this.surfacePaints.set(s.id, [0, 0]);
       }
@@ -61,9 +69,21 @@ export class PaintGrid {
   getSurfacePaintSnapshots(): PaintSurface[] {
     const out: PaintSurface[] = [];
     for (const [id, paint] of this.surfacePaints) {
-      out.push({ id, position: { x: 0, y: 0, z: 0 }, size: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 1, z: 0 }, height: 0, paint });
+      const s = this.surfaces.get(id);
+      out.push({
+        id,
+        position: s ? s.position : { x: 0, y: 0, z: 0 },
+        size: s ? s.size : { x: 0, y: 0, z: 0 },
+        normal: s ? s.normal : { x: 0, y: 1, z: 0 },
+        height: s ? s.height : 0,
+        paint
+      });
     }
     return out;
+  }
+
+  getSurfaces(): IterableIterator<PaintSurface> {
+    return this.surfaces.values();
   }
 
   /**
@@ -83,12 +103,30 @@ export class PaintGrid {
     if (!current) {
       if (team === Team.PINK) this.surfacePaints.set(surfaceId, [Math.min(1, amount), 0]);
       else if (team === Team.CYAN) this.surfacePaints.set(surfaceId, [0, Math.min(1, amount)]);
+      this.dirtySurfaces.add(surfaceId);
       return;
     }
     const next = [...current] as [number, number];
     if (team === Team.PINK) next[0] = Math.min(1, Math.max(0, next[0] + amount));
     else if (team === Team.CYAN) next[1] = Math.min(1, Math.max(0, next[1] + amount));
     this.surfacePaints.set(surfaceId, next);
+    this.dirtySurfaces.add(surfaceId);
+  }
+
+  /**
+   * Consumes and clears all dirty surface updates since last call.
+   */
+  consumeDirtySurfaces(): { id: string; paint: [number, number] }[] {
+    if (this.dirtySurfaces.size === 0) return [];
+    const out: { id: string; paint: [number, number] }[] = [];
+    for (const id of this.dirtySurfaces) {
+      const paint = this.surfacePaints.get(id);
+      if (paint) {
+        out.push({ id, paint: [paint[0], paint[1]] });
+      }
+    }
+    this.dirtySurfaces.clear();
+    return out;
   }
 
   getInkAt(worldX: number, worldZ: number): Team {

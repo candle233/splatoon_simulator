@@ -81,13 +81,14 @@ describe('gear skills (选择技能)', () => {
     const victimC = new PlayerState('v3', Team.CYAN, 2, getSpawnPosition(Team.CYAN, 2));
     victimC.skills = ['defense'];
 
-    // Face +x: yaw = -PI/2; victims 10 units ahead (inside the 48u range)
+    // Face +x: yaw = -PI/2; victims 10 units ahead (inside the 48u range).
+    // Fired from the open west lane: the map centre is now a solid structure.
     shooter.yaw = -Math.PI / 2;
     shooter.pitch = 0;
-    shooter.position = { x: 0, y: 1, z: 0 };
+    shooter.position = { x: -35, y: 1, z: 0 };
 
     // Shot 1: plain shooter vs plain victim -> base damage
-    victimA.position = { x: 10, y: 1, z: 0 };
+    victimA.position = { x: -30, y: 1, z: 0 };
     const resA = sim.processFire(shooter, [shooter, victimA], Date.now());
     expect(resA.hitPlayerId).toBe(victimA.id);
     const dmgBase = 100 - victimA.hp;
@@ -96,7 +97,7 @@ describe('gear skills (选择技能)', () => {
     // Shot 2: main_power shooter vs plain victim -> boosted damage
     shooter.skills = ['main_power'];
     shooter.lastShotTime = 0;
-    victimB.position = { x: 10, y: 1, z: 0 };
+    victimB.position = { x: -30, y: 1, z: 0 };
     const resB = sim.processFire(shooter, [shooter, victimB], Date.now());
     expect(resB.hitPlayerId).toBe(victimB.id);
     const dmgPower = 100 - victimB.hp;
@@ -105,7 +106,7 @@ describe('gear skills (选择技能)', () => {
 
     // Shot 3: main_power shooter vs defense victim -> reduced boosted damage
     shooter.lastShotTime = 0;
-    victimC.position = { x: 10, y: 1, z: 0 };
+    victimC.position = { x: -30, y: 1, z: 0 };
     const resC = sim.processFire(shooter, [shooter, victimC], Date.now());
     expect(resC.hitPlayerId).toBe(victimC.id);
     const dmgDefended = 100 - victimC.hp;

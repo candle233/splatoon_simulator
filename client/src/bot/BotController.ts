@@ -12,6 +12,7 @@ import {
   worldToUV
 } from '@ink/shared';
 import { PaintEngine } from '../world/PaintEngine.js';
+import { ClientCollisionWorld } from '../world/CollisionWorld.js';
 
 export interface BotState {
   id: string;
@@ -38,10 +39,12 @@ export interface BotState {
 export class BotController {
   private bots: BotState[] = [];
   private paintEngine: PaintEngine;
+  private collisionWorld?: ClientCollisionWorld;
   private botCounter = 1;
 
-  constructor(paintEngine: PaintEngine) {
+  constructor(paintEngine: PaintEngine, collisionWorld?: ClientCollisionWorld) {
     this.paintEngine = paintEngine;
+    this.collisionWorld = collisionWorld;
   }
 
   getBots(): BotState[] {
@@ -160,12 +163,26 @@ export class BotController {
       const dist = Math.hypot(dx, dz);
 
       if (dist < 2.0 && bot.state === 'PATROL') {
-        // Pick new random patrol waypoint in midfield
-        bot.targetPos = {
-          x: (Math.random() - 0.5) * (ARENA_HALF_SIZE * 1.4),
-          y: 0,
-          z: (Math.random() - 0.5) * (ARENA_HALF_SIZE * 1.4)
-        };
+        const ramps = this.collisionWorld?.getRamps() ?? [];
+        if (ramps.length > 0 && Math.random() < 0.35) {
+          const r = ramps[Math.floor(Math.random() * ramps.length)]!;
+          const crestY = r.position.y + r.rise / 2;
+          let crestX = r.position.x;
+          let crestZ = r.position.z;
+          switch (r.direction) {
+            case 'north': crestZ -= r.length / 2; break;
+            case 'south': crestZ += r.length / 2; break;
+            case 'east':  crestX += r.length / 2; break;
+            case 'west':  crestX -= r.length / 2; break;
+          }
+          bot.targetPos = { x: crestX, y: crestY, z: crestZ };
+        } else {
+          // Pick new random patrol waypoint in midfield
+          const x = (Math.random() - 0.5) * (ARENA_HALF_SIZE * 1.4);
+          const z = (Math.random() - 0.5) * (ARENA_HALF_SIZE * 1.4);
+          const y = this.collisionWorld ? this.collisionWorld.getGroundHeightAt(x, z, bot.position.y + 1.5) : 0;
+          bot.targetPos = { x, y, z };
+        }
       }
 
       const speed = bot.mode === PlayerMode.SUBMERGED ? 9.5 : isEnemyInk ? 2.0 : 5.2;
@@ -175,6 +192,13 @@ export class BotController {
         const nz = dz / dist;
         bot.position.x += nx * speed * dt;
         bot.position.z += nz * speed * dt;
+        if (this.collisionWorld) {
+          bot.position.y = this.collisionWorld.getGroundHeightAt(
+            bot.position.x,
+            bot.position.z,
+            bot.position.y + 1.5
+          );
+        }
         bot.yaw = Math.atan2(-nx, -nz);
       }
 
@@ -196,11 +220,14 @@ export class BotController {
               z: localPlayer.position.z + (Math.random() - 0.5) * 1.5
             };
           } else {
-            // Paint ground ahead
+            // Paint ground ahead at true surface elevation
+            const targetX = bot.position.x - Math.sin(bot.yaw) * 12 + (Math.random() - 0.5) * 4;
+            const targetZ = bot.position.z - Math.cos(bot.yaw) * 12 + (Math.random() - 0.5) * 4;
+            const targetY = this.collisionWorld ? this.collisionWorld.getGroundHeightAt(targetX, targetZ, bot.position.y + 1.0) : 0;
             aimTarget = {
-              x: bot.position.x - Math.sin(bot.yaw) * 12 + (Math.random() - 0.5) * 4,
-              y: 0,
-              z: bot.position.z - Math.cos(bot.yaw) * 12 + (Math.random() - 0.5) * 4
+              x: targetX,
+              y: targetY,
+              z: targetZ
             };
           }
 

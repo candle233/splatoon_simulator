@@ -1,4 +1,6 @@
 import { createServer, Server as HttpServer } from 'http';
+import path from 'path';
+import { existsSync } from 'fs';
 import express from 'express';
 import cors from 'cors';
 import { Server, Socket } from 'socket.io';
@@ -132,6 +134,18 @@ export class GameServer {
       });
     });
 
+    const possiblePaths = [
+      path.resolve(process.cwd(), 'client/dist'),
+      path.resolve(process.cwd(), '../client/dist')
+    ];
+    const clientDist = possiblePaths.find((p) => existsSync(path.join(p, 'index.html')));
+    if (clientDist) {
+      this.app.use(express.static(clientDist));
+      this.app.get('/', (_req, res) => {
+        res.sendFile(path.join(clientDist, 'index.html'));
+      });
+    }
+
     this.httpServer = createServer(this.app);
     this.io = new Server(this.httpServer, {
       cors: {
@@ -144,6 +158,11 @@ export class GameServer {
     this.weaponSim = new WeaponSimulation(this.collisionWorld, this.paintGrid);
     this.match = new Match(this.paintGrid, () => this.handleMatchReset());
     this.match.autoStart = false;
+    const def = getMapDef(this.mapId);
+    this.collisionWorld.setObstacles(def.obstacles, def.size);
+    this.collisionWorld.setRamps(def.ramps);
+    this.collisionWorld.setClimbableSurfaces(def.climbableSurfaces);
+    this.paintGrid.initSurfaces(def.paintSurfaces);
     this.applyMapSize();
 
     this.setupSocketHandlers();
@@ -212,7 +231,7 @@ export class GameServer {
       obstacles: this.collisionWorld.getObstacles(),
       ramps: this.activeMap().ramps,
       climbableSurfaces: this.activeMap().climbableSurfaces,
-      paintSurfaces: this.activeMap().paintSurfaces,
+      paintSurfaces: this.paintGrid.getSurfacePaintSnapshots(),
       lobby: this.getLobbyState(),
       mapId: this.mapId,
       mapSize: this.mapSize
@@ -736,9 +755,13 @@ export class GameServer {
         this.io.emit(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, spe);
       }
       for (const hit of entityUpdates.hits) {
+        const isKill = entityUpdates.deaths.some(
+          (d) => d.victimId === hit.victimId && d.killerId === hit.shooterId
+        );
         const shooterSocket = this.io.sockets.sockets.get(hit.shooterId);
         shooterSocket?.emit(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, {
-          targetId: hit.victimId
+          targetId: hit.victimId,
+          isKill
         });
       }
       for (const death of entityUpdates.deaths) {
@@ -773,22 +796,17 @@ export class GameServer {
       lastProcessedInputSeq[player.id] = player.lastProcessedInputSeq;
     }
 
-    // Compute surface paint updates for any player adjacent to a paint surface
-    for (const p of allPlayersList) {
-      if (!p.alive) continue;
-      const updates = this.movementSim.getSurfacePaintUpdates(p.position);
-      for (const u of updates) {
-        // Deduplicate by surface id
-        const existing = this.tickSurfacePaintUpdates.findIndex((x) => x.id === u.id);
-        if (existing >= 0) this.tickSurfacePaintUpdates[existing] = u;
-        else this.tickSurfacePaintUpdates.push(u);
-      }
+    // 1. Consume dirty surfaces from weapon impacts (broadcast only when paint actually changes)
+    const weaponSurfaceUpdates = this.paintGrid.consumeDirtySurfaces();
+    for (const u of weaponSurfaceUpdates) {
+      const existing = this.tickSurfacePaintUpdates.findIndex((x) => x.id === u.id);
+      if (existing >= 0) this.tickSurfacePaintUpdates[existing] = u;
+      else this.tickSurfacePaintUpdates.push(u);
     }
 
     // Flush any accumulated surface paint updates from this tick
-    const pendingSurfaceUpdates = this.tickSurfacePaintUpdates;
-    if (pendingSurfaceUpdates.length > 0) {
-      this.io.emit(PROTOCOL_EVENTS.S2C_SURFACE_PAINT, pendingSurfaceUpdates);
+    if (this.tickSurfacePaintUpdates.length > 0) {
+      this.io.emit(PROTOCOL_EVENTS.S2C_SURFACE_PAINT, this.tickSurfacePaintUpdates);
       this.tickSurfacePaintUpdates = [];
     }
 
@@ -808,6 +826,11 @@ export class GameServer {
    */
   private processPlayerTick(player: PlayerState, input: PlayerInput, dt: number, now: number): void {
     const allPlayersList = this.roster();
+
+    // Update player weapon if the client switched mid-match
+    if (input.weaponType && isValidWeaponType(input.weaponType) && player.weaponType !== input.weaponType) {
+      player.weaponType = input.weaponType;
+    }
 
     // Simulate movement and ground DoT
     const moveRes = this.movementSim.simulatePlayer(player, input, dt, now);
@@ -850,9 +873,13 @@ export class GameServer {
           }
 
           if (shotResult.hitPlayerId) {
+            const isKill = Boolean(
+              shotResult.killedPlayerId && shotResult.killedPlayerId === shotResult.hitPlayerId
+            );
             const shooterSocket = this.io.sockets.sockets.get(player.id);
             shooterSocket?.emit(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, {
-              targetId: shotResult.hitPlayerId
+              targetId: shotResult.hitPlayerId,
+              isKill
             });
           }
 

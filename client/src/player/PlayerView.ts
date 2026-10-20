@@ -347,6 +347,12 @@ export class PlayerView {
   private tankLiquidHalf = 0.29;
   private tankLedMesh!: THREE.Mesh;
   private ledMat!: THREE.MeshBasicMaterial;
+  private antennaTipMesh?: THREE.Mesh;
+  private antennaTipMat!: THREE.MeshBasicMaterial;
+  private hitFlashTimer = 0;
+  private hitFlashMat!: THREE.MeshBasicMaterial;
+  private humanoidFlashMesh!: THREE.Mesh;
+  private submergedFlashMesh!: THREE.Mesh;
   private squidEyeGroups: THREE.Group[] = [];
   private ghostGroup = new THREE.Group();
   private ghostMaterials: (THREE.Material & { opacity: number })[] = [];
@@ -419,6 +425,8 @@ export class PlayerView {
     // Per-view animated materials (never shared between fighters)
     this.ledMat = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
     this.materials.push(this.ledMat);
+    this.antennaTipMat = new THREE.MeshBasicMaterial({ color: this.teamColorHex });
+    this.materials.push(this.antennaTipMat);
     const dripMat = new THREE.MeshStandardMaterial({
       color: this.teamColorHex,
       roughness: 0.2,
@@ -427,6 +435,29 @@ export class PlayerView {
       opacity: 0.95
     });
     this.materials.push(dripMat);
+
+    this.hitFlashMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.0,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    this.materials.push(this.hitFlashMat);
+
+    const flashGeoHuman = new THREE.CapsuleGeometry(0.38, 0.72, 4, 8);
+    this.geometries.push(flashGeoHuman);
+    this.humanoidFlashMesh = new THREE.Mesh(flashGeoHuman, this.hitFlashMat);
+    this.humanoidFlashMesh.position.set(0, 0.75, 0);
+    this.humanoidFlashMesh.visible = false;
+    this.humanoidGroup.add(this.humanoidFlashMesh);
+
+    const flashGeoSub = new THREE.SphereGeometry(0.42, 10, 8);
+    this.geometries.push(flashGeoSub);
+    this.submergedFlashMesh = new THREE.Mesh(flashGeoSub, this.hitFlashMat);
+    this.submergedFlashMesh.position.set(0, 0.12, 0);
+    this.submergedFlashMesh.visible = false;
+    this.submergedGroup.add(this.submergedFlashMesh);
 
     this.torsoGroup.position.y = 0.85;
     this.headGroup.position.y = 0.55;
@@ -820,8 +851,9 @@ export class PlayerView {
     this.tankGroup.add(this.tankLedMesh);
 
     tankPart(parts, 'dark', cyl(0.008, 0.008, 0.22, 6), 0.09, bodyH / 2 + 0.16, 0);
-    const antennaTip = new THREE.Mesh(sph(0.022, 8, 8), this.palette.glow);
+    const antennaTip = new THREE.Mesh(sph(0.022, 8, 8), this.antennaTipMat);
     antennaTip.position.set(0.09, bodyH / 2 + 0.28, 0);
+    this.antennaTipMesh = antennaTip;
     this.tankGroup.add(antennaTip);
 
     // Supply hose: under the tank valve, around the right hip and forward to
@@ -1347,11 +1379,22 @@ export class PlayerView {
     this.scatterGroup.visible   = key === 'scatter';
   }
 
-  triggerRecoil(): void {
-    this.recoilOffset = -0.18;
+  triggerRecoil(recoilAmount = 0.18): void {
+    this.recoilOffset = -Math.abs(recoilAmount);
     this.flashTimer = 0.07;
     this.muzzleFlashMesh.position.z = -0.6 - this.getMuzzleZOffset(this.currentWeapon);
     this.muzzleFlashMesh.visible = true;
+  }
+
+  /**
+   * Triggers an arcade-style ink hit flash on the character model upon taking damage.
+   */
+  triggerDamageFlash(attackerTeam?: Team): void {
+    const flashColor = attackerTeam === Team.PINK ? 0xff2288 : attackerTeam === Team.CYAN ? 0x00e5ff : 0xffffff;
+    this.hitFlashMat.color.setHex(flashColor);
+    this.hitFlashTimer = 0.14;
+    this.humanoidFlashMesh.visible = this.currentMode === PlayerMode.HUMANOID;
+    this.submergedFlashMesh.visible = this.currentMode === PlayerMode.SUBMERGED;
   }
 
   setMode(mode: PlayerMode): void {
@@ -1362,6 +1405,8 @@ export class PlayerView {
     if (mode === PlayerMode.DEAD) {
       this.humanoidGroup.visible = false;
       this.submergedGroup.visible = false;
+      this.humanoidFlashMesh.visible = false;
+      this.submergedFlashMesh.visible = false;
       if (this.nameplateSprite) this.nameplateSprite.visible = false;
       this.ghostActive = true;
       this.ghostTime = 0;
@@ -1371,12 +1416,16 @@ export class PlayerView {
     } else if (mode === PlayerMode.SUBMERGED) {
       this.humanoidGroup.visible = false;
       this.submergedGroup.visible = true;
+      this.humanoidFlashMesh.visible = false;
+      this.submergedFlashMesh.visible = this.hitFlashTimer > 0;
       if (this.nameplateSprite) this.nameplateSprite.visible = false;
       this.ghostActive = false;
       this.ghostGroup.visible = false;
     } else {
       this.humanoidGroup.visible = true;
       this.submergedGroup.visible = false;
+      this.humanoidFlashMesh.visible = this.hitFlashTimer > 0;
+      this.submergedFlashMesh.visible = false;
       if (this.nameplateSprite) this.nameplateSprite.visible = true;
       this.ghostActive = false;
       this.ghostGroup.visible = false;
@@ -1633,12 +1682,24 @@ export class PlayerView {
     // Recoil recovery
     this.recoilOffset = THREE.MathUtils.lerp(this.recoilOffset, 0, 0.25);
     this.weaponAnchor.position.z = -0.3 + this.recoilOffset;
+    this.weaponAnchor.rotation.x = this.recoilOffset * 0.7;
 
     // Flash timer
     if (this.flashTimer > 0) {
       this.flashTimer -= dt;
       if (this.flashTimer <= 0) {
         this.muzzleFlashMesh.visible = false;
+      }
+    }
+
+    // Hit-confirm damage flash timer
+    if (this.hitFlashTimer > 0) {
+      this.hitFlashTimer -= dt;
+      const progress = Math.max(0, this.hitFlashTimer / 0.14);
+      this.hitFlashMat.opacity = progress * 0.8;
+      if (this.hitFlashTimer <= 0) {
+        this.humanoidFlashMesh.visible = false;
+        this.submergedFlashMesh.visible = false;
       }
     }
   }
@@ -1720,13 +1781,27 @@ export class PlayerView {
     this.tankLiquidMesh.scale.set(1, inkRatio, 1);
     this.tankLiquidMesh.position.y = this.tankLiquidHalf * (inkRatio - 1);
 
-    // Tank Warning LED Light
+    // Tank Warning LED Light & Low-Ink Tank Warning Pulses
     if (inkPct < 20) {
-      this.ledMat.color.setHex(Math.sin(time * 18) > 0 ? 0xff0033 : 0x330000);
+      const pulseSpeed = 18;
+      const flash = Math.sin(time * pulseSpeed) > 0;
+      this.ledMat.color.setHex(flash ? 0xff002e : 0x330005);
+      const ledPulse = 1.0 + Math.sin(time * pulseSpeed) * 0.45;
+      this.tankLedMesh.scale.set(ledPulse, ledPulse, ledPulse);
+      this.antennaTipMat.color.setHex(flash ? 0xff002e : 0x330005);
+      if (this.antennaTipMesh) {
+        this.antennaTipMesh.scale.set(ledPulse, ledPulse, ledPulse);
+      }
     } else if (inkPct < 50) {
       this.ledMat.color.setHex(0xffbb00);
+      this.tankLedMesh.scale.set(1, 1, 1);
+      this.antennaTipMat.color.setHex(this.teamColorHex);
+      if (this.antennaTipMesh) this.antennaTipMesh.scale.set(1, 1, 1);
     } else {
       this.ledMat.color.setHex(0x00ff88);
+      this.tankLedMesh.scale.set(1, 1, 1);
+      this.antennaTipMat.color.setHex(this.teamColorHex);
+      if (this.antennaTipMesh) this.antennaTipMesh.scale.set(1, 1, 1);
     }
 
     // Gentle ripple animation when submerged with dynamic dive scale

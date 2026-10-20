@@ -17,11 +17,15 @@ export interface WeaponSelectCallbacks {
 /** All available weapons in the same order the lobby grid uses. */
 const ALL_WEAPONS = Object.keys(WEAPON_CONFIGS) as WeaponType[];
 
-const THUMB_PATHS: Partial<Record<WeaponType, string>> = {
+const THUMB_PATHS: Record<WeaponType, string> = {
   shooter: '/assets/weapons/splattershot.jpg',
   roller: '/assets/weapons/splat_roller.jpg',
   charger: '/assets/weapons/splat_charger.jpg',
-  slosher: '/assets/weapons/slosher.jpg'
+  slosher: '/assets/weapons/slosher.jpg',
+  sprayer: '/assets/weapons/sprayer.jpg',
+  cannon: '/assets/weapons/cannon.jpg',
+  marksman: '/assets/weapons/marksman.jpg',
+  scatter: '/assets/weapons/scatter.jpg'
 };
 
 export class WeaponSelectScreen {

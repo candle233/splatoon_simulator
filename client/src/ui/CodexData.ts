@@ -94,6 +94,40 @@ const CHARACTER_TAB: CodexTab = {
       ]
     },
     {
+      img: '/assets/characters/octoling_rival.jpg',
+      badgeKey: null,
+      badgeText: { zh: '紫晶章鱼', ja: 'オクト', en: 'Octo' },
+      badgeClass: 'purple',
+      title: { zh: '紫晶暗影章鱼战士', ja: 'アメジスト・オクトリング', en: 'Octoling Rival Elite' },
+      desc: {
+        zh: '来自地下街区的精英章鱼刺客，发端流淌着高冷神秘的紫晶荧光与发光吸盘，手持双枪双枪位移神出鬼没。',
+        ja: '地下街から現れたエリートオクトリング。紫に光る触手と二丁拳銃で戦場を翻弄する。',
+        en: 'Elite Octoling assassin with luminous purple suckers and dual sprayers, dominating flanks with swift rolls.'
+      },
+      tags: [
+        { text: { zh: '形态: 章鱼人形', ja: '形態: タコヒト', en: 'Form: Octoling' } },
+        { text: { zh: '主武器: 墨水双枪', ja: 'メイン: スプレイヤー', en: 'Main: Ink Sprayers' } },
+        { text: { zh: '机动力: ★★★★★', ja: '機動力: ★★★★★', en: 'Mobility: ★★★★★' } }
+      ]
+    },
+    {
+      img: '/assets/characters/inkling_gold.jpg',
+      badgeKey: null,
+      badgeText: { zh: '炽金突击', ja: 'ゴールド', en: 'Gold' },
+      badgeClass: 'gold',
+      title: { zh: '炽金狂飙重滚手', ja: 'ゴールド・ストライカー', en: 'Gold Striker Inker' },
+      desc: {
+        zh: '充满街头活力的重型近战涂地手，身着潮流街舞队服与反戴滑板帽，挥舞重型工业压路机碾压全场。',
+        ja: 'ストリートの熱血ローラー使い。特大ローラーで一気にインクの道を切り開く。',
+        en: 'Energetic heavy roller specialist rocking skate streetwear and steamrolling enemy territory.'
+      },
+      tags: [
+        { text: { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' } },
+        { text: { zh: '主武器: 巨型滚刷', ja: 'メイン: ローラー', en: 'Main: Splat Roller' } },
+        { text: { zh: '破坏力: ★★★★★', ja: '破壊力: ★★★★★', en: 'Power: ★★★★★' } }
+      ]
+    },
+    {
       img: '/assets/characters/squid_morph.jpg',
       badgeKey: 'codex.badgeTransform',
       badgeClass: 'purple',
@@ -186,13 +220,13 @@ function weaponImg(id: WeaponType): string {
     case 'slosher':
       return '/assets/weapons/slosher.jpg';
     case 'sprayer':
-      return '/assets/weapons/splattershot.jpg';
+      return '/assets/weapons/sprayer.jpg';
     case 'cannon':
-      return '/assets/weapons/slosher.jpg';
+      return '/assets/weapons/cannon.jpg';
     case 'marksman':
-      return '/assets/weapons/splat_charger.jpg';
+      return '/assets/weapons/marksman.jpg';
     case 'scatter':
-      return '/assets/weapons/splattershot.jpg';
+      return '/assets/weapons/scatter.jpg';
     default:
       return '/assets/weapons/splattershot.jpg';
   }
@@ -203,13 +237,13 @@ function subImg(id: SubWeaponType): string {
     case 'curling_bomb':
       return '/assets/weapons/curling_bomb.jpg';
     case 'burst_bomb':
-      return '/assets/weapons/splat_bomb.jpg';
+      return '/assets/weapons/burst_bomb.jpg';
     case 'ink_mine':
-      return '/assets/weapons/splat_bomb.jpg';
+      return '/assets/weapons/ink_mine.jpg';
     case 'bounce_bomb':
-      return '/assets/weapons/curling_bomb.jpg';
+      return '/assets/weapons/bounce_bomb.jpg';
     case 'ink_puddle':
-      return '/assets/weapons/splat_bomb.jpg';
+      return '/assets/weapons/ink_puddle.jpg';
     default:
       return '/assets/weapons/splat_bomb.jpg';
   }
@@ -238,11 +272,11 @@ function specialImg(id: SpecialWeaponType): string {
     case 'killer_wail':
       return '/assets/weapons/killer_wail.jpg';
     case 'ink_storm':
-      return '/assets/weapons/inkstrike.jpg';
+      return '/assets/weapons/ink_storm.jpg';
     case 'ink_nova':
-      return '/assets/weapons/inkstrike.jpg';
+      return '/assets/weapons/ink_nova.jpg';
     case 'ink_barrier':
-      return '/assets/weapons/curling_bomb.jpg';
+      return '/assets/weapons/ink_barrier.jpg';
     default:
       return '/assets/weapons/inkstrike.jpg';
   }
@@ -317,6 +351,74 @@ const GEAR_TAB: CodexTab = {
         { text: { zh: '高抓地力鞋底', ja: '高グリップ', en: 'High-grip sole' } },
         { text: { zh: '撞色设计', ja: 'ツートンカラー', en: 'Two-tone' } }
       ]
+    },
+    {
+      img: '/assets/gear/tactical_helmet.jpg',
+      badgeKey: null,
+      badgeText: { zh: '战术飞行头盔', ja: 'タクティカルヘルメット', en: 'Pilot Helmet' },
+      badgeClass: 'gear',
+      title: { zh: '机能飞行员战术全盔', ja: 'パイロットタクティカルヘルメット', en: 'Tactical Pilot Helmet' },
+      desc: {
+        zh: '高强度防溅墨防爆头盔，配备炫彩镀膜全景护目镜与战术语音天线，全方位保障高烈度对抗中的视野与通讯。',
+        ja: '防爆仕様のタクティカルヘルメット。ミラーシールドとインカムで視界と通信を確保。',
+        en: 'High-impact pilot helmet featuring iridescent tinted visor, integrated headset, and ink splash resistance.'
+      },
+      tags: [
+        { text: { zh: '炫彩护目防溅', ja: '防爆シールド', en: 'Iridescent Visor' } },
+        { text: { zh: '战术语音天线', ja: 'インカム内蔵', en: 'Comms Antenna' } },
+        { text: { zh: '头部防护 ★★★★★', ja: '防御: ★★★★★', en: 'Armor: ★★★★★' } }
+      ]
+    },
+    {
+      img: '/assets/gear/techwear_hoodie.jpg',
+      badgeKey: null,
+      badgeText: { zh: '机能冲锋衣', ja: 'テックウェア', en: 'Techwear' },
+      badgeClass: 'gear',
+      title: { zh: '都市机能反光连帽冲锋衣', ja: 'アーバンテックウェアジャケット', en: 'Urban Techwear Windbreaker' },
+      desc: {
+        zh: '街头潮流与特勤作战的终极结合。疏水纳米织物外壳，荧光青色战术背带扣环与多重防水快拆外挂弹药袋。',
+        ja: '防水ナノ素材のハイテクジャケット。蛍光シアンのストラップと大容量ポケットを搭載。',
+        en: 'Water-repellent techwear windbreaker with fluorescent cyan webbing straps and quick-access utility pouches.'
+      },
+      tags: [
+        { text: { zh: '纳米疏水防墨', ja: 'ナノ撥水', en: 'Hydrophobic' } },
+        { text: { zh: '战术外挂扩容', ja: '拡張ポーチ', en: 'Modular Pouches' } },
+        { text: { zh: '机动轻便', ja: '軽量設計', en: 'Lightweight' } }
+      ]
+    },
+    {
+      img: '/assets/gear/combat_boots.jpg',
+      badgeKey: null,
+      badgeText: { zh: '重装战靴', ja: 'コンバットブーツ', en: 'Boots' },
+      badgeClass: 'gear',
+      title: { zh: '重型工业超抓地战斗靴', ja: 'ヘビーインダストリアルブーツ', en: 'Heavy Turf Combat Boots' },
+      desc: {
+        zh: '针对深层泥泞墨汁环境特制的重装高帮战靴。加厚防滑锯齿钢底与荧光亮黄鞋带，在敌方墨迹中也能保持坚实站姿。',
+        ja: '深層インクでも滑らない超高グリップブーツ。厚底スチールソールとネオンイエローの紐。',
+        en: 'Heavy-tread steel-reinforced industrial boots designed for absolute traction even on enemy ink.'
+      },
+      tags: [
+        { text: { zh: '钢纹超强抓地', ja: '高グリップ鋼底', en: 'Ultra-Grip Steel' } },
+        { text: { zh: '深墨抗性提升', ja: 'インク耐性', en: 'Ink Resistance' } },
+        { text: { zh: '工业防护', ja: '重装甲', en: 'Industrial Grade' } }
+      ]
+    },
+    {
+      img: '/assets/gear/tactical_vest.jpg',
+      badgeKey: null,
+      badgeText: { zh: '战术背心', ja: 'タクティカルベスト', en: 'Armor Vest' },
+      badgeClass: 'gear',
+      title: { zh: '极速复活战术外骨骼背心', ja: 'クイックリスポーンアーマーベスト', en: 'Quick-Respawn Armor Rig' },
+      desc: {
+        zh: '搭载应急墨水储备电芯的高规格防护背心。配备双联副武器炸药快拔槽与电量实时状态屏，关键时刻快速重返战场。',
+        ja: 'サブウェポンホルダーと残量ゲージを備えた防護ベスト。リスポーン短縮を支援。',
+        en: 'Tactical chest rig with dual bomb holsters, glowing battery status gauge, and accelerated respawn matrix.'
+      },
+      tags: [
+        { text: { zh: '双联副武器挂载', ja: 'サブ2本差し', en: 'Dual Sub Holsters' } },
+        { text: { zh: '电量状态监控', ja: '残量モニター', en: 'Power Status' } },
+        { text: { zh: '快速整备', ja: 'クイック準備', en: 'Quick Ready' } }
+      ]
     }
   ]
 };
@@ -326,19 +428,73 @@ const SCENERY_TAB: CodexTab = {
   titleKey: 'codex.tabScenery',
   items: [
     {
-      img: '/assets/backgrounds/arena_battlefield.jpg',
+      img: '/assets/backgrounds/arena_downtown.jpg',
+      badgeKey: null,
+      badgeText: { zh: '霓虹都会', ja: 'ネオン街', en: 'Downtown' },
+      badgeClass: 'scene',
+      title: { zh: '霓虹天台立体商业街区', ja: 'ネオン・ダウンタウン', en: 'Neon Downtown Arena' },
+      desc: {
+        zh: '摩天大厦环绕的赛博都会中心立体竞技场。全息巨型乌贼广告牌与穿行立交平台，高低错落的纵向立体对战圣地。',
+        ja: '高層ビルに囲まれたサイバーパンクステージ。巨大ホロ看板と立体交差が生む縦横の駆け引き。',
+        en: 'Multi-tier cybernetic metropolis rooftop arena framed by towering holographic squid displays and tiered combat ramps.'
+      },
+      tags: [
+        { text: { zh: '规格: 145m × 145m', ja: 'サイズ: 145m', en: 'Size: 145m' } },
+        { text: { zh: '立体高低跳台', ja: '立体高低差', en: 'Multi-tier Vert' } },
+        { text: { zh: '赛博霓虹夜景', ja: 'サイバー夜景', en: 'Cyberpunk Night' } }
+      ],
+      wide: true
+    },
+    {
+      img: '/assets/backgrounds/arena_cargo_docks.jpg',
       badgeKey: 'codex.badgeBattleground',
       badgeClass: 'scene',
-      title: { zh: '码头货柜涂地竞技场', ja: '貨物ドック・アリーナ', en: 'Cargo Docks Arena' },
+      title: { zh: '海港集装箱枢纽赛场', ja: '貨物ドック・アリーナ', en: 'Cargo Docks Arena' },
       desc: {
         zh: '建于海港集装箱枢纽的专业涂地赛场。多层钢制集装箱群与滑板弧形坡道构成极具层次感的战术对抗空间。',
         ja: '港湾コンテナターミナルに作られた大会用ステージ。多層コンテナとランプが立体戦術を生む。',
         en: 'Pro turf stage built in a harbor container hub — stacked steel boxes and ramps create layered fights.'
       },
       tags: [
-        { text: { zh: '规格: 124m × 124m', ja: 'サイズ: 124m', en: 'Size: 124m × 124m' } },
+        { text: { zh: '规格: 185m × 185m', ja: 'サイズ: 185m', en: 'Size: 185m' } },
         { text: { zh: '地形: 集装箱 & 坡道', ja: '地形: コンテナ+ランプ', en: 'Terrain: containers & ramps' } },
-        { text: { zh: '黄昏氛围', ja: '夕暮れ', en: 'Sunset vibe' } }
+        { text: { zh: '夕阳黄金海港', ja: '夕暮れ海港', en: 'Sunset Harbor' } }
+      ],
+      wide: true
+    },
+    {
+      img: '/assets/backgrounds/arena_sky_rink.jpg',
+      badgeKey: null,
+      badgeText: { zh: '云端滑冰场', ja: 'スカイリンク', en: 'Sky Rink' },
+      badgeClass: 'scene',
+      title: { zh: '云端浮空冰原竞技场', ja: 'スカイリンク・アリーナ', en: 'Sky Rink Arena' },
+      desc: {
+        zh: '万米云海之上的悬浮透光玻璃竞技台。光滑冰面环道与高空全景透明栈桥，热气球与轻柔白云环抱下的极速滑行战场。',
+        ja: '雲海の上に浮かぶガラスのアリーナ。滑らかな氷面と透明デッキで高速バトルが展開。',
+        en: 'Floating glass arena suspended above endless white clouds, featuring icy slick ramps and panoramic suspension bridges.'
+      },
+      tags: [
+        { text: { zh: '规格: 130m × 130m', ja: 'サイズ: 130m', en: 'Size: 130m' } },
+        { text: { zh: '浮空透明栈桥', ja: '浮遊ガラスデッキ', en: 'Suspended Glass' } },
+        { text: { zh: '壮阔云海日光', ja: '壮大な雲海', en: 'Sea of Clouds' } }
+      ],
+      wide: true
+    },
+    {
+      img: '/assets/backgrounds/arena_aurora_outpost.jpg',
+      badgeKey: null,
+      badgeText: { zh: '极光前哨', ja: 'オーロラ基地', en: 'Aurora Outpost' },
+      badgeClass: 'scene',
+      title: { zh: '极地极昼极光科考站', ja: 'オーロラ・アウトポスト', en: 'Aurora Outpost' },
+      desc: {
+        zh: '极地冰原上的科研穹顶要塞。舞动在夜空中的翠绿与紫罗兰极光，与白雪上飞溅的炽热墨水构成鲜明的视觉冲击。',
+        ja: '極寒の氷原に建てられた基地。夜空に舞うオーロラと雪上のカラフルなインクが織りなす幻想的な戦場。',
+        en: 'Polar scientific outpost under dancing emerald and violet auroras, snowfields splashed with vibrant warm ink.'
+      },
+      tags: [
+        { text: { zh: '规格: 160m × 160m', ja: 'サイズ: 160m', en: 'Size: 160m' } },
+        { text: { zh: '极光星空天顶', ja: 'オーロラ星空', en: 'Aurora Borealis' } },
+        { text: { zh: '极地科考穹顶', ja: '雪原ドーム', en: 'Arctic Domes' } }
       ],
       wide: true
     },
@@ -373,6 +529,24 @@ const SCENERY_TAB: CodexTab = {
         { text: { zh: '冠军领奖台', ja: '優勝セレモニー', en: 'Champion podium' } },
         { text: { zh: '全息彩花礼炮', ja: 'ホロ花火', en: 'Holo fireworks' } },
         { text: { zh: '万众欢呼盛典', ja: '大歓声', en: 'Roaring crowd' } }
+      ],
+      wide: true
+    },
+    {
+      img: '/assets/backgrounds/defeat_stage.jpg',
+      badgeKey: null,
+      badgeText: { zh: '赛后竞技场', ja: '黄昏アリーナ', en: 'Dusk Arena' },
+      badgeClass: 'scene',
+      title: { zh: '暮色微光赛后沉思竞技场', ja: 'トワイライト・バトルグラウンド', en: 'Twilight Aftermath Arena' },
+      desc: {
+        zh: '激烈战斗尘埃落定后的宁静竞技场。探照灯在湿润的积水彩墨中投射出倒影，微风与星光陪伴着等待下一场对决的勇士。',
+        ja: '激戦の後の静寂。濡れたインクの水たまりにスタジアムの照明と夜空の月が映る。',
+        en: 'Quiet aftermath of a fierce clash under stadium lights and starlight, wet paint puddles mirroring neon skylines.'
+      },
+      tags: [
+        { text: { zh: '赛后暮光全景', ja: '黄昏の情景', en: 'Twilight Vista' } },
+        { text: { zh: '倒影墨渍水光', ja: '反射インク', en: 'Reflective Ink' } },
+        { text: { zh: '静待再战', ja: '再戦の誓い', en: 'Ready to Rematch' } }
       ],
       wide: true
     }

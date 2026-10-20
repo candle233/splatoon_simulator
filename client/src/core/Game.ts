@@ -8,12 +8,15 @@ import {
   PaintEvent,
   PlayerMode,
   PlayerSnapshot,
+  Ray,
+  SPECIAL_CONFIGS,
   SUB_WEAPON_CONFIGS,
   ShotEventPayload,
   SnapshotPayload,
   SpecialEventPayload,
   SubWeaponEventPayload,
   Team,
+  Vec3,
   WEAPON_CONFIGS,
   WeaponType,
   WelcomePayload,
@@ -28,6 +31,7 @@ import type { GameMode, MapDef, MapId } from '@ink/shared';
 import { VisualWeapon } from '../combat/Weapon.js';
 import { ParticleSystem } from '../combat/ParticleSystem.js';
 import { Crosshair } from '../combat/Crosshair.js';
+import { pickThreatPoint, threatAngle, type EnemySample, type ThreatSample } from '../combat/ThreatAngle.js';
 import { CameraController } from '../player/CameraController.js';
 import { LocalPlayer } from '../player/LocalPlayer.js';
 import { RemotePlayer } from '../player/RemotePlayer.js';
@@ -40,6 +44,7 @@ import { Scoreboard } from '../ui/Scoreboard.js';
 import { Minimap, MinimapPlayerData } from '../ui/Minimap.js';
 import { SettingsModal } from '../ui/SettingsModal.js';
 import { LobbyScreen } from '../ui/LobbyScreen.js';
+import { lobbyAudio } from '../ui/LobbyAudio.js';
 import { TitleScreen } from '../ui/TitleScreen.js';
 import { ScreenManager, screenRouteForPhase } from '../ui/ScreenManager.js';
 import { BotController, BotState } from '../bot/BotController.js';
@@ -50,7 +55,7 @@ import { Clock } from './Clock.js';
 import { InputManager } from './InputManager.js';
 import { GameRenderer } from './Renderer.js';
 import { SoundManager } from './SoundManager.js';
-import { t } from '../i18n.js';
+import { locName, t } from '../i18n.js';
 
 /** Small deterministic hash so cosmetics stay stable per player id. */
 function hashId(id: string): number {
@@ -111,8 +116,18 @@ export class Game {
   private lastLocalShotTime = 0;
   private lastDebugUpdateTime = 0;
   private lastRemoteShotSoundAt = 0;
+  private wasChargeFull = false;
+  private lastSpecialMeter = 0;
+  private lastInkReloadSoundTime = 0;
+  private weaponToastTimeout?: number;
+  /** Most negative vertical speed while airborne, sampled before the landing step. */
+  private airborneMinVy = 0;
+  private lastDamageCueAt = 0;
+  private readonly recentThreats: ThreatSample[] = [];
   /** Debug-fire window end timestamp (test hook only; the server still validates everything). */
   private debugFireUntil = 0;
+  /** Free-camera override used by screenshot automation (null = normal camera). */
+  private debugCam: { px: number; py: number; pz: number; lx: number; ly: number; lz: number } | null = null;
 
   // --- Per-frame scratch buffers -------------------------------------------
   // The render loop runs 60+ times a second; every one of these is reused and
@@ -131,10 +146,23 @@ export class Game {
   private readonly squidIndicators: { team: Team; alive: boolean; specialMeter: number }[] = [];
   /** Reused interpolation result handed to `RemotePlayer.update`. */
   private readonly remoteState = createInterpolatedState();
+  /** Reusable raycast and aiming scratch objects to prevent allocations in render loop. */
+  private readonly scratchCamRay: Ray = {
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 0, z: 0 }
+  };
+  private readonly scratchMuzzleRay: Ray = {
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 0, z: 0 }
+  };
+  private readonly scratchMuzzle: Vec3 = { x: 0, y: 0, z: 0 };
+  private readonly scratchMuzzleDir: Vec3 = { x: 0, y: 0, z: 0 };
+  private readonly scratchAimPoint: Vec3 = { x: 0, y: 0, z: 0 };
   /** Frame-time sampling for the debug hook (rolling window). */
   private frameTimeHistory: number[] = [];
   private frameTimeMax = 0;
   private lastFrameAt = 0;
+  private lastCountdownSecond = -1;
 
   constructor() {
     const canvas = document.getElementById('webgl-canvas') as HTMLCanvasElement;
@@ -143,6 +171,9 @@ export class Game {
     }
 
     this.renderer = new GameRenderer(canvas);
+    this.collisionWorld.setObstacles(this.activeMapDef.obstacles, this.activeMapDef.size);
+    this.collisionWorld.setRamps(this.activeMapDef.ramps);
+    this.collisionWorld.setClimbableSurfaces(this.activeMapDef.climbableSurfaces);
     this.arena = new Arena(this.paintEngine, this.activeMapDef);
     this.renderer.scene.add(this.arena.group);
     this.renderer.scene.add(this.weaponVisual.group);
@@ -150,7 +181,9 @@ export class Game {
     this.renderer.applyTheme(this.activeMapDef.theme);
 
     this.minimap = new Minimap(this.paintEngine);
-    this.botController = new BotController(this.paintEngine);
+    this.minimap.setClimbables(this.activeMapDef.climbableSurfaces);
+    this.minimap.setZone(this.activeMapDef.zone);
+    this.botController = new BotController(this.paintEngine, this.collisionWorld);
 
     this.cameraController = new CameraController(this.renderer.camera, this.collisionWorld);
     this.inputManager = new InputManager(
@@ -158,6 +191,12 @@ export class Game {
       () => this.hud.toggleDebugOverlay(),
       (locked) => this.handleLockChange(locked)
     );
+    this.inputManager.setOnWeaponCycle((dir) => {
+      const inGame = !this.lobbyScreen.isVisible() && !this.titleScreen.isVisible();
+      if (inGame && this.inputManager.isLocked()) {
+        this.cycleWeapon(dir);
+      }
+    });
 
     this.settingsModal = new SettingsModal({
       onSensitivityChange: (val) => {
@@ -166,9 +205,15 @@ export class Game {
       onFovChange: (fov) => {
         this.renderer.camera.fov = fov;
         this.renderer.camera.updateProjectionMatrix();
+        this.cameraController.setBaseFov(fov);
+      },
+      onMasterVolumeChange: (vol) => {
+        this.soundManager.setMasterVolume(vol);
+        lobbyAudio.setVolume(vol * this.settingsModal.config.sfxVolume);
       },
       onSfxVolumeChange: (vol) => {
         this.soundManager.setSfxVolume(vol);
+        lobbyAudio.setVolume(this.settingsModal.config.masterVolume * vol);
       },
       onBgmVolumeChange: (vol) => {
         this.soundManager.setBgmVolume(vol);
@@ -186,8 +231,11 @@ export class Game {
     this.inputManager.setSensitivity(this.settingsModal.config.mouseSensitivity * 0.0022);
     this.renderer.camera.fov = this.settingsModal.config.fov;
     this.renderer.camera.updateProjectionMatrix();
+    this.cameraController.setBaseFov(this.settingsModal.config.fov);
+    this.soundManager.setMasterVolume(this.settingsModal.config.masterVolume);
     this.soundManager.setSfxVolume(this.settingsModal.config.sfxVolume);
     this.soundManager.setBgmVolume(this.settingsModal.config.bgmVolume);
+    lobbyAudio.setVolume(this.settingsModal.config.masterVolume * this.settingsModal.config.sfxVolume);
     this.applyQuality(this.settingsModal.config.quality);
 
     this.titleScreen = new TitleScreen(
@@ -215,11 +263,12 @@ export class Game {
           this.inputManager.requestPointerLock();
         },
         onMatchConfig: (config) => this.networkClient.sendMatchConfig(config),
-        onAddBot: () => this.networkClient.sendAddBot(),
+        onAddBot: (team?: Team) => this.networkClient.sendAddBot(team),
         onRemoveBot: () => this.networkClient.sendRemoveBot(),
         onReturnToTitle: () => {
           this.screens.show('title');
-        }
+        },
+        getPing: () => this.networkClient.currentPing
       },
       this.screens
     );
@@ -244,14 +293,27 @@ export class Game {
       onPlayerRespawned: (p) => this.handlePlayerRespawned(p),
       onMatchState: (state) => this.handleMatchState(state),
       onGameOver: (payload) => this.handleGameOver(payload),
-      onHitFeedback: () => {
-        this.crosshair.showHitMarker();
+      onHitFeedback: (data?: { targetId?: string; isKill?: boolean }) => {
+        const isKill = Boolean(data?.isKill);
+        this.crosshair.showHitMarker(isKill);
         this.soundManager.playHit();
+        if (data?.targetId) {
+          const target = this.remotePlayers.get(data.targetId) ?? this.botRemotePlayers.get(data.targetId);
+          if (target) {
+            this.particleSystem.spawnHitConfirm(target.position, isKill, target.team);
+            target.view.triggerDamageFlash(this.localPlayer?.team);
+          }
+        }
+        if (isKill) {
+          this.soundManager.playKillChime();
+          this.cameraController.addShake(0.35, 0.25);
+        }
       },
       onShotEvent: (shot) => this.handleShotEvent(shot),
       onLobbyState: (state) => this.handleLobbyState(state),
       onSubWeaponEvent: (evt) => this.handleSubWeaponEvent(evt),
       onSpecialEvent: (evt) => this.handleSpecialEvent(evt),
+      onSurfacePaint: (updates) => this.paintEngine.applySurfacePaintUpdate(updates),
       onConnect: () => {
         this.hud.hideSyncBanner();
       },
@@ -297,7 +359,6 @@ export class Game {
           this.setLocalWeapon(weapon);
           this.lobbyScreen.selectedWeapon = weapon;
           this.networkClient.sendLobbyUpdate({ weaponType: weapon });
-          this.hud.addKillFeedEntry('⚙', Team.NEUTRAL, `${weapon.toUpperCase()}`, this.localPlayer.team, '🔁');
         }
       }
     });
@@ -309,10 +370,65 @@ export class Game {
     });
   }
 
+  private cycleWeapon(dir: number): void {
+    if (!this.localPlayer) return;
+    const weapons = Object.keys(WEAPON_CONFIGS) as WeaponType[];
+    const curIdx = weapons.indexOf(this.localPlayer.weaponType);
+    const nextIdx = (curIdx + dir + weapons.length) % weapons.length;
+    const nextWeapon = weapons[nextIdx];
+    if (nextWeapon) {
+      this.setLocalWeapon(nextWeapon);
+      this.lobbyScreen.selectedWeapon = nextWeapon;
+      this.networkClient.sendLobbyUpdate({ weaponType: nextWeapon });
+      this.hud.addKillFeedEntry('⚙', Team.NEUTRAL, `${nextWeapon.toUpperCase()}`, this.localPlayer.team, '🔁');
+    }
+  }
+
   private setLocalWeapon(weapon: WeaponType): void {
     if (!this.localPlayer) return;
+    const changed = this.localPlayer.weaponType !== weapon;
     this.localPlayer.weaponType = weapon;
     this.localPlayer.view.setWeaponType(weapon);
+    this.crosshair.setWeapon(weapon);
+    this.inputManager.setActiveWeapon(weapon);
+    if (changed) {
+      this.inputManager.resetCharge();
+      this.wasChargeFull = false;
+      this.cameraController.setFovOffset(0);
+      this.crosshair.updateCharge(0, false);
+      this.crosshair.setAds(false);
+      this.soundManager.playWeaponSwitch();
+      this.showWeaponToast(weapon);
+    }
+  }
+
+  private showWeaponToast(weapon: WeaponType): void {
+    const config = WEAPON_CONFIGS[weapon];
+    if (!config) return;
+    let toast = document.getElementById('weapon-switch-banner');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'weapon-switch-banner';
+      document.body.appendChild(toast);
+    }
+    const subCfg = SUB_WEAPON_CONFIGS[config.sub];
+    const specCfg = SPECIAL_CONFIGS[config.special];
+    toast.replaceChildren();
+    const weaponLabel = document.createElement('span');
+    weaponLabel.className = 'toast-weapon';
+    weaponLabel.textContent = locName(config);
+    const subLabel = document.createElement('span');
+    subLabel.className = 'toast-sub';
+    subLabel.textContent = `${t('hud.toastSub')} ${subCfg ? locName(subCfg) : config.sub}`;
+    const specialLabel = document.createElement('span');
+    specialLabel.className = 'toast-special';
+    specialLabel.textContent = `${t('hud.toastSpecial')} ${specCfg ? locName(specCfg) : config.special}`;
+    toast.append(weaponLabel, subLabel, specialLabel);
+    toast.classList.add('visible');
+    if (this.weaponToastTimeout) window.clearTimeout(this.weaponToastTimeout);
+    this.weaponToastTimeout = window.setTimeout(() => {
+      toast?.classList.remove('visible');
+    }, 1400);
   }
 
   /**
@@ -326,7 +442,8 @@ export class Game {
     z: number,
     yaw: number,
     team: Team,
-    alive: boolean
+    alive: boolean,
+    isSubmerged = false
   ): void {
     const blip = this.minimapBlips[index];
     if (blip) {
@@ -336,9 +453,10 @@ export class Game {
       blip.yaw = yaw;
       blip.team = team;
       blip.alive = alive;
+      blip.isSubmerged = isSubmerged;
       return;
     }
-    this.minimapBlips[index] = { position: { x, y, z }, yaw, team, alive };
+    this.minimapBlips[index] = { position: { x, y, z }, yaw, team, alive, isSubmerged };
   }
 
   /**
@@ -495,6 +613,10 @@ export class Game {
       debugFire: (durationMs = 1500) => {
         this.debugFireUntil = performance.now() + Math.max(100, Math.min(5000, durationMs));
       },
+      /** Free-camera override for screenshot automation. */
+      setDebugCamera: (c: { px: number; py: number; pz: number; lx: number; ly: number; lz: number } | null) => {
+        this.debugCam = c;
+      },
       /** Frame-time window control for automated perf runs. */
       resetFrameStats: () => {
         this.resetFrameStats();
@@ -526,14 +648,49 @@ export class Game {
       const isCharger = isChargeWeapon(this.localPlayer.weaponType || 'shooter');
       this.inputManager.updateCharge(dt, isCharger);
 
+      const inLobby = this.lobbyScreen.isVisible();
+      const weaponType = this.localPlayer.weaponType || 'shooter';
+      const isAds = !inLobby && this.matchPhase === MatchPhase.PLAYING && this.inputManager.isAimingDownSights(weaponType);
+
+      if (isCharger) {
+        if (this.inputManager.chargeLevel > 0.03) {
+          this.soundManager.playChargeHum(this.inputManager.chargeLevel);
+          this.cameraController.setFovOffset(-6 * this.inputManager.chargeLevel);
+          const isFull = this.inputManager.chargeLevel >= 0.98;
+          if (isFull && !this.wasChargeFull) {
+            this.soundManager.playChargeFull();
+            this.wasChargeFull = true;
+          }
+          this.crosshair.updateCharge(this.inputManager.chargeLevel, isFull);
+        } else {
+          this.wasChargeFull = false;
+          this.cameraController.setFovOffset(0);
+          this.crosshair.updateCharge(0, false);
+        }
+      } else if (isAds) {
+        this.wasChargeFull = false;
+        this.cameraController.setFovOffset(-14);
+        this.crosshair.setAds(true);
+        this.crosshair.updateCharge(0, false);
+      } else {
+        this.wasChargeFull = false;
+        this.cameraController.setFovOffset(0);
+        this.crosshair.updateCharge(0, false);
+        this.crosshair.setAds(false);
+      }
+
       this.inputSeq++;
       const input = this.inputManager.getCurrentInput(this.inputSeq);
       input.weaponType = this.localPlayer.weaponType || 'shooter';
 
-      const inLobby = this.lobbyScreen.isVisible();
-      const weaponType = this.localPlayer.weaponType || 'shooter';
+      const isMoving = (input.moveX !== 0 || input.moveZ !== 0) && this.localPlayer.grounded;
+      const isMidair = !this.localPlayer.grounded;
+      this.crosshair.setMoving(isMoving);
+      this.crosshair.setMidair(isMidair);
       const wConfig = WEAPON_CONFIGS[weaponType] || WEAPON_CONFIGS.shooter;
-      const fireIntervalMs = (1 / wConfig.fireRate) * 1000;
+      const isRolling = weaponType === 'roller' && (input.moveX !== 0 || input.moveZ !== 0) && this.localPlayer.grounded;
+      const fireIntervalMs = isRolling ? 80 : (1 / wConfig.fireRate) * 1000;
+      const shotCost = isRolling ? 0.8 : wConfig.inkCost;
 
       // Only allow firing if playing and alive and pointer is locked
       const canShoot =
@@ -542,13 +699,17 @@ export class Game {
         this.localPlayer.alive &&
         this.inputManager.isLocked() &&
         this.localPlayer.mode === PlayerMode.HUMANOID &&
-        this.localPlayer.ink >= wConfig.inkCost;
+        this.localPlayer.ink >= shotCost;
 
       if (!canShoot) {
-        if (input.fire && this.inputManager.isLocked() && this.localPlayer.ink < wConfig.inkCost) {
+        if (input.fire && this.inputManager.isLocked() && this.localPlayer.ink < shotCost) {
           this.soundManager.playDryFire();
+          this.soundManager.playLowInkAlert();
+          this.crosshair.setLowInk(true);
         }
         input.fire = false;
+      } else {
+        this.crosshair.setLowInk(false);
       }
       if (inLobby) {
         input.subWeapon = false;
@@ -558,24 +719,59 @@ export class Game {
       if (input.fire) {
         if (now - this.lastLocalShotTime >= fireIntervalMs) {
           this.lastLocalShotTime = now;
-          this.crosshair.onFire();
-          this.localPlayer.triggerShootRecoil();
-          this.cameraController.addRecoil(0.014);
+          this.crosshair.onFire(weaponType);
 
           if (isCharger) {
-            this.soundManager.playChargerShot(input.chargeLevel || 1.0);
-            this.cameraController.addShake(0.18, 0.15);
+            const charge = input.chargeLevel || 1.0;
+            this.soundManager.playChargerShot(charge);
+            this.cameraController.addShake(0.18 + charge * 0.14, 0.16);
+            this.cameraController.addRecoil(0.022 + charge * 0.028);
+            this.localPlayer.triggerShootRecoil('charger', 0.18 + charge * 0.18);
           } else if (weaponType === 'roller') {
-            this.soundManager.playRollerFlick();
-            this.cameraController.addShake(0.12, 0.12);
-          } else if (weaponType === 'slosher' || weaponType === 'cannon') {
+            if (isRolling) {
+              this.soundManager.playRollerRoll();
+              this.cameraController.addShake(0.04, 0.08);
+              this.cameraController.addRecoil(0.003);
+              this.localPlayer.triggerShootRecoil('roller', 0.06);
+            } else {
+              this.soundManager.playRollerFlick();
+              this.cameraController.addShake(0.16, 0.14);
+              this.cameraController.addRecoil(0.032);
+              this.localPlayer.triggerShootRecoil('roller', 0.28);
+            }
+          } else if (weaponType === 'cannon') {
+            this.soundManager.playCannonShot();
+            this.cameraController.addShake(0.32, 0.24);
+            this.cameraController.addRecoil(0.058);
+            this.localPlayer.triggerShootRecoil('cannon', 0.42);
+          } else if (weaponType === 'scatter') {
+            this.soundManager.playScatterShot();
+            this.cameraController.addShake(0.24, 0.18);
+            this.cameraController.addRecoil(0.048);
+            this.localPlayer.triggerShootRecoil('scatter', 0.36);
+          } else if (weaponType === 'marksman') {
+            this.soundManager.playMarksmanShot();
+            this.cameraController.addShake(0.14, 0.1);
+            this.cameraController.addRecoil(0.028);
+            this.localPlayer.triggerShootRecoil('marksman', 0.22);
+          } else if (weaponType === 'sprayer') {
+            this.soundManager.playSprayerShot();
+            this.cameraController.addShake(0.035, 0.05);
+            this.cameraController.addRecoil(0.008);
+            this.localPlayer.triggerShootRecoil('sprayer', 0.09);
+          } else if (weaponType === 'slosher') {
             this.soundManager.playBucket();
-            this.cameraController.addShake(0.1, 0.1);
+            this.cameraController.addShake(0.12, 0.12);
+            this.cameraController.addRecoil(0.025);
+            this.localPlayer.triggerShootRecoil('slosher', 0.24);
           } else {
             this.soundManager.playShoot();
+            this.cameraController.addShake(0.08, 0.08);
+            this.cameraController.addRecoil(0.016);
+            this.localPlayer.triggerShootRecoil('shooter', 0.16);
           }
 
-          this.localPlayer.ink = Math.max(0, this.localPlayer.ink - wConfig.inkCost);
+          this.localPlayer.ink = Math.max(0, this.localPlayer.ink - shotCost);
 
           const cosP = Math.cos(this.localPlayer.pitch);
           const sinP = Math.sin(this.localPlayer.pitch);
@@ -627,43 +823,54 @@ export class Game {
           const toCrosshairX = aimTargetX - camX;
           const toCrosshairY = aimTargetY - camY;
           const toCrosshairZ = aimTargetZ - camZ;
-          const crosshairLen = Math.sqrt(toCrosshairX * toCrosshairX + toCrosshairY * toCrosshairY + toCrosshairZ * toCrosshairZ);
-          const crosshairDir = {
-            x: toCrosshairX / (crosshairLen || 1),
-            y: toCrosshairY / (crosshairLen || 1),
-            z: toCrosshairZ / (crosshairLen || 1)
-          };
+          const crosshairLen = Math.sqrt(toCrosshairX * toCrosshairX + toCrosshairY * toCrosshairY + toCrosshairZ * toCrosshairZ) || 1;
+          this.scratchCamRay.origin.x = camX;
+          this.scratchCamRay.origin.y = camY;
+          this.scratchCamRay.origin.z = camZ;
+          this.scratchCamRay.direction.x = toCrosshairX / crosshairLen;
+          this.scratchCamRay.direction.y = toCrosshairY / crosshairLen;
+          this.scratchCamRay.direction.z = toCrosshairZ / crosshairLen;
 
           // Stage 1: Camera Raycast to get exact 3D aim point
           const cameraHit = this.collisionWorld.castRay(
-            { origin: { x: camX, y: camY, z: camZ }, direction: crosshairDir },
+            this.scratchCamRay,
             35 + baseCamDist
           );
-          const aimPoint = cameraHit.hit ? cameraHit.point : {
-            x: camX + crosshairDir.x * 35,
-            y: camY + crosshairDir.y * 35,
-            z: camZ + crosshairDir.z * 35
-          };
+          if (cameraHit.hit) {
+            this.scratchAimPoint.x = cameraHit.point.x;
+            this.scratchAimPoint.y = cameraHit.point.y;
+            this.scratchAimPoint.z = cameraHit.point.z;
+          } else {
+            this.scratchAimPoint.x = camX + this.scratchCamRay.direction.x * 35;
+            this.scratchAimPoint.y = camY + this.scratchCamRay.direction.y * 35;
+            this.scratchAimPoint.z = camZ + this.scratchCamRay.direction.z * 35;
+          }
+          const aimPoint = this.scratchAimPoint;
 
           // Stage 2: Muzzle Raycast towards aimPoint
-          const muzzle = {
-            x: this.localPlayer.position.x + rgtX * 0.35 + fwdX * 0.4,
-            y: this.localPlayer.position.y + 0.85 + fwdY * 0.4,
-            z: this.localPlayer.position.z + rgtZ * 0.35 + fwdZ * 0.4
-          };
+          this.scratchMuzzle.x = this.localPlayer.position.x + rgtX * 0.35 + fwdX * 0.4;
+          this.scratchMuzzle.y = this.localPlayer.position.y + 0.85 + fwdY * 0.4;
+          this.scratchMuzzle.z = this.localPlayer.position.z + rgtZ * 0.35 + fwdZ * 0.4;
+          const muzzle = this.scratchMuzzle;
 
           let dirX = aimPoint.x - muzzle.x;
           let dirY = aimPoint.y - muzzle.y;
           let dirZ = aimPoint.z - muzzle.z;
-          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
-          const muzzleDir = {
-            x: dirX / (dirLen || 1),
-            y: dirY / (dirLen || 1),
-            z: dirZ / (dirLen || 1)
-          };
+          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
+          this.scratchMuzzleDir.x = dirX / dirLen;
+          this.scratchMuzzleDir.y = dirY / dirLen;
+          this.scratchMuzzleDir.z = dirZ / dirLen;
+          const muzzleDir = this.scratchMuzzleDir;
+
+          this.scratchMuzzleRay.origin.x = muzzle.x;
+          this.scratchMuzzleRay.origin.y = muzzle.y;
+          this.scratchMuzzleRay.origin.z = muzzle.z;
+          this.scratchMuzzleRay.direction.x = muzzleDir.x;
+          this.scratchMuzzleRay.direction.y = muzzleDir.y;
+          this.scratchMuzzleRay.direction.z = muzzleDir.z;
 
           const muzzleHit = this.collisionWorld.castRay(
-            { origin: muzzle, direction: muzzleDir },
+            this.scratchMuzzleRay,
             dirLen || 35
           );
 
@@ -680,11 +887,25 @@ export class Game {
               const bdx = bot.position.x - target.x;
               const bdz = bot.position.z - target.z;
               if (Math.hypot(bdx, bdz) < 1.8) {
-                bot.hp -= 35;
-                this.crosshair.showHitMarker();
+                let damage = wConfig.damage ?? 35;
+                if (weaponType === 'charger') {
+                  const charge = input.chargeLevel || 1.0;
+                  damage = Math.round((wConfig.damage ?? 120) * charge);
+                } else if (weaponType === 'roller') {
+                  damage = isRolling ? 120 : (wConfig.damage ?? 100);
+                } else if (weaponType === 'cannon') {
+                  damage = 85;
+                } else if (weaponType === 'scatter') {
+                  damage = Math.min(100, (wConfig.damage ?? 22) * 4);
+                }
+                bot.hp -= damage;
+                const isKill = bot.hp <= 0;
+                this.crosshair.showHitMarker(isKill);
                 this.soundManager.playHit();
+                this.particleSystem.spawnHitConfirm(bot.position, isKill, bot.team);
                 this.particleSystem.spawnSplash(bot.position, this.localPlayer.team, 10, 7.0);
-                if (bot.hp <= 0) {
+                this.botRemotePlayers.get(bot.id)?.view.triggerDamageFlash(this.localPlayer.team);
+                if (isKill) {
                   bot.alive = false;
                   bot.mode = PlayerMode.DEAD;
                   bot.deaths++;
@@ -694,6 +915,7 @@ export class Game {
                   this.cameraController.addShake(0.35, 0.25);
                   this.particleSystem.spawnSplash(bot.position, this.localPlayer.team, 24, 11.0);
                   this.hud.addKillFeedEntry(t('hud.you'), this.localPlayer.team, bot.name, bot.team);
+                  this.hud.showSplatCallout();
                 }
                 break;
               }
@@ -706,13 +928,20 @@ export class Game {
         const subConfig = SUB_WEAPON_CONFIGS[wConfig.sub];
         if (this.localPlayer.ink >= subConfig.inkCost) {
           this.soundManager.playSubThrow();
-          this.localPlayer.triggerShootRecoil();
+          this.localPlayer.triggerShootRecoil('shooter', 0.22);
+          this.cameraController.addRecoil(0.018);
+        } else {
+          this.soundManager.playDryFire();
+          this.soundManager.playLowInkAlert();
+          this.crosshair.setLowInk(true);
         }
       }
 
       if (input.special) {
         if (this.localPlayer.specialMeter >= 100) {
           this.soundManager.playSpecialActivate();
+          this.cameraController.addShake(0.3, 0.25);
+          this.localPlayer.triggerShootRecoil('cannon', 0.35);
         }
       }
 
@@ -733,7 +962,21 @@ export class Game {
         this.localPlayer.position.z
       );
 
+      const wasGrounded = this.localPlayer.grounded;
+      if (!wasGrounded) {
+        this.airborneMinVy = Math.min(this.airborneMinVy, this.localPlayer.velocity.y);
+      }
       this.localPlayer.predictMovement(input, dt, groundInk);
+      if (!wasGrounded && this.localPlayer.grounded) {
+        const impact = Math.min(1, Math.max(0, (-this.airborneMinVy - 5.2) / 9));
+        if (impact > 0.08 && this.localPlayer.mode !== PlayerMode.SUBMERGED) {
+          this.cameraController.addLanding(impact);
+          this.soundManager.playLand(impact);
+        }
+        this.airborneMinVy = 0;
+      } else if (this.localPlayer.grounded) {
+        this.airborneMinVy = 0;
+      }
       this.localPlayer.updateVisuals(now / 1000);
 
       // Submerge / Surface / Swim / Burn Audio Triggers
@@ -745,21 +988,46 @@ export class Game {
         }
         this.lastLocalMode = this.localPlayer.mode;
       }
-      if (this.localPlayer.mode === PlayerMode.SUBMERGED && (input.moveX !== 0 || input.moveZ !== 0)) {
+      if (this.localPlayer.isClimbingWall) {
+        this.soundManager.playWallClimb();
+      } else if (this.localPlayer.mode === PlayerMode.SUBMERGED && (input.moveX !== 0 || input.moveZ !== 0)) {
         this.soundManager.playSwim();
+        this.particleSystem.spawnSwimWake(
+          this.localPlayer.position,
+          this.localPlayer.team,
+          this.localPlayer.velocity
+        );
+      }
+      // Submerged ink refill sound
+      if (this.localPlayer.mode === PlayerMode.SUBMERGED && this.localPlayer.alive && this.localPlayer.ink < 99) {
+        if (now - this.lastInkReloadSoundTime > 320) {
+          this.soundManager.playInkReload();
+          this.lastInkReloadSoundTime = now;
+        }
       }
       const isEnemyInk = this.localPlayer.team === Team.PINK ? groundInk === Team.CYAN : groundInk === Team.PINK;
       if (isEnemyInk && this.localPlayer.alive) {
         this.soundManager.playBurn();
       }
 
+      // Special Ready Audio Cue
+      const currentSpecial = this.localPlayer.specialMeter || 0;
+      if (currentSpecial >= 100 && this.lastSpecialMeter < 100) {
+        this.soundManager.playSpecialReady();
+      }
+      this.lastSpecialMeter = currentSpecial;
+
       // Camera Follows Local Player
+      const moveSpeed = Math.hypot(this.localPlayer.velocity.x, this.localPlayer.velocity.z);
+      const bobbing =
+        this.localPlayer.grounded || this.localPlayer.mode === PlayerMode.SUBMERGED;
       this.cameraController.update(
         this.localPlayer.position,
         this.localPlayer.yaw,
         this.localPlayer.pitch,
         dt,
-        this.localPlayer.mode === PlayerMode.SUBMERGED
+        this.localPlayer.mode === PlayerMode.SUBMERGED,
+        bobbing ? moveSpeed : 0
       );
 
       // HUD Update
@@ -825,8 +1093,20 @@ export class Game {
       } else {
         this.soundManager.setSpeedUp(false);
       }
+      if (remainingMatchSec <= 5.0 && remainingMatchSec > 0) {
+        const secInt = Math.ceil(remainingMatchSec);
+        if (secInt !== this.lastCountdownSecond) {
+          this.lastCountdownSecond = secInt;
+          this.soundManager.playCountdown(false);
+        }
+      }
     } else if (this.matchPhase === MatchPhase.COUNTDOWN) {
       remainingMatchSec = Math.max(0, (this.matchStartAt - serverTime) / 1000);
+      const secInt = Math.ceil(remainingMatchSec);
+      if (secInt !== this.lastCountdownSecond && secInt > 0) {
+        this.lastCountdownSecond = secInt;
+        this.soundManager.playCountdown(false);
+      }
     }
 
     this.hud.updateMatch(this.matchPhase, remainingMatchSec, this.pinkScore, this.cyanScore, this.matchMode);
@@ -851,11 +1131,29 @@ export class Game {
           const muzzle = { x: bot.position.x, y: bot.position.y + 0.85, z: bot.position.z };
           this.weaponVisual.spawnTracer(muzzle, aimTarget, bot.team, bot.weaponType);
           this.particleSystem.spawnSplash(aimTarget, bot.team, 8, 6.0);
+          if (bot.weaponType === 'charger') {
+            this.soundManager.playChargerShot(1.0);
+          } else if (bot.weaponType === 'roller') {
+            this.soundManager.playRollerFlick();
+          } else if (bot.weaponType === 'cannon') {
+            this.soundManager.playCannonShot();
+          } else if (bot.weaponType === 'slosher') {
+            this.soundManager.playBucket();
+          } else if (bot.weaponType === 'scatter') {
+            this.soundManager.playScatterShot();
+          } else if (bot.weaponType === 'marksman') {
+            this.soundManager.playMarksmanShot();
+          } else if (bot.weaponType === 'sprayer') {
+            this.soundManager.playSprayerShot();
+          } else {
+            this.soundManager.playShoot();
+          }
           const distToLocal = Math.hypot(aimTarget.x - this.localPlayer!.position.x, aimTarget.z - this.localPlayer!.position.z);
           if (distToLocal < 1.8 && bot.team !== this.localPlayer!.team && this.localPlayer!.alive) {
-            this.localPlayer!.hp = Math.max(0, this.localPlayer!.hp - 20);
-            this.cameraController.addShake(0.35, 0.2);
-            this.hud.triggerDamageFlash();
+            this.noteThreat(bot.position.x, bot.position.z, bot.team);
+            const nextHp = Math.max(0, this.localPlayer!.hp - 20);
+            this.onLocalDamaged(nextHp, { x: bot.position.x, z: bot.position.z });
+            this.localPlayer!.hp = nextHp;
             if (this.localPlayer!.hp <= 0) {
               this.localPlayer!.alive = false;
               this.localPlayer!.mode = PlayerMode.DEAD;
@@ -863,6 +1161,7 @@ export class Game {
               this.hud.showDeathOverlay(4.0);
               this.respawnEndsAt = Date.now() + 4000;
               this.soundManager.playSplat();
+              this.soundManager.playPlayerDefeat();
               this.hud.addKillFeedEntry(bot.name, bot.team, t('hud.you'), this.localPlayer!.team);
             }
           }
@@ -889,6 +1188,9 @@ export class Game {
           remote.view.updateLocomotion(dt, bot.alive ? 5.0 : 0, true, bot.pitch);
           remote.view.updateVisuals(false, now / 1000, bot.ink);
         }
+        if (bot.alive && bot.mode === PlayerMode.SUBMERGED) {
+          this.particleSystem.spawnSwimWake(bot.position, bot.team, bot.velocity);
+        }
       }
 
       // 6. Tactical Minimap Radar & Top Team Squids Update
@@ -897,10 +1199,10 @@ export class Game {
       // removes two array allocations per frame.
       let blipCount = 0;
       for (const p of this.remotePlayers.values()) {
-        this.writeBlip(blipCount++, p.position.x, p.position.y, p.position.z, p.yaw, p.team, p.alive);
+        this.writeBlip(blipCount++, p.position.x, p.position.y, p.position.z, p.yaw, p.team, p.alive, p.isSquidForm);
       }
       for (const bot of this.botController.getBots()) {
-        this.writeBlip(blipCount++, bot.position.x, bot.position.y, bot.position.z, bot.yaw, bot.team, bot.alive);
+        this.writeBlip(blipCount++, bot.position.x, bot.position.y, bot.position.z, bot.yaw, bot.team, bot.alive, bot.mode === PlayerMode.SUBMERGED);
       }
       // Shrink the view without dropping the objects, so the next frame reuses them.
       if (this.minimapBlips.length > blipCount) this.minimapBlips.length = blipCount;
@@ -910,6 +1212,7 @@ export class Game {
       localBlip.yaw = this.localPlayer.yaw;
       localBlip.team = this.localPlayer.team;
       localBlip.alive = this.localPlayer.alive;
+      localBlip.isSubmerged = this.localPlayer.mode === PlayerMode.SUBMERGED;
 
       this.minimap.update(localBlip, this.minimapBlips, this.collisionWorld.getObstacles());
 
@@ -931,9 +1234,14 @@ export class Game {
     }
 
     // 7. Paint Texture Upload (ONLY IF DIRTY, AT MOST ONCE PER RENDER FRAME!)
-    this.paintEngine.renderUpdate();
+    this.paintEngine.renderUpdate(this.renderer.renderer);
 
     // 8. Three.js Render
+    if (this.debugCam) {
+      const cam = this.renderer.camera;
+      cam.position.set(this.debugCam.px, this.debugCam.py, this.debugCam.pz);
+      cam.lookAt(this.debugCam.lx, this.debugCam.ly, this.debugCam.lz);
+    }
     this.renderer.render();
   };
 
@@ -957,6 +1265,15 @@ export class Game {
     if (payload.paintHistory && payload.paintHistory.length > 0) {
       this.paintEngine.applyPaintBatch(payload.paintHistory);
       this.totalPaintEventsReceived += payload.paintHistory.length;
+    }
+
+    if (payload.paintSurfaces && payload.paintSurfaces.length > 0) {
+      const surfaceUpdates = payload.paintSurfaces
+        .filter((s) => s.paint && (s.paint[0] > 0 || s.paint[1] > 0))
+        .map((s) => ({ id: s.id, paint: s.paint }));
+      if (surfaceUpdates.length > 0) {
+        this.paintEngine.applySurfacePaintUpdate(surfaceUpdates);
+      }
     }
 
     // 3. Create Local Player
@@ -1006,6 +1323,12 @@ export class Game {
     // can already be the active one, and the paint/minimap extents still need it.
     this.paintEngine.setMapSize(mapDef.size);
     this.minimap.setSize(mapDef.size);
+    this.minimap.setClimbables(mapDef.climbableSurfaces);
+    this.minimap.setZone(mapDef.zone);
+    // Ramps/climbables drive client-side prediction; the server applies the same
+    // geometry, so they must be set for the initial map as well as on switches.
+    this.collisionWorld.setRamps(mapDef.ramps);
+    this.collisionWorld.setClimbableSurfaces(mapDef.climbableSurfaces);
     if (mapDef.id === this.activeMapDef.id) return;
     this.activeMapDef = mapDef;
     this.arena.rebuild(mapDef);
@@ -1035,9 +1358,7 @@ export class Game {
       const mySnap = payload.players.find((p) => p.id === this.localPlayer?.id);
       if (mySnap) {
         if (mySnap.hp < this.localPlayer.hp && this.localPlayer.alive && !mySnap.invulnerable) {
-          this.cameraController.addShake(0.35, 0.22);
-          this.soundManager.playHit();
-          this.hud.triggerDamageFlash();
+          this.onLocalDamaged(mySnap.hp, undefined, payload.players);
         }
         const lastAckSeq = payload.lastProcessedInputSeq[this.localPlayer.id];
         this.localPlayer.applyServerState(mySnap, lastAckSeq);
@@ -1072,6 +1393,14 @@ export class Game {
     }
     this.weaponVisual.spawnTracer(shot.origin, shot.target, shot.team, shot.weaponType, shot.chargeLevel);
     this.particleSystem.spawnSplash(shot.target, shot.team, 6, 6.0);
+    if (!this.localPlayer || shot.shooterId !== this.localPlayer.id) {
+      this.noteThreat(shot.origin.x, shot.origin.z, shot.team);
+    }
+
+    const remote = this.remotePlayers.get(shot.shooterId);
+    if (remote) {
+      remote.view.triggerRecoil();
+    }
 
     // Distant firefights stay visible but quiet: only play weapon sounds for
     // nearby shots, at most one every 130ms, so 8-player chaos doesn't become
@@ -1091,8 +1420,16 @@ export class Game {
       this.soundManager.playChargerShot(shot.chargeLevel || 1.0);
     } else if (shot.weaponType === 'roller') {
       this.soundManager.playRollerFlick();
-    } else if (shot.weaponType === 'slosher' || shot.weaponType === 'cannon') {
+    } else if (shot.weaponType === 'cannon') {
+      this.soundManager.playCannonShot();
+    } else if (shot.weaponType === 'slosher') {
       this.soundManager.playBucket();
+    } else if (shot.weaponType === 'scatter') {
+      this.soundManager.playScatterShot();
+    } else if (shot.weaponType === 'marksman') {
+      this.soundManager.playMarksmanShot();
+    } else if (shot.weaponType === 'sprayer') {
+      this.soundManager.playSprayerShot();
     } else {
       this.soundManager.playShoot();
     }
@@ -1124,6 +1461,7 @@ export class Game {
       this.soundManager.playExplosion();
       this.particleSystem.spawnSplash(payload.position, payload.team, 16, 8.5);
       this.cameraController.addShake(0.45, 0.25);
+      this.noteThreat(payload.position.x, payload.position.z, payload.team);
     }
   }
 
@@ -1133,6 +1471,7 @@ export class Game {
       this.soundManager.playSpecialActivate();
       this.particleSystem.spawnSplash(payload.position, payload.team, 20, 9.5);
       this.cameraController.addShake(0.6, 0.4);
+      this.noteThreat(payload.position.x, payload.position.z, payload.team);
     } else if (payload.action === 'end') {
       this.weaponVisual.endSpecial(payload.id);
     }
@@ -1174,14 +1513,16 @@ export class Game {
       this.localPlayer.view.setMode(PlayerMode.DEAD);
       this.respawnEndsAt = data.respawnAt;
       this.soundManager.playSplat();
+      this.soundManager.playPlayerDefeat();
       this.cameraController.addShake(0.8, 0.45);
     }
 
     if (isLocalKiller) {
-      this.crosshair.showHitMarker();
+      this.crosshair.showHitMarker(true);
       this.soundManager.playHit();
       this.soundManager.playKillChime();
       this.cameraController.addShake(0.3, 0.2);
+      this.hud.showSplatCallout();
     }
 
     // Kill Feed Notification (Subagent 78)
@@ -1240,9 +1581,13 @@ export class Game {
             ? Team.CYAN
             : null;
       this.arena.setZoneOwner(owner);
+      this.minimap.setZoneOwner(owner);
+    } else {
+      this.minimap.setZoneOwner(null);
     }
 
     if (prevPhase !== state.phase) {
+      this.lastCountdownSecond = -1;
       if (state.phase === MatchPhase.COUNTDOWN) {
         this.soundManager.playCountdown(false);
       } else if (state.phase === MatchPhase.PLAYING) {
@@ -1250,6 +1595,7 @@ export class Game {
         this.soundManager.startBGM();
       } else if (state.phase === MatchPhase.GAME_OVER) {
         this.soundManager.stopBGM();
+        this.soundManager.playCountdownBuzzer();
       }
     }
 
@@ -1339,6 +1685,89 @@ export class Game {
     }
     // Tell the server we're going back; server will route us to WAITING/lobby
     this.screens.show('lobby');
+  }
+
+  /** Remembers a recent enemy action so a later HP drop can point at its source. */
+  private noteThreat(x: number, z: number, team: Team): void {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (this.localPlayer && team === this.localPlayer.team) return;
+    const now = performance.now();
+    const list = this.recentThreats;
+    list.push({ x, z, team, at: now });
+    let write = 0;
+    for (let i = 0; i < list.length; i++) {
+      const sample = list[i];
+      if (sample && now - sample.at <= 800) list[write++] = sample;
+    }
+    list.length = write;
+    if (list.length > 32) list.splice(0, list.length - 32);
+  }
+
+  private gatherEnemies(enemyTeam: Team, snaps?: PlayerSnapshot[]): EnemySample[] {
+    const out: EnemySample[] = [];
+    const selfId = this.localPlayer?.id;
+    if (snaps) {
+      for (const snap of snaps) {
+        if (snap.id === selfId || snap.team !== enemyTeam) continue;
+        out.push({ x: snap.x, z: snap.z, team: snap.team, alive: snap.alive });
+      }
+    } else {
+      for (const remote of this.remotePlayers.values()) {
+        if (remote.team !== enemyTeam) continue;
+        out.push({
+          x: remote.position.x,
+          z: remote.position.z,
+          team: remote.team,
+          alive: remote.alive
+        });
+      }
+    }
+    for (const bot of this.botController.getBots()) {
+      if (bot.team !== enemyTeam) continue;
+      out.push({ x: bot.position.x, z: bot.position.z, team: bot.team, alive: bot.alive });
+    }
+    return out;
+  }
+
+  /**
+   * Visual and audio response when the local player's HP falls.
+   * Chip damage (enemy ink) is throttled so the wedge does not strobe every tick.
+   * `nextHp` is the post-hit value; the player object still holds the previous HP.
+   */
+  private onLocalDamaged(nextHp: number, source?: { x: number; z: number }, snaps?: PlayerSnapshot[]): void {
+    const player = this.localPlayer;
+    if (!player) return;
+    const drop = player.hp - nextHp;
+    const now = performance.now();
+    const chip = drop < 8;
+    if (chip && now - this.lastDamageCueAt < 480) return;
+    this.lastDamageCueAt = now;
+
+    const lethal = nextHp <= 0;
+    if (!lethal) this.soundManager.playHurt();
+    this.cameraController.addShake(lethal ? 0.55 : 0.32, lethal ? 0.28 : 0.2);
+    this.hud.triggerDamageFlash();
+    const enemyTeam = player.team === Team.PINK ? Team.CYAN : Team.PINK;
+    player.view.triggerDamageFlash(enemyTeam);
+
+    const point =
+      source ??
+      pickThreatPoint(
+        now,
+        enemyTeam,
+        player.position.x,
+        player.position.z,
+        this.recentThreats,
+        this.gatherEnemies(enemyTeam, snaps)
+      );
+    if (point) {
+      this.hud.showIncomingDamage(
+        threatAngle(player.yaw, player.position.x, player.position.z, point.x, point.z)
+      );
+      return;
+    }
+    const ink = this.paintEngine.getInkAt(player.position.x, player.position.z);
+    if (ink === enemyTeam) this.hud.showIncomingDamage('ink');
   }
 
   private handleDisconnect(): void {

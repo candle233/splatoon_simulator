@@ -14,6 +14,13 @@
 
       <!-- Damage & Low HP Ink Splatter Vignette -->
       <div id="damage-vignette" class="damage-vignette hidden"></div>
+      <div id="damage-compass" class="hidden" aria-hidden="true">
+        <div class="damage-rotor">
+          <div class="damage-wedge"></div>
+        </div>
+        <div class="damage-ink-label" data-i18n="hud.inkBurn">敌墨</div>
+      </div>
+      <div id="splat-callout" class="hidden" aria-hidden="true"></div>
 
       <!-- Reticle / Crosshair -->
       <div id="crosshair-container">
@@ -92,7 +99,7 @@
                 </div>
               </div>
             </div>
-            <div id="weapon-switch-hint" class="weapon-switch-hint" data-i18n="hud.weaponSwitchHint">Press 1-4 to switch weapons</div>
+            <div id="weapon-switch-hint" class="weapon-switch-hint" data-i18n="hud.weaponSwitchHint">Press 1-8 to switch weapons</div>
           </div>
         </div>
 
@@ -100,12 +107,17 @@
         <div id="bottom-right">
           <!-- Special Gauge -->
           <div class="status-card special-card">
-            <div class="label-row">
-              <span class="stat-title" data-i18n="hud.specialMeter">SPECIAL METER</span>
-              <span id="special-value">0%</span>
-            </div>
-            <div class="meter-bar special-meter">
-              <div id="special-bar-fill"></div>
+            <div class="special-row">
+              <img id="hud-special-icon" class="hud-item-thumb" src="/assets/weapons/inkstrike.jpg" alt="Special" data-i18n-alt="hud.specialMeter" />
+              <div class="special-meter-col">
+                <div class="label-row">
+                  <span class="stat-title" data-i18n="hud.specialMeter">SPECIAL METER</span>
+                  <span id="special-value">0%</span>
+                </div>
+                <div class="meter-bar special-meter">
+                  <div id="special-bar-fill"></div>
+                </div>
+              </div>
             </div>
             <div id="special-ready-banner" class="hidden" data-i18n="hud.specialReady">[E] SPECIAL READY!</div>
           </div>
@@ -118,6 +130,7 @@
             </div>
             <div class="meter-bar ink-meter">
               <div id="ink-bar-fill"></div>
+              <div id="ink-sub-marker" class="ink-sub-marker"></div>
             </div>
             <div id="ink-hint" data-i18n="hud.shiftHint">HOLD SHIFT TO SWIM IN OWN INK</div>
           </div>
@@ -218,12 +231,40 @@
 
       <!-- ==================== MULTIPLAYER LOBBY ==================== -->
       <div id="lobby-screen" class="screen-overlay hidden">
-        <div class="lobby-card">
+        <div class="lobby-card upgraded-lobby">
+          <!-- Top Lobby Header: Branding & Global Controls -->
           <header class="lobby-header">
             <div class="header-left">
               <h1><span class="logo-pink">INK</span> <span class="logo-cyan">ARENA</span></h1>
               <span class="lobby-badge" data-i18n="lobby.badge">TURF WAR BATTLE LOBBY</span>
             </div>
+            <!-- Top Tab Navigation -->
+            <nav class="lobby-nav-tabs">
+              <button type="button" class="lobby-tab-btn active" data-tab="hub">
+                <span class="tab-icon">⚔️</span>
+                <span data-i18n="lobby.tabHub">Match Hub</span>
+              </button>
+              <button type="button" class="lobby-tab-btn" data-tab="modes">
+                <span class="tab-icon">🎯</span>
+                <span data-i18n="lobby.tabModes">Modes & Maps</span>
+              </button>
+              <button type="button" class="lobby-tab-btn" data-tab="armory">
+                <span class="tab-icon">🔫</span>
+                <span data-i18n="lobby.tabArmory">Armory & Loadout</span>
+              </button>
+              <button type="button" class="lobby-tab-btn" data-tab="profile">
+                <span class="tab-icon">🏷️</span>
+                <span data-i18n="lobby.tabProfile">Splashtag & Profile</span>
+              </button>
+              <button type="button" class="lobby-tab-btn" data-tab="room">
+                <span class="tab-icon">🤖</span>
+                <span data-i18n="lobby.tabRoom">Room & Bots</span>
+              </button>
+              <button type="button" class="lobby-tab-btn" data-tab="settings">
+                <span class="tab-icon">⚙️</span>
+                <span data-i18n="lobby.tabSettings">Settings</span>
+              </button>
+            </nav>
             <div class="header-right">
               <div id="lang-switch" class="lang-switch"></div>
               <button id="btn-open-codex" class="btn-codex">📖 <span data-i18n="lobby.codexBtn">Codex</span></button>
@@ -231,153 +272,366 @@
             </div>
           </header>
 
-          <div class="lobby-body">
-            <!-- Left Column: Loadout Selection -->
-            <div class="lobby-col loadout-col">
-              <div class="profile-section">
-                <div class="profile-avatar-wrapper">
-                  <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" title="" data-i18n-title="lobby.avatarUpload" data-i18n-alt="lobby.avatarAlt" />
-                  <!-- #profile-avatar-tag is written by LobbyScreen.updateAvatarVisual()
-                       from the selected team (and re-rendered on 'ink:langchange'). -->
-                  <span id="profile-avatar-tag" class="profile-avatar-tag">AUTO</span>
-                  <input id="avatar-file-input" type="file" accept="image/*" class="hidden" />
-                </div>
-                <div class="profile-inputs">
-                  <label for="player-name-input" data-i18n="lobby.name">Inker Name:</label>
-                  <input id="player-name-input" type="text" maxlength="16" data-i18n-placeholder="lobby.namePlaceholder" placeholder="Enter your name" />
-                  <span class="avatar-hint" data-i18n="lobby.avatarUpload">Click avatar to upload</span>
-                </div>
-              </div>
+          <!-- Tab Content Panes -->
+          <div class="lobby-tab-container">
+            <!-- PANE 1: MATCHMAKING HUB -->
+            <div id="tab-pane-hub" class="lobby-tab-pane active">
+              <div class="hub-layout">
+                <!-- Left: Quick Team Switch & Battle Briefing -->
+                <div class="hub-side-panel">
+                  <div class="hub-match-banner">
+                    <div class="banner-mode-pill" id="hub-mode-name">TURF WAR</div>
+                    <h3 id="hub-map-name">Downtown Skyline</h3>
+                    <p id="hub-map-tier" class="banner-subtext">Ground (0m) · Skywalk (4.8m) · Hotel Peak (8.4m)</p>
+                  </div>
 
-              <h3 data-i18n="lobby.selectWeapon">SELECT WEAPON LOADOUT</h3>
-              <!-- No-JS seed only: LobbyScreen.buildWeaponGrid() clears this grid and
-                   rebuilds every card from WEAPON_CONFIGS via locName()/locDesc(), so
-                   these nodes are never shown to a user and must NOT carry data-i18n
-                   (a static key would fight the per-weapon runtime values). -->
-              <div class="weapon-grid">
-                <div class="weapon-option selected" data-weapon="shooter">
-                  <div class="weapon-card-thumb">
-                    <img src="/assets/weapons/splattershot.jpg" alt="Ink Blaster" />
+                  <h3 data-i18n="lobby.team">TEAM ASSIGNMENT</h3>
+                  <div class="team-picker">
+                    <button id="btn-team-auto" class="team-btn active" data-team="auto" data-i18n="lobby.auto">Auto-Balance</button>
+                    <button id="btn-team-pink" class="team-btn pink" data-team="pink" data-i18n="lobby.pink">Team Pink</button>
+                    <button id="btn-team-cyan" class="team-btn cyan" data-team="cyan" data-i18n="lobby.cyan">Team Cyan</button>
                   </div>
-                  <div class="weapon-card-info">
-                    <div class="opt-header">
-                      <span class="opt-name">Ink Blaster</span>
-                      <span class="opt-zh">インクブラスター</span>
-                    </div>
-                    <div class="opt-details">Balanced automatic ink rifle.</div>
-                    <div class="opt-skills">
-                      <span class="badge-sub">Sub: Ink Bomb</span>
-                      <span class="badge-spec">Special: Ink Twister</span>
-                    </div>
-                  </div>
-                </div>
 
-                <div class="weapon-option" data-weapon="roller">
-                  <div class="weapon-card-thumb">
-                    <img src="/assets/weapons/splat_roller.jpg" alt="Ink Roller" />
+                  <div class="hub-quick-stats">
+                    <div class="quick-stat-box">
+                      <span class="stat-num" id="hub-stat-ping">12ms</span>
+                      <span class="stat-lbl" data-i18n="lobby.ping">Latency</span>
+                    </div>
+                    <div class="quick-stat-box">
+                      <span class="stat-num" id="hub-stat-ready">0/8</span>
+                      <span class="stat-lbl" data-i18n="lobby.readyBadge">Ready</span>
+                    </div>
                   </div>
-                  <div class="weapon-card-info">
-                    <div class="opt-header">
-                      <span class="opt-name">Ink Roller</span>
-                      <span class="opt-zh">インクローラー</span>
-                    </div>
-                    <div class="opt-details">Melee juggernaut roller.</div>
-                    <div class="opt-skills">
-                      <span class="badge-sub">Sub: Slider Bomb</span>
-                      <span class="badge-spec">Special: Ink Downpour</span>
-                    </div>
+
+                  <div class="controls-guide mini">
+                    <div class="ctrl-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span data-i18n="lobby.ctrlMove">Move</span></div>
+                    <div class="ctrl-row"><kbd>LMB</kbd> <span data-i18n="lobby.ctrlFire">Fire / Roll</span></div>
+                    <div class="ctrl-row"><kbd>RMB / Q</kbd> <span data-i18n="lobby.ctrlSub">Sub-weapon Bomb</span></div>
+                    <div class="ctrl-row"><kbd>E / MMB</kbd> <span data-i18n="lobby.ctrlSpecial">Special Ultimate</span></div>
+                    <div class="ctrl-row"><kbd>Shift</kbd> <span data-i18n="lobby.ctrlSwim">Swim in ink</span></div>
+                    <div class="ctrl-row"><kbd>1-8</kbd> <span data-i18n="hud.weaponSwitchHint">Switch weapons</span></div>
                   </div>
                 </div>
 
-                <div class="weapon-option" data-weapon="charger">
-                  <div class="weapon-card-thumb">
-                    <img src="/assets/weapons/splat_charger.jpg" alt="Ink Sniper" />
+                <!-- Right: Connected Players Roster -->
+                <div class="hub-roster-panel">
+                  <div class="room-status-bar">
+                    <h3><span data-i18n="lobby.players">CONNECTED PLAYERS</span> (<span id="lobby-player-count">1</span>/8)</h3>
+                    <span id="lobby-countdown-timer" class="hidden">Match in 3s…</span>
                   </div>
-                  <div class="weapon-card-info">
-                    <div class="opt-header">
-                      <span class="opt-name">Ink Sniper</span>
-                      <span class="opt-zh">インクスナイパー</span>
-                    </div>
-                    <div class="opt-details">Long-range charged laser.</div>
-                    <div class="opt-skills">
-                      <span class="badge-sub">Sub: Ink Bomb</span>
-                      <span class="badge-spec">Special: Bass Wave Cannon</span>
-                    </div>
-                  </div>
+                  <div id="lobby-player-list" class="player-roster"><!-- generated --></div>
                 </div>
-
-                <div class="weapon-option" data-weapon="slosher">
-                  <div class="weapon-card-thumb">
-                    <img src="/assets/weapons/slosher.jpg" alt="Ink Bucket" />
-                  </div>
-                  <div class="weapon-card-info">
-                    <div class="opt-header">
-                      <span class="opt-name">Ink Bucket</span>
-                      <span class="opt-zh">インクバケツ</span>
-                    </div>
-                    <div class="opt-details">High-arc bucket splash.</div>
-                    <div class="opt-skills">
-                      <span class="badge-sub">Sub: Pop Bomb</span>
-                      <span class="badge-spec">Special: Ink Twister</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Skills -->
-              <h3>
-                <span data-i18n="lobby.skills">Select Skills</span>
-                <span id="skill-count" class="skill-count-badge">0/3</span>
-              </h3>
-              <div id="skill-grid" class="skill-grid"><!-- generated --></div>
-              <p class="section-hint" data-i18n="lobby.skillsHint">Passive perks for the whole match</p>
-
-              <!-- Team Picker -->
-              <h3 data-i18n="lobby.team">TEAM ASSIGNMENT</h3>
-              <div class="team-picker">
-                <button id="btn-team-auto" class="team-btn active" data-team="auto" data-i18n="lobby.auto">Auto-Balance</button>
-                <button id="btn-team-pink" class="team-btn pink" data-team="pink" data-i18n="lobby.pink">Team Pink</button>
-                <button id="btn-team-cyan" class="team-btn cyan" data-team="cyan" data-i18n="lobby.cyan">Team Cyan</button>
               </div>
             </div>
 
-            <!-- Right Column: Room Status & Players -->
-            <div class="lobby-col room-col">
-              <div class="room-status-bar">
-                <h3><span data-i18n="lobby.players">CONNECTED PLAYERS</span> (<span id="lobby-player-count">1</span>/8)</h3>
-                <span id="lobby-countdown-timer" class="hidden">Match in 3s…</span>
+            <!-- PANE 2: MODES & MAPS -->
+            <div id="tab-pane-modes" class="lobby-tab-pane">
+              <div class="modes-maps-layout">
+                <div class="modes-section">
+                  <div class="section-title-row">
+                    <h3 data-i18n="lobby.mode">GAME MODE</h3>
+                    <span class="section-tag" data-i18n="lobby.hostOnly">Host Only</span>
+                  </div>
+                  <div id="mode-grid" class="mode-grid"><!-- generated --></div>
+                </div>
+                <div class="maps-section">
+                  <div class="section-title-row">
+                    <h3 data-i18n="lobby.map">ARENA MAP</h3>
+                    <span class="section-tag" data-i18n="lobby.hostOnly">Host Only</span>
+                  </div>
+                  <div id="map-grid" class="map-grid"><!-- generated --></div>
+                </div>
               </div>
+            </div>
 
-              <div id="lobby-player-list" class="player-roster"><!-- generated --></div>
+            <!-- PANE 3: ARMORY & LOADOUT BUILDER -->
+            <div id="tab-pane-armory" class="lobby-tab-pane">
+              <div class="armory-layout">
+                <!-- Preset Bar -->
+                <div class="loadout-preset-bar">
+                  <span class="preset-label" data-i18n="lobby.preset">Loadout Preset:</span>
+                  <div class="preset-buttons">
+                    <button type="button" class="preset-btn active" data-preset="1" data-i18n="lobby.preset1">Preset 1 · Assault</button>
+                    <button type="button" class="preset-btn" data-preset="2" data-i18n="lobby.preset2">Preset 2 · Skirmisher</button>
+                    <button type="button" class="preset-btn" data-preset="3" data-i18n="lobby.preset3">Preset 3 · Sniper</button>
+                  </div>
+                  <button type="button" id="btn-save-preset" class="btn-preset-save" data-i18n="lobby.savePreset">💾 Save Preset</button>
+                </div>
 
-              <!-- Match setup: mode + map (host only) -->
-              <h3 data-i18n="lobby.mode">GAME MODE</h3>
-              <div id="mode-grid" class="mode-grid"><!-- generated --></div>
+                <div class="armory-columns">
+                  <!-- Weapon Selection Column -->
+                  <div class="armory-col armory-weapons">
+                    <h3 data-i18n="lobby.selectWeapon">SELECT WEAPON</h3>
+                    <div class="weapon-grid">
+                      <!-- Generated dynamically from WEAPON_CONFIGS -->
+                    </div>
+                  </div>
 
-              <h3 data-i18n="lobby.map">ARENA MAP</h3>
-              <div id="map-grid" class="map-grid"><!-- generated --></div>
+                  <!-- Details & Stats Column -->
+                  <div class="armory-col armory-specs">
+                    <div id="weapon-loadout-preview" class="weapon-loadout-preview"></div>
 
-              <div class="bot-controls">
-                <span class="bot-label" data-i18n="lobby.bots">BOTS</span>
-                <button id="btn-lobby-add-bot" class="btn-bot" data-i18n="lobby.addBot">＋ Add Bot</button>
-                <button id="btn-lobby-remove-bot" class="btn-bot danger" data-i18n="lobby.removeBot">－ Remove Bot</button>
+                    <!-- Skills & Perks Selection -->
+                    <div class="armory-skills-section">
+                      <div class="skills-title-row">
+                        <h3>
+                          <span data-i18n="lobby.skills">Select Skills</span>
+                          <span id="skill-count" class="skill-count-badge">0/3</span>
+                        </h3>
+                        <p class="section-hint" data-i18n="lobby.skillsHint">Passive perks for the whole match</p>
+                      </div>
+                      <div id="skill-grid" class="skill-grid"><!-- generated --></div>
+                    </div>
+                  </div>
+                </div>
               </div>
+            </div>
 
-              <div class="controls-guide mini">
-                <div class="ctrl-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span data-i18n="lobby.ctrlMove">Move</span></div>
-                <div class="ctrl-row"><kbd>LMB</kbd> <span data-i18n="lobby.ctrlFire">Fire / Roll</span></div>
-                <div class="ctrl-row"><kbd>RMB / Q</kbd> <span data-i18n="lobby.ctrlSub">Sub-weapon Bomb</span></div>
-                <div class="ctrl-row"><kbd>E / MMB</kbd> <span data-i18n="lobby.ctrlSpecial">Special Ultimate</span></div>
-                <div class="ctrl-row"><kbd>Shift</kbd> <span data-i18n="lobby.ctrlSwim">Swim in ink</span></div>
-                <div class="ctrl-row"><kbd>1-4</kbd> <span data-i18n="hud.weaponSwitchHint">Switch weapons</span></div>
+            <!-- PANE 4: SPLASHTAG & PROFILE -->
+            <div id="tab-pane-profile" class="lobby-tab-pane">
+              <div class="profile-tab-layout">
+                <!-- Left: Live Splashtag Banner Preview & Customizer -->
+                <div class="splashtag-card-wrapper">
+                  <h3 data-i18n="lobby.splashtag">SPLASHTAG BANNER</h3>
+                  <p class="section-hint" data-i18n="lobby.splashtagHint">Customized banner shown on match entry</p>
+
+                  <div id="splashtag-banner" class="splashtag-banner theme-neon">
+                    <div class="splashtag-badge-col">
+                      <div id="splashtag-badge-icon" class="splashtag-badge-icon">👑</div>
+                    </div>
+                    <div class="splashtag-main-col">
+                      <div class="splashtag-title-row">
+                        <span id="splashtag-prefix" class="splashtag-prefix">Supercharged</span>
+                        <span id="splashtag-suffix" class="splashtag-suffix">Inker</span>
+                      </div>
+                      <div class="splashtag-name-row">
+                        <span id="splashtag-name" class="splashtag-name">Squid_777</span>
+                        <span id="splashtag-hash" class="splashtag-hash">#2881</span>
+                      </div>
+                    </div>
+                    <div class="splashtag-rank-col">
+                      <span id="splashtag-rank" class="splashtag-rank">S+</span>
+                      <span id="splashtag-level" class="splashtag-level">Lv.30</span>
+                    </div>
+                  </div>
+
+                  <!-- Splashtag Customizer Form -->
+                  <div class="splashtag-form">
+                    <div class="form-row">
+                      <div class="form-group">
+                        <label for="player-name-input" data-i18n="lobby.name">Inker Name:</label>
+                        <input id="player-name-input" type="text" maxlength="16" data-i18n-placeholder="lobby.namePlaceholder" placeholder="Enter your name" />
+                      </div>
+                      <div class="form-group">
+                        <label for="splashtag-prefix-select" data-i18n="lobby.prefix">Title Prefix:</label>
+                        <select id="splashtag-prefix-select" class="splashtag-select">
+                          <option value="Supercharged">Supercharged (超能之)</option>
+                          <option value="Swift">Swift (疾风之)</option>
+                          <option value="Apex">Apex (王牌)</option>
+                          <option value="Invincible">Invincible (不败之)</option>
+                          <option value="Neon">Neon (霓虹幻彩)</option>
+                          <option value="Deepsea">Deepsea (深海潜游)</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label for="splashtag-suffix-select" data-i18n="lobby.suffix">Title Suffix:</label>
+                        <select id="splashtag-suffix-select" class="splashtag-select">
+                          <option value="Inker">Inker (涂地专家)</option>
+                          <option value="Striker">Striker (强袭者)</option>
+                          <option value="Sniper">Sniper (神射手)</option>
+                          <option value="Strategist">Strategist (战术先驱)</option>
+                          <option value="Champion">Champion (竞技霸主)</option>
+                          <option value="Octo Hero">Octo Hero (章鱼勇士)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Avatar Select & Upload -->
+                    <div class="profile-avatar-row">
+                      <div class="profile-avatar-wrapper">
+                        <img id="profile-avatar-img" class="profile-avatar-img" src="/assets/characters/inkling_pink.jpg" alt="Inker Avatar" title="" data-i18n-title="lobby.avatarUpload" data-i18n-alt="lobby.avatarAlt" />
+                        <span id="profile-avatar-tag" class="profile-avatar-tag">AUTO</span>
+                        <input id="avatar-file-input" type="file" accept="image/*" class="hidden" />
+                      </div>
+                      <div class="avatar-controls">
+                        <span class="avatar-hint" data-i18n="lobby.avatarUpload">Click avatar to upload image (max 5MB)</span>
+                        <div class="avatar-preset-row">
+                          <span class="avatar-preset-label">Presets:</span>
+                          <button type="button" class="avatar-preset-btn" data-avatar-src="/assets/avatars/avatar_pink.jpg" title="Pink Inker">
+                            <img src="/assets/avatars/avatar_pink.jpg" alt="Pink Inker" />
+                          </button>
+                          <button type="button" class="avatar-preset-btn" data-avatar-src="/assets/avatars/avatar_cyan.jpg" title="Cyan Inker">
+                            <img src="/assets/avatars/avatar_cyan.jpg" alt="Cyan Inker" />
+                          </button>
+                          <button type="button" class="avatar-preset-btn" data-avatar-src="/assets/avatars/avatar_octo.jpg" title="Octoling">
+                            <img src="/assets/avatars/avatar_octo.jpg" alt="Octoling" />
+                          </button>
+                          <button type="button" class="avatar-preset-btn" data-avatar-src="/assets/avatars/avatar_squid.jpg" title="Squid Mascot">
+                            <img src="/assets/avatars/avatar_squid.jpg" alt="Squid Mascot" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Right: Career Stats -->
+                <div class="career-stats-card">
+                  <h3 data-i18n="lobby.careerStats">CAREER BATTLE RECORD</h3>
+                  <div class="career-grid">
+                    <div class="career-item">
+                      <span class="career-num" id="stat-matches">48</span>
+                      <span class="career-label" data-i18n="lobby.matchesPlayed">Matches Played</span>
+                    </div>
+                    <div class="career-item highlight">
+                      <span class="career-num" id="stat-winrate">68.7%</span>
+                      <span class="career-label" data-i18n="lobby.winRate">Win Rate</span>
+                    </div>
+                    <div class="career-item">
+                      <span class="career-num" id="stat-splats">312</span>
+                      <span class="career-label" data-i18n="lobby.totalSplats">Total Splats</span>
+                    </div>
+                    <div class="career-item">
+                      <span class="career-num" id="stat-turf">18,420 m²</span>
+                      <span class="career-label" data-i18n="lobby.totalTurf">Turf Painted</span>
+                    </div>
+                    <div class="career-item wide">
+                      <span class="career-num" id="stat-favweapon">Ink Blaster</span>
+                      <span class="career-label" data-i18n="lobby.favWeapon">Favorite Weapon</span>
+                    </div>
+                  </div>
+                </div>
               </div>
+            </div>
 
-              <div class="lobby-action-row">
-                <button id="btn-lobby-ready" class="btn-ready" data-i18n="lobby.ready">READY!</button>
-                <button id="btn-lobby-start" class="btn-play" data-i18n="lobby.start">START MATCH NOW</button>
+            <!-- PANE 5: ROOM & BOT CONTROLLER -->
+            <div id="tab-pane-room" class="lobby-tab-pane">
+              <div class="room-bots-layout">
+                <!-- Solo Practice Quick Launch Hero Card -->
+                <div class="solo-hero-card">
+                  <div class="solo-hero-content">
+                    <span class="hero-badge">OFFLINE / SOLO INSTANT PLAY</span>
+                    <h2>⚡ 1-Click Solo Practice Match</h2>
+                    <p>Immediately fill all empty slots with 7 balanced smart AI bots and launch directly into battle on the selected map and mode!</p>
+                  </div>
+                  <button type="button" id="btn-solo-practice" class="btn-solo-launch">
+                    <span class="launch-icon">🚀</span>
+                    <span data-i18n="lobby.soloPractice">Instant Solo Match</span>
+                  </button>
+                </div>
+
+                <!-- Bot Management Console -->
+                <div class="bot-management-console">
+                  <div class="console-box">
+                    <h3>🤖 <span data-i18n="lobby.bots">BOT DISPATCHER</span></h3>
+                    <p class="section-hint">Dispatch or recall AI combatants to balance lobby slots (Max 8 players)</p>
+                    <div class="bot-action-grid">
+                      <button id="btn-add-pink-bot" class="btn-bot pink" type="button" data-i18n="lobby.addPinkBot">＋ Add Pink AI</button>
+                      <button id="btn-add-cyan-bot" class="btn-bot cyan" type="button" data-i18n="lobby.addCyanBot">＋ Add Cyan AI</button>
+                      <button id="btn-lobby-add-bot" class="btn-bot" type="button" data-i18n="lobby.addBot">＋ Auto Add Bot</button>
+                      <button id="btn-lobby-remove-bot" class="btn-bot danger" type="button" data-i18n="lobby.removeBot">－ Remove Bot</button>
+                    </div>
+                  </div>
+
+                  <div class="console-box">
+                    <h3 data-i18n="lobby.difficulty">AI COMBAT DIFFICULTY</h3>
+                    <div class="diff-selector">
+                      <label class="diff-option active">
+                        <input type="radio" name="bot-diff" value="normal" checked />
+                        <span class="diff-title" data-i18n="lobby.diffNormal">Standard Patrol</span>
+                        <span class="diff-desc">Normal reaction times, balanced turf coverage and objective pushes.</span>
+                      </label>
+                      <label class="diff-option">
+                        <input type="radio" name="bot-diff" value="hard" />
+                        <span class="diff-title" data-i18n="lobby.diffHard">Veteran Aggressive</span>
+                        <span class="diff-desc">Faster aiming, smart sub-bomb tosses, aggressive vertical flanking.</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PANE 6: SETTINGS -->
+            <div id="tab-pane-settings" class="lobby-tab-pane">
+              <div class="settings-tab-layout">
+                <div class="settings-card">
+                  <h3>🔊 AUDIO SETTINGS</h3>
+                  <div class="setting-slider-group">
+                    <div class="slider-label">
+                      <span data-i18n="lobby.audioSfx">Sound Effects Volume</span>
+                      <span id="sfx-vol-val">80%</span>
+                    </div>
+                    <input type="range" id="setting-sfx-slider" min="0" max="100" value="80" class="vol-slider" />
+                  </div>
+                  <div class="setting-slider-group">
+                    <div class="slider-label">
+                      <span data-i18n="lobby.audioBgm">Music Volume</span>
+                      <span id="bgm-vol-val">70%</span>
+                    </div>
+                    <input type="range" id="setting-bgm-slider" min="0" max="100" value="70" class="vol-slider" />
+                  </div>
+
+                  <h3 style="margin-top: 24px;">🖥️ GRAPHICS PRESET</h3>
+                  <div class="graphics-options">
+                    <label class="gfx-radio active">
+                      <input type="radio" name="gfx-quality" value="high" checked />
+                      <span data-i18n="lobby.gfxUltra">High (60 FPS · Full Shadows & Post-FX)</span>
+                    </label>
+                    <label class="gfx-radio">
+                      <input type="radio" name="gfx-quality" value="medium" />
+                      <span data-i18n="lobby.gfxMedium">Balanced (Optimized Shaders)</span>
+                    </label>
+                    <label class="gfx-radio">
+                      <input type="radio" name="gfx-quality" value="low" />
+                      <span data-i18n="lobby.gfxLow">Performance (Low Power Mode)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="settings-card">
+                  <h3>🎮 CONTROLS MAPPING</h3>
+                  <div class="controls-full-grid">
+                    <div class="ctrl-full-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move Inker</span></div>
+                    <div class="ctrl-full-row"><kbd>Mouse</kbd><span>Aim Camera (Pointer Lock)</span></div>
+                    <div class="ctrl-full-row"><kbd>LMB</kbd><span>Fire Main Weapon / Ink Roller Roll</span></div>
+                    <div class="ctrl-full-row"><kbd>RMB / Q</kbd><span>Toss Sub Weapon Bomb</span></div>
+                    <div class="ctrl-full-row"><kbd>E / MMB</kbd><span>Deploy Special Ultimate (When Charged)</span></div>
+                    <div class="ctrl-full-row"><kbd>Shift</kbd><span>Submerge & Swim in Friendly Ink</span></div>
+                    <div class="ctrl-full-row"><kbd>1 - 4</kbd><span>Instant Weapon Swap in Arena</span></div>
+                    <div class="ctrl-full-row"><kbd>Tab</kbd><span>Hold to View Live Scoreboard</span></div>
+                    <div class="ctrl-full-row"><kbd>ESC</kbd><span>Unlock Mouse / Pause Game</span></div>
+                    <div class="ctrl-full-row"><kbd>F3</kbd><span>Toggle Technical Debug Info (Ping/FPS)</span></div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
+
+          <!-- ==================== PERSISTENT ACTION DOCK ==================== -->
+          <footer class="lobby-action-dock">
+            <div class="dock-left">
+              <span id="lobby-dock-ping" class="dock-ping">
+                <span class="ping-signal"><i></i><i></i><i></i></span>
+                <span class="dock-ping-val">12ms</span>
+              </span>
+              <div id="dock-team-pill" class="dock-team-pill neutral">
+                <span class="team-dot"></span>
+                <span id="dock-team-name" data-i18n="lobby.auto">AUTO-BALANCE</span>
+              </div>
+              <div class="dock-match-summary">
+                <span id="dock-mode-summary">TURF WAR</span>
+                <span class="summary-sep">·</span>
+                <span id="dock-map-summary">Downtown</span>
+              </div>
+            </div>
+
+            <div class="dock-right">
+              <button id="btn-dock-solo" class="btn-dock-solo" type="button" data-i18n="lobby.soloPractice">⚡ Solo Practice</button>
+              <button id="btn-lobby-ready" class="btn-ready" data-i18n="lobby.ready">READY!</button>
+              <button id="btn-lobby-start" class="btn-play" data-i18n="lobby.start">START MATCH NOW</button>
+            </div>
+          </footer>
         </div>
       </div>
 

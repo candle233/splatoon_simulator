@@ -1,4 +1,4 @@
-import { Vec3 } from './types.js';
+import { RampObstacle, Vec3 } from './types.js';
 
 /**
  * Deterministic 32-bit PRNG (Mulberry32)
@@ -249,4 +249,148 @@ export function intersectRayCapsule(
     if (t !== null && (best === null || t < best)) best = t;
   }
   return best;
+}
+
+/**
+ * Intersects a Ray with a 3D Ramp wedge (right triangular prism).
+ * Returns the intersection distance t, hit point, and outward face normal, or null.
+ */
+export function intersectRayRamp(
+  ray: Ray,
+  ramp: RampObstacle
+): { t: number; point: Vec3; normal: Vec3 } | null {
+  const baseY = ramp.position.y - ramp.rise / 2;
+
+  let minX: number, maxX: number, minZ: number, maxZ: number;
+  if (ramp.direction === 'east' || ramp.direction === 'west') {
+    minX = ramp.position.x - ramp.length / 2;
+    maxX = ramp.position.x + ramp.length / 2;
+    minZ = ramp.position.z - ramp.width / 2;
+    maxZ = ramp.position.z + ramp.width / 2;
+  } else {
+    minX = ramp.position.x - ramp.width / 2;
+    maxX = ramp.position.x + ramp.width / 2;
+    minZ = ramp.position.z - ramp.length / 2;
+    maxZ = ramp.position.z + ramp.length / 2;
+  }
+
+  const slope = ramp.rise / ramp.length;
+  const slopeHyp = Math.sqrt(slope * slope + 1);
+  const invHyp = 1 / slopeHyp;
+
+  let slopeNormal: Vec3;
+  let slopePoint: Vec3;
+  let backWallPoint: Vec3;
+  let backWallNormal: Vec3;
+  let frontWallPoint: Vec3;
+  let frontWallNormal: Vec3;
+  let side1Point: Vec3;
+  let side1Normal: Vec3;
+  let side2Point: Vec3;
+  let side2Normal: Vec3;
+
+  switch (ramp.direction) {
+    case 'east':
+      slopeNormal = { x: -slope * invHyp, y: invHyp, z: 0 };
+      slopePoint = { x: minX, y: baseY, z: ramp.position.z };
+      backWallPoint = { x: maxX, y: baseY, z: ramp.position.z };
+      backWallNormal = { x: 1, y: 0, z: 0 };
+      frontWallPoint = { x: minX, y: baseY, z: ramp.position.z };
+      frontWallNormal = { x: -1, y: 0, z: 0 };
+      side1Point = { x: ramp.position.x, y: baseY, z: minZ };
+      side1Normal = { x: 0, y: 0, z: -1 };
+      side2Point = { x: ramp.position.x, y: baseY, z: maxZ };
+      side2Normal = { x: 0, y: 0, z: 1 };
+      break;
+    case 'west':
+      slopeNormal = { x: slope * invHyp, y: invHyp, z: 0 };
+      slopePoint = { x: maxX, y: baseY, z: ramp.position.z };
+      backWallPoint = { x: minX, y: baseY, z: ramp.position.z };
+      backWallNormal = { x: -1, y: 0, z: 0 };
+      frontWallPoint = { x: maxX, y: baseY, z: ramp.position.z };
+      frontWallNormal = { x: 1, y: 0, z: 0 };
+      side1Point = { x: ramp.position.x, y: baseY, z: minZ };
+      side1Normal = { x: 0, y: 0, z: -1 };
+      side2Point = { x: ramp.position.x, y: baseY, z: maxZ };
+      side2Normal = { x: 0, y: 0, z: 1 };
+      break;
+    case 'south':
+      slopeNormal = { x: 0, y: invHyp, z: -slope * invHyp };
+      slopePoint = { x: ramp.position.x, y: baseY, z: minZ };
+      backWallPoint = { x: ramp.position.x, y: baseY, z: maxZ };
+      backWallNormal = { x: 0, y: 0, z: 1 };
+      frontWallPoint = { x: ramp.position.x, y: baseY, z: minZ };
+      frontWallNormal = { x: 0, y: 0, z: -1 };
+      side1Point = { x: minX, y: baseY, z: ramp.position.z };
+      side1Normal = { x: -1, y: 0, z: 0 };
+      side2Point = { x: maxX, y: baseY, z: ramp.position.z };
+      side2Normal = { x: 1, y: 0, z: 0 };
+      break;
+    case 'north':
+      slopeNormal = { x: 0, y: invHyp, z: slope * invHyp };
+      slopePoint = { x: ramp.position.x, y: baseY, z: maxZ };
+      backWallPoint = { x: ramp.position.x, y: baseY, z: minZ };
+      backWallNormal = { x: 0, y: 0, z: -1 };
+      frontWallPoint = { x: ramp.position.x, y: baseY, z: maxZ };
+      frontWallNormal = { x: 0, y: 0, z: 1 };
+      side1Point = { x: minX, y: baseY, z: ramp.position.z };
+      side1Normal = { x: -1, y: 0, z: 0 };
+      side2Point = { x: maxX, y: baseY, z: ramp.position.z };
+      side2Normal = { x: 1, y: 0, z: 0 };
+      break;
+  }
+
+  const bottomPoint: Vec3 = { x: ramp.position.x, y: baseY, z: ramp.position.z };
+  const bottomNormal: Vec3 = { x: 0, y: -1, z: 0 };
+
+  const planes: { p: Vec3; n: Vec3 }[] = [
+    { p: bottomPoint, n: bottomNormal },
+    { p: slopePoint, n: slopeNormal },
+    { p: backWallPoint, n: backWallNormal },
+    { p: frontWallPoint, n: frontWallNormal },
+    { p: side1Point, n: side1Normal },
+    { p: side2Point, n: side2Normal }
+  ];
+
+  let tMin = 0.0;
+  let tMax = Number.POSITIVE_INFINITY;
+  let hitNormal: Vec3 = slopeNormal;
+
+  for (const plane of planes) {
+    const denom = ray.direction.x * plane.n.x + ray.direction.y * plane.n.y + ray.direction.z * plane.n.z;
+    const numer = (plane.p.x - ray.origin.x) * plane.n.x + (plane.p.y - ray.origin.y) * plane.n.y + (plane.p.z - ray.origin.z) * plane.n.z;
+
+    if (Math.abs(denom) < 1e-8) {
+      if (numer < 0) {
+        return null;
+      }
+    } else {
+      const t = numer / denom;
+      if (denom < 0) {
+        if (t > tMin) {
+          tMin = t;
+          hitNormal = plane.n;
+        }
+      } else {
+        if (t < tMax) {
+          tMax = t;
+        }
+      }
+      if (tMin > tMax) {
+        return null;
+      }
+    }
+  }
+
+  if (tMin <= 0) return null;
+
+  return {
+    t: tMin,
+    point: {
+      x: ray.origin.x + ray.direction.x * tMin,
+      y: ray.origin.y + ray.direction.y * tMin,
+      z: ray.origin.z + ray.direction.z * tMin
+    },
+    normal: hitNormal
+  };
 }

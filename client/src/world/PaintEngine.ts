@@ -63,8 +63,8 @@ export class PaintEngine {
 
     // Three.js Texture setup
     this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.generateMipmaps = true;
-    this.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    this.texture.generateMipmaps = false;
+    this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.wrapS = THREE.ClampToEdgeWrapping;
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -81,11 +81,49 @@ export class PaintEngine {
     }
     this.surfaceCtx = surfaceCtx;
     this.surfaceTexture = new THREE.CanvasTexture(this.surfaceCanvas);
+    this.surfaceTexture.generateMipmaps = false;
+    this.surfaceTexture.minFilter = THREE.LinearFilter;
+    this.surfaceTexture.magFilter = THREE.LinearFilter;
     this.surfaceTexture.colorSpace = THREE.SRGBColorSpace;
     this.surfaceTexture.needsUpdate = true;
   }
 
+  private dirtyMinX = 0;
+  private dirtyMinY = 0;
+  private dirtyMaxX = 0;
+  private dirtyMaxY = 0;
+  private fullTextureDirty = true;
+  private hasDirtyRect = false;
+  private surfaceTextureDirty = false;
+
+  private expandDirty(cx: number, cy: number, r: number): void {
+    const pad = Math.ceil(r) + 2;
+    const minX = Math.max(0, Math.floor(cx - pad));
+    const maxX = Math.min(this.canvasWidth, Math.ceil(cx + pad));
+    const minY = Math.max(0, Math.floor(cy - pad));
+    const maxY = Math.min(this.canvasHeight, Math.ceil(cy + pad));
+
+    if (!this.hasDirtyRect) {
+      this.dirtyMinX = minX;
+      this.dirtyMaxX = maxX;
+      this.dirtyMinY = minY;
+      this.dirtyMaxY = maxY;
+      this.hasDirtyRect = true;
+    } else {
+      if (minX < this.dirtyMinX) this.dirtyMinX = minX;
+      if (maxX > this.dirtyMaxX) this.dirtyMaxX = maxX;
+      if (minY < this.dirtyMinY) this.dirtyMinY = minY;
+      if (maxY > this.dirtyMaxY) this.dirtyMaxY = maxY;
+    }
+  }
+
   private clearCanvas(): void {
+    this.fullTextureDirty = true;
+    this.hasDirtyRect = true;
+    this.dirtyMinX = 0;
+    this.dirtyMinY = 0;
+    this.dirtyMaxX = this.canvasWidth;
+    this.dirtyMaxY = this.canvasHeight;
     this.ctx.fillStyle = '#44444c';
     this.ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
 
@@ -166,8 +204,11 @@ export class PaintEngine {
       const prevCenter = uvToCanvas(event.prevU, event.prevV, this.canvasWidth, this.canvasHeight);
       this.drawContinuousStroke(prevCenter.px, prevCenter.py, center.px, center.py, radiusPx, baseColor, team);
       this.drawRadialCircle(center.px, center.py, radiusPx, baseColor, team);
+      this.expandDirty(prevCenter.px, prevCenter.py, radiusPx);
+      this.expandDirty(center.px, center.py, radiusPx);
     } else {
       this.drawRadialCircle(center.px, center.py, radiusPx, baseColor, team);
+      this.expandDirty(center.px, center.py, radiusPx);
     }
 
     // Draw deterministic splatters
@@ -176,6 +217,7 @@ export class PaintEngine {
       const sCenter = uvToCanvas(splat.u, splat.v, this.canvasWidth, this.canvasHeight);
       const sRadiusPx = splat.radius * this.canvasWidth;
       this.drawRadialCircle(sCenter.px, sCenter.py, sRadiusPx, baseColor, team);
+      this.expandDirty(sCenter.px, sCenter.py, sRadiusPx);
     }
   }
 
@@ -293,13 +335,21 @@ export class PaintEngine {
    */
   markDirty(): void {
     this.paintTextureDirty = true;
+    this.fullTextureDirty = true;
+    this.hasDirtyRect = true;
+    this.dirtyMinX = 0;
+    this.dirtyMinY = 0;
+    this.dirtyMaxX = this.canvasWidth;
+    this.dirtyMaxY = this.canvasHeight;
   }
 
   /**
    * Flushes texture update to GPU at most once per render frame (Subagent 16),
    * and at most once per `minUploadIntervalMs`.
+   * When renderer is provided and WebGL2 is available, performs sub-region
+   * texSubImage2D upload of only the dirty rectangle instead of the full 2048x2048 canvas.
    */
-  flushTextureUpdate(): boolean {
+  flushTextureUpdate(renderer?: THREE.WebGLRenderer): boolean {
     if (!this.paintTextureDirty) return false;
 
     const now = performance.now();
@@ -308,8 +358,67 @@ export class PaintEngine {
       return false;
     }
 
+    if (renderer && !this.fullTextureDirty && this.hasDirtyRect) {
+      const x = Math.max(0, Math.floor(this.dirtyMinX));
+      const y = Math.max(0, Math.floor(this.dirtyMinY));
+      const w = Math.min(this.canvasWidth - x, Math.ceil(this.dirtyMaxX - x));
+      const h = Math.min(this.canvasHeight - y, Math.ceil(this.dirtyMaxY - y));
+
+      // Sub-image upload is optimal when dirty area is smaller than 65% of the full canvas
+      if (w > 0 && h > 0 && (w * h) < this.canvasWidth * this.canvasHeight * 0.65) {
+        try {
+          const gl = renderer.getContext() as WebGL2RenderingContext | WebGLRenderingContext | null;
+          const props = (renderer as unknown as { properties?: { get: (obj: unknown) => { __webglTexture?: WebGLTexture } } }).properties?.get(this.texture);
+          const webglTexture = props?.__webglTexture;
+
+          if (
+            gl &&
+            webglTexture &&
+            typeof (gl as WebGL2RenderingContext).texSubImage2D === 'function' &&
+            'UNPACK_ROW_LENGTH' in gl
+          ) {
+            const gl2 = gl as WebGL2RenderingContext;
+            // WebGL texture coordinate (0,0) is bottom-left; canvas (0,0) is top-left.
+            // With UNPACK_FLIP_Y_WEBGL = true, textureY = canvasHeight - y - h.
+            const textureY = this.canvasHeight - y - h;
+
+            gl2.bindTexture(gl2.TEXTURE_2D, webglTexture);
+            gl2.pixelStorei(gl2.UNPACK_FLIP_Y_WEBGL, true);
+            gl2.pixelStorei(gl2.UNPACK_ROW_LENGTH, this.canvasWidth);
+            gl2.pixelStorei(gl2.UNPACK_SKIP_PIXELS, x);
+            gl2.pixelStorei(gl2.UNPACK_SKIP_ROWS, y);
+            gl2.texSubImage2D(
+              gl2.TEXTURE_2D,
+              0,
+              x,
+              textureY,
+              w,
+              h,
+              gl2.RGBA,
+              gl2.UNSIGNED_BYTE,
+              this.canvas
+            );
+            gl2.pixelStorei(gl2.UNPACK_ROW_LENGTH, 0);
+            gl2.pixelStorei(gl2.UNPACK_SKIP_PIXELS, 0);
+            gl2.pixelStorei(gl2.UNPACK_SKIP_ROWS, 0);
+            gl2.bindTexture(gl2.TEXTURE_2D, null);
+
+            this.paintTextureDirty = false;
+            this.hasDirtyRect = false;
+            this.lastUploadAt = now;
+            this.textureUploads++;
+            return true;
+          }
+        } catch {
+          // Fallback to full needsUpdate if WebGL2 sub-image fails
+        }
+      }
+    }
+
     this.texture.needsUpdate = true;
     this.paintTextureDirty = false;
+    this.fullTextureDirty = false;
+    this.hasDirtyRect = false;
     this.lastUploadAt = now;
     this.textureUploads++;
     return true;
@@ -318,8 +427,12 @@ export class PaintEngine {
   /**
    * Called ONCE per render frame to upload texture if dirty
    */
-  renderUpdate(): void {
-    this.flushTextureUpdate();
+  renderUpdate(renderer?: THREE.WebGLRenderer): void {
+    this.flushTextureUpdate(renderer);
+    if (this.surfaceTextureDirty) {
+      this.flushSurfaceTexture();
+      this.surfaceTextureDirty = false;
+    }
   }
 
   /** Upload diagnostics for the debug hook / perf automation. */
@@ -352,16 +465,28 @@ export class PaintEngine {
   /**
    * Apply a surface paint update from the server.
    * Called from the network client when S2C_SURFACE_PAINT events arrive.
+   * Defers GPU texture upload to renderUpdate so network ticks never hitch the main thread.
    */
   applySurfacePaintUpdate(updates: Array<{ id: string; paint: [number, number] }>): void {
     if (!updates.length) return;
+    let changed = false;
     for (const u of updates) {
-      const p = this.surfacePaints.get(u.id);
-      if (!p) continue;
-      p[0] = u.paint[0] ?? 0;
-      p[1] = u.paint[1] ?? 0;
+      let p = this.surfacePaints.get(u.id);
+      if (!p) {
+        p = [0, 0];
+        this.surfacePaints.set(u.id, p);
+      }
+      const newPink = u.paint[0] ?? 0;
+      const newCyan = u.paint[1] ?? 0;
+      if (Math.abs(p[0] - newPink) > 0.005 || Math.abs(p[1] - newCyan) > 0.005) {
+        p[0] = newPink;
+        p[1] = newCyan;
+        changed = true;
+      }
     }
-    this.flushSurfaceTexture();
+    if (changed) {
+      this.surfaceTextureDirty = true;
+    }
   }
 
   /**

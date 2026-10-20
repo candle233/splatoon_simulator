@@ -16,6 +16,12 @@ export class CameraController {
   private shakeIntensity = 0;
   private shakeDecay = 0;
   private recoilPitch = 0;
+  private baseFov = 75;
+  private fovOffset = 0;
+  private targetFovOffset = 0;
+  /** Downward spring after a fall. Decays back to the normal camera height. */
+  private landingDip = 0;
+  private bobTime = 0;
 
   // Reusable vectors to avoid allocations in render loop
   private tempPlayerHead = new THREE.Vector3();
@@ -24,10 +30,23 @@ export class CameraController {
   private tempForward = new THREE.Vector3();
   private tempRight = new THREE.Vector3();
   private tempRayDir = new THREE.Vector3();
+  private scratchRay: Ray = {
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 0, z: 0 }
+  };
 
   constructor(camera: THREE.PerspectiveCamera, collisionWorld: ClientCollisionWorld) {
     this.camera = camera;
     this.collisionWorld = collisionWorld;
+    this.baseFov = camera.fov || 75;
+  }
+
+  setBaseFov(fov: number): void {
+    this.baseFov = fov;
+  }
+
+  setFovOffset(offset: number): void {
+    this.targetFovOffset = offset;
   }
 
   addShake(intensity: number, duration = 0.25): void {
@@ -39,11 +58,38 @@ export class CameraController {
     this.recoilPitch = Math.min(0.12, this.recoilPitch + pitchAmount);
   }
 
-  update(playerPos: Vec3, yaw: number, pitch: number, dt = 0.016, isSubmerged = false): void {
+  /** Punch the camera down when the player lands. `impact` is 0..1. */
+  addLanding(impact: number): void {
+    const clamped = Math.max(0, Math.min(1, impact));
+    this.landingDip = Math.min(0.42, this.landingDip + 0.08 + clamped * 0.26);
+    this.addShake(0.06 + clamped * 0.2, 0.14);
+  }
+
+  update(
+    playerPos: Vec3,
+    yaw: number,
+    pitch: number,
+    dt = 0.016,
+    isSubmerged = false,
+    horizontalSpeed = 0
+  ): void {
     const targetHeight = isSubmerged ? 1.25 : 1.8;
     this.cameraHeight += (targetHeight - this.cameraHeight) * Math.min(1, dt * 8);
     const targetDist = isSubmerged ? 4.3 : 5.2;
     this.baseDistance += (targetDist - this.baseDistance) * Math.min(1, dt * 8);
+
+    // Smoothly apply FOV offset (e.g. charger zoom / marksman ADS)
+    if (Math.abs(this.fovOffset - this.targetFovOffset) > 0.01 || Math.abs(this.fovOffset) > 0.01) {
+      this.fovOffset += (this.targetFovOffset - this.fovOffset) * Math.min(1, dt * 10);
+      if (Math.abs(this.fovOffset - this.targetFovOffset) <= 0.02 && this.targetFovOffset === 0) {
+        this.fovOffset = 0;
+      }
+      const targetFov = this.baseFov + this.fovOffset;
+      if (Math.abs(this.camera.fov - targetFov) > 0.02) {
+        this.camera.fov = targetFov;
+        this.camera.updateProjectionMatrix();
+      }
+    }
 
     // Smoothly decay recoil pitch
     this.recoilPitch = Math.max(0, this.recoilPitch - dt * 0.9);
@@ -77,16 +123,29 @@ export class CameraController {
 
     if (rayDist > 1e-4) {
       this.tempRayDir.normalize();
-      const ray: Ray = {
-        origin: { x: this.tempPlayerHead.x, y: this.tempPlayerHead.y, z: this.tempPlayerHead.z },
-        direction: { x: this.tempRayDir.x, y: this.tempRayDir.y, z: this.tempRayDir.z }
-      };
+      this.scratchRay.origin.x = this.tempPlayerHead.x;
+      this.scratchRay.origin.y = this.tempPlayerHead.y;
+      this.scratchRay.origin.z = this.tempPlayerHead.z;
+      this.scratchRay.direction.x = this.tempRayDir.x;
+      this.scratchRay.direction.y = this.tempRayDir.y;
+      this.scratchRay.direction.z = this.tempRayDir.z;
 
-      const hitDist = this.collisionWorld.castCameraRay(ray, rayDist);
+      const hitDist = this.collisionWorld.castCameraRay(this.scratchRay, rayDist);
       if (hitDist !== null && hitDist < rayDist) {
         const safeDist = Math.max(0.6, hitDist - 0.25);
         this.tempDesiredPos.copy(this.tempPlayerHead).addScaledVector(this.tempRayDir, safeDist);
       }
+    }
+
+    if (horizontalSpeed > 2.4) {
+      this.bobTime += dt * (isSubmerged ? 5.4 : 7.4);
+      const amp = Math.min(isSubmerged ? 0.028 : 0.038, horizontalSpeed * 0.0032);
+      this.tempDesiredPos.y += Math.sin(this.bobTime) * amp;
+    }
+
+    if (this.landingDip > 0) {
+      this.tempDesiredPos.y -= this.landingDip;
+      this.landingDip = Math.max(0, this.landingDip - dt * (2.8 + this.landingDip * 8));
     }
 
     // Decay shake and apply randomized offset (Subagent 73)

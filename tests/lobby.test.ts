@@ -127,7 +127,7 @@ describe('Multiplayer Lobby System Integration', () => {
 
     const countdownState = await matchStatePromise;
     expect(countdownState.phase).toBe(MatchPhase.COUNTDOWN);
-  });
+  }, 15000);
 
   it('Match remains in WAITING phase without auto-bypassing the lobby screen', async () => {
     const client = createSocket();

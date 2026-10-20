@@ -12,11 +12,14 @@ import {
   SQUID_HEIGHT,
   Team,
   Vec3,
+  getMapDef,
   intersectRayAABB,
   intersectRayCapsule,
   intersectRayGroundPlane,
+  intersectRayRamp,
   vec3Add,
-  vec3Scale
+  vec3Scale,
+  SpatialGrid
 } from '@ink/shared';
 import { PlayerState } from './PlayerState.js';
 
@@ -25,27 +28,74 @@ export class CollisionWorld {
   private halfSize = ARENA_HALF_SIZE;
   private ramps: RampObstacle[] = [];
   private climbableSurfaces: ClimbableSurface[] = [];
+  private spatialGrid = new SpatialGrid(10);
+  private scratchPos: Vec3 = { x: 0, y: 0, z: 0 };
 
-  constructor(obstacles = ARENA_OBSTACLES) {
+  constructor(
+    obstacles: BoxObstacle[] = ARENA_OBSTACLES,
+    ramps?: RampObstacle[],
+    climbableSurfaces?: ClimbableSurface[]
+  ) {
     this.obstacles = obstacles;
+    if (ramps !== undefined) {
+      this.ramps = ramps;
+    } else if (obstacles === ARENA_OBSTACLES) {
+      this.ramps = getMapDef().ramps;
+    } else {
+      this.ramps = [];
+    }
+
+    if (climbableSurfaces !== undefined) {
+      this.climbableSurfaces = climbableSurfaces;
+    } else if (obstacles === ARENA_OBSTACLES) {
+      this.climbableSurfaces = getMapDef().climbableSurfaces;
+    } else {
+      this.climbableSurfaces = [];
+    }
+
+    this.spatialGrid.build(this.obstacles, this.ramps, this.climbableSurfaces);
   }
 
   getObstacles(): BoxObstacle[] {
     return this.obstacles;
   }
 
+  getRamps(): RampObstacle[] {
+    return this.ramps;
+  }
+
+  getClimbableSurfaces(): ClimbableSurface[] {
+    return this.climbableSurfaces;
+  }
+
+  /**
+   * Returns the highest ground level under (x, z), optionally bounded by currentY.
+   * Checks obstacle platform tops, ramp surfaces, and ground plane y=0.
+   */
+  getGroundHeightAt(x: number, z: number, currentY = Number.POSITIVE_INFINITY): number {
+    return this.spatialGrid.getGroundHeightAt(
+      x,
+      z,
+      currentY,
+      (ramp, rx, rz) => this.rampHeightAt(ramp, rx, rz)
+    );
+  }
+
   setRamps(ramps: RampObstacle[]): void {
     this.ramps = ramps;
+    this.spatialGrid.build(this.obstacles, this.ramps, this.climbableSurfaces);
   }
 
   setClimbableSurfaces(surfaces: ClimbableSurface[]): void {
     this.climbableSurfaces = surfaces;
+    this.spatialGrid.build(this.obstacles, this.ramps, this.climbableSurfaces);
   }
 
   /** Swaps the obstacle set and arena bounds (map change while in lobby). */
   setObstacles(obstacles: BoxObstacle[], mapSize = this.halfSize * 2): void {
     this.obstacles = obstacles;
     this.halfSize = mapSize / 2;
+    this.spatialGrid.build(this.obstacles, this.ramps, this.climbableSurfaces);
   }
 
   getHalfSize(): number {
@@ -59,7 +109,13 @@ export class CollisionWorld {
    */
   getRampAt(position: Vec3): RampObstacle | null {
     const r = PLAYER_RADIUS;
-    for (const ramp of this.ramps) {
+    const ramps = this.spatialGrid.getRampsInAABB(
+      position.x - r,
+      position.x + r,
+      position.z - r,
+      position.z + r
+    );
+    for (const ramp of ramps) {
       if (!ramp.climbable) continue;
       // Determine the ramp's axis-aligned bounding box
       let minX = ramp.position.x - (ramp.width / 2);
@@ -85,7 +141,11 @@ export class CollisionWorld {
         position.z + r > minZ &&
         position.z - r < maxZ
       ) {
-        return ramp;
+        const baseY = ramp.position.y - ramp.rise / 2;
+        const expectedY = this.rampHeightAt(ramp, position.x, position.z);
+        if (position.y >= baseY - 0.6 && position.y <= expectedY + 2.4) {
+          return ramp;
+        }
       }
     }
     return null;
@@ -95,16 +155,40 @@ export class CollisionWorld {
    * Returns the climbable surface closest to the player, or null.
    */
   getClimbableSurfaceAt(position: Vec3, withinRange = 2.0): ClimbableSurface | null {
-    for (const cs of this.climbableSurfaces) {
-      const cx = cs.position.x;
-      const cz = cs.position.z;
-      const dx = position.x - cx;
-      const dz = position.z - cz;
-      if (dx * dx + dz * dz < withinRange * withinRange) {
-        return cs;
+    let closestDistSq = withinRange * withinRange;
+    let closestSurface: ClimbableSurface | null = null;
+
+    const surfaces = this.spatialGrid.getClimbableSurfacesInAABB(
+      position.x - withinRange,
+      position.x + withinRange,
+      position.z - withinRange,
+      position.z + withinRange
+    );
+
+    for (const cs of surfaces) {
+      const hx = cs.size.x * 0.5;
+      const hy = cs.size.y * 0.5;
+      const hz = cs.size.z * 0.5;
+
+      const minY = cs.position.y - hy - 0.5;
+      const maxY = cs.position.y + hy + 0.8;
+      if (position.y < minY || position.y > maxY) {
+        continue;
+      }
+
+      const qx = Math.max(cs.position.x - hx, Math.min(cs.position.x + hx, position.x));
+      const qz = Math.max(cs.position.z - hz, Math.min(cs.position.z + hz, position.z));
+
+      const dx = position.x - qx;
+      const dz = position.z - qz;
+      const distSq = dx * dx + dz * dz;
+
+      if (distSq < closestDistSq) {
+        closestDistSq = distSq;
+        closestSurface = cs;
       }
     }
-    return null;
+    return closestSurface;
   }
 
   /**
@@ -128,7 +212,8 @@ export class CollisionWorld {
         break;
     }
     t = Math.max(0, Math.min(1, t));
-    return ramp.rise * t;
+    const baseY = ramp.position.y - ramp.rise / 2;
+    return baseY + ramp.rise * t;
   }
 
   /**
@@ -153,21 +238,21 @@ export class CollisionWorld {
     currZ = Math.max(-boundLimit, Math.min(boundLimit, currZ));
 
     // 2. Obstacle collision (AABB resolution on each axis)
-    for (const obs of this.obstacles) {
+    const pMinX = currX - radius;
+    const pMaxX = currX + radius;
+    const pMinY = currY;
+    const pMaxY = currY + height;
+    const pMinZ = currZ - radius;
+    const pMaxZ = currZ + radius;
+
+    const nearbyObstacles = this.spatialGrid.getObstaclesInAABB(pMinX, pMaxX, pMinZ, pMaxZ);
+    for (const obs of nearbyObstacles) {
       const minX = obs.position.x - obs.size.x * 0.5;
       const maxX = obs.position.x + obs.size.x * 0.5;
       const minY = obs.position.y - obs.size.y * 0.5;
       const maxY = obs.position.y + obs.size.y * 0.5;
       const minZ = obs.position.z - obs.size.z * 0.5;
       const maxZ = obs.position.z + obs.size.z * 0.5;
-
-      // Player AABB approximation
-      const pMinX = currX - radius;
-      const pMaxX = currX + radius;
-      const pMinY = currY;
-      const pMaxY = currY + height;
-      const pMinZ = currZ - radius;
-      const pMaxZ = currZ + radius;
 
       // Check overlap
       if (
@@ -224,10 +309,19 @@ export class CollisionWorld {
     }
 
     // 2b. Ramp collision: lift the player up to the ramp's expected height
-    const ramp = this.getRampAt({ x: currX, y: currY, z: currZ });
+    this.scratchPos.x = currX;
+    this.scratchPos.y = currY;
+    this.scratchPos.z = currZ;
+    const ramp = this.getRampAt(this.scratchPos);
     if (ramp) {
       const expectedY = this.rampHeightAt(ramp, currX, currZ);
-      if (currY < expectedY - 0.06 && player.velocity.y <= 0) {
+      if (currY < expectedY) {
+        currY = expectedY;
+        grounded = true;
+        if (player.velocity.y < 0) {
+          player.velocity.y = 0;
+        }
+      } else if (prevPos.y <= expectedY + 0.6 && currY <= expectedY + 0.5 && player.velocity.y <= 0) {
         currY = expectedY;
         grounded = true;
         player.velocity.y = 0;
@@ -251,13 +345,15 @@ export class CollisionWorld {
   }
 
   /**
-   * Raycast for camera collision so camera doesn't clip through walls
+   * Raycast for camera collision so camera doesn't clip through walls or ramps.
    */
   castCameraRay(ray: Ray, maxDistance: number): number | null {
     let closest = maxDistance;
     let hitAny = false;
 
-    for (const obs of this.obstacles) {
+    const { obstacles, ramps } = this.spatialGrid.queryRayCandidates(ray, maxDistance);
+
+    for (const obs of obstacles) {
       const aabb = {
         min: {
           x: obs.position.x - obs.size.x * 0.5,
@@ -278,6 +374,15 @@ export class CollisionWorld {
       }
     }
 
+    for (const ramp of ramps) {
+      if (!ramp.climbable) continue;
+      const hit = intersectRayRamp(ray, ramp);
+      if (hit && hit.t > 0 && hit.t < closest) {
+        closest = hit.t;
+        hitAny = true;
+      }
+    }
+
     const ground = intersectRayGroundPlane(ray, 0.2, this.halfSize);
     if (ground && ground.t > 0 && ground.t < closest) {
       closest = ground.t;
@@ -287,9 +392,8 @@ export class CollisionWorld {
     return hitAny ? closest : null;
   }
 
-
   /**
-   * Raycast against ground plane, obstacles, and enemy players.
+   * Raycast against ground plane, obstacles, ramps, and enemy players.
    * Returns closest hit result.
    */
   castRay(
@@ -321,8 +425,10 @@ export class CollisionWorld {
       };
     }
 
+    const { obstacles, ramps } = this.spatialGrid.queryRayCandidates(ray, maxDistance);
+
     // 2. Ray vs Obstacles
-    for (const obs of this.obstacles) {
+    for (const obs of obstacles) {
       const aabb = {
         min: {
           x: obs.position.x - obs.size.x * 0.5,
@@ -345,7 +451,24 @@ export class CollisionWorld {
           point: vec3Add(ray.origin, vec3Scale(ray.direction, hit.t)),
           normal: hit.normal,
           hitObstacleId: obs.id,
-          isGround: hit.normal.y > 0.7 // Horizontal top of obstacle counts as ground for painting
+          isGround: hit.normal.y > 0.7
+        };
+      }
+    }
+
+    // 2b. Ray vs Ramps
+    for (const ramp of ramps) {
+      if (!ramp.climbable) continue;
+      const hit = intersectRayRamp(ray, ramp);
+      if (hit && hit.t > 0 && hit.t < closestDist) {
+        closestDist = hit.t;
+        hitResult = {
+          hit: true,
+          distance: hit.t,
+          point: hit.point,
+          normal: hit.normal,
+          hitRampId: ramp.id,
+          isGround: hit.normal.y > 0.3
         };
       }
     }

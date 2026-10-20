@@ -303,6 +303,7 @@ export interface HitResult {
   normal: Vec3;
   hitPlayerId?: string;
   hitObstacleId?: string;
+  hitRampId?: string;
   isGround: boolean;
 }
 

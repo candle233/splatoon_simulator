@@ -26,11 +26,12 @@ export interface NetworkCallbacks {
   onPlayerRespawned: (player: PlayerSnapshot) => void;
   onMatchState: (state: MatchStateSnapshot) => void;
   onGameOver: (payload: GameOverPayload) => void;
-  onHitFeedback: (data: { targetId: string }) => void;
+  onHitFeedback: (data: { targetId: string; isKill?: boolean }) => void;
   onShotEvent: (shot: ShotEventPayload) => void;
   onLobbyState?: (payload: LobbyStatePayload) => void;
   onSubWeaponEvent?: (payload: SubWeaponEventPayload) => void;
   onSpecialEvent?: (payload: SpecialEventPayload) => void;
+  onSurfacePaint?: (updates: Array<{ id: string; paint: [number, number] }>) => void;
   onConnect?: () => void;
   onDisconnect: () => void;
   onConnectError: (err: Error) => void;
@@ -120,7 +121,7 @@ export class NetworkClient {
       this.callbacks.onGameOver(payload);
     });
 
-    this.socket.on(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, (data: { targetId: string }) => {
+    this.socket.on(PROTOCOL_EVENTS.S2C_HIT_FEEDBACK, (data: { targetId: string; isKill?: boolean }) => {
       this.callbacks.onHitFeedback(data);
     });
 
@@ -139,6 +140,13 @@ export class NetworkClient {
     this.socket.on(PROTOCOL_EVENTS.S2C_SPECIAL_EVENT, (payload: SpecialEventPayload) => {
       this.callbacks.onSpecialEvent?.(payload);
     });
+
+    this.socket.on(
+      PROTOCOL_EVENTS.S2C_SURFACE_PAINT,
+      (updates: Array<{ id: string; paint: [number, number] }>) => {
+        this.callbacks.onSurfacePaint?.(updates);
+      }
+    );
 
     this.socket.on(
       PROTOCOL_EVENTS.S2C_PONG,

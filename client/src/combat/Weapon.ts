@@ -39,13 +39,18 @@ interface VisualExplosion {
   targetScale: number;
 }
 
-/** One ink droplet in a pooled splash burst. */
-interface InkDroplet {
-  mesh: THREE.Mesh;
-  velocity: THREE.Vector3;
+/** Pooled droplet state for instanced splash rendering */
+interface DropletState {
+  active: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  scale: number;
   startTime: number;
   duration: number;
-  scale: number;
 }
 
 /**
@@ -74,10 +79,12 @@ export class VisualWeapon {
   private sharedRingGeo = new THREE.TorusGeometry(1, 0.08, 8, 32);
   private sharedDropletGeo = new THREE.SphereGeometry(1, 7, 6);
 
-  /** Pooled ink droplets shared by splashes, detonations and special bursts. */
-  private dropletPool: THREE.Mesh[] = [];
-  private activeDroplets: InkDroplet[] = [];
+  /** Pooled ink droplets rendered in a single draw call via InstancedMesh. */
+  private dropletInstancedMesh!: THREE.InstancedMesh;
   private readonly dropletPoolSize = 220;
+  private readonly dropletStates: DropletState[] = [];
+  private readonly dropletDummy = new THREE.Object3D();
+  private readonly dropletColor = new THREE.Color();
 
   // Scratch vectors for beam orientation; hoisted so firing allocates nothing.
   private readonly beamUp = new THREE.Vector3(0, 1, 0);
@@ -119,19 +126,30 @@ export class VisualWeapon {
       this.group.add(mesh);
     }
 
+    const dropletMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.95
+    });
+    this.dropletInstancedMesh = new THREE.InstancedMesh(this.sharedDropletGeo, dropletMat, this.dropletPoolSize);
+    this.dropletInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
     for (let i = 0; i < this.dropletPoolSize; i++) {
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        roughness: 0.18,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0.95
+      this.dropletInstancedMesh.setMatrixAt(i, zeroMat);
+      this.dropletStates.push({
+        active: false,
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        scale: 0,
+        startTime: 0,
+        duration: 0
       });
-      const mesh = new THREE.Mesh(this.sharedDropletGeo, mat);
-      mesh.visible = false;
-      this.dropletPool.push(mesh);
-      this.group.add(mesh);
     }
+    this.dropletInstancedMesh.instanceMatrix.needsUpdate = true;
+    this.group.add(this.dropletInstancedMesh);
   }
 
   // -------------------------------------------------------------------------
@@ -159,21 +177,28 @@ export class VisualWeapon {
 
     // Pellet weapons draw a fan of short streaks instead of one clean line.
     if (weaponType === 'scatter') {
-      for (let i = 0; i < 3; i++) {
-        const jitter = (i - 1) * 0.09;
+      const pelletOffsets = [
+        { x: -0.16, y: -0.09 },
+        { x: 0.16, y: -0.09 },
+        { x: 0, y: 0.15 },
+        { x: -0.2, y: 0.11 },
+        { x: 0.2, y: 0.11 },
+        { x: 0, y: -0.13 }
+      ];
+      for (const off of pelletOffsets) {
         this.spawnTracerLine(
           start,
           {
-            x: end.x + jitter * 4,
-            y: end.y + jitter * 2,
-            z: end.z + jitter * 4
+            x: end.x + off.x * 4.5,
+            y: end.y + off.y * 3.5,
+            z: end.z + off.x * 4.5
           },
           ink.core,
           110,
-          0.55
+          0.65
         );
       }
-      this.spawnImpactSplash(end, team, 1.4, 5);
+      this.spawnImpactSplash(end, team, 1.6, 6);
       return;
     }
 
@@ -488,30 +513,40 @@ export class VisualWeapon {
     const now = performance.now();
     let spawned = 0;
 
-    for (const mesh of this.dropletPool) {
-      if (spawned >= count) break;
-      if (mesh.visible) continue;
+    for (let i = 0; i < this.dropletPoolSize && spawned < count; i++) {
+      const drop = this.dropletStates[i]!;
+      if (drop.active) continue;
 
-      const mat = mesh.material as THREE.MeshStandardMaterial;
-      mat.color.setHex(spawned % 3 === 0 ? ink.gloss : ink.core);
-      mat.opacity = 0.95;
-
-      const size = scale * (0.06 + Math.random() * 0.08);
-      mesh.position.set(pos.x, Math.max(0.15, pos.y), pos.z);
-      mesh.scale.setScalar(size);
-      mesh.visible = true;
-
+      drop.active = true;
+      drop.x = pos.x;
+      drop.y = Math.max(0.15, pos.y);
+      drop.z = pos.z;
       const ang = Math.random() * Math.PI * 2;
       const up = 2.5 + Math.random() * 3.5;
       const out = speed * (0.4 + Math.random() * 0.8);
-      this.activeDroplets.push({
-        mesh,
-        velocity: new THREE.Vector3(Math.cos(ang) * out, up, Math.sin(ang) * out),
-        startTime: now,
-        duration: 480 + Math.random() * 320,
-        scale: size
-      });
+      drop.vx = Math.cos(ang) * out;
+      drop.vy = up;
+      drop.vz = Math.sin(ang) * out;
+      drop.startTime = now;
+      drop.duration = 480 + Math.random() * 320;
+      drop.scale = scale * (0.06 + Math.random() * 0.08);
+
+      this.dropletColor.setHex(spawned % 3 === 0 ? ink.gloss : ink.core);
+      this.dropletInstancedMesh.setColorAt(i, this.dropletColor);
+
+      this.dropletDummy.position.set(drop.x, drop.y, drop.z);
+      this.dropletDummy.scale.setScalar(drop.scale);
+      this.dropletDummy.updateMatrix();
+      this.dropletInstancedMesh.setMatrixAt(i, this.dropletDummy.matrix);
+
       spawned++;
+    }
+
+    if (spawned > 0) {
+      if (this.dropletInstancedMesh.instanceColor) {
+        this.dropletInstancedMesh.instanceColor.needsUpdate = true;
+      }
+      this.dropletInstancedMesh.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -748,31 +783,46 @@ export class VisualWeapon {
     }
 
     // 3b. Ink droplets
-    for (let i = this.activeDroplets.length - 1; i >= 0; i--) {
-      const drop = this.activeDroplets[i]!;
+    let anyDropletDirty = false;
+    for (let i = 0; i < this.dropletPoolSize; i++) {
+      const drop = this.dropletStates[i]!;
+      if (!drop.active) continue;
+
       const elapsed = now - drop.startTime;
       if (elapsed >= drop.duration) {
-        drop.mesh.visible = false;
-        this.activeDroplets.splice(i, 1);
+        drop.active = false;
+        this.dropletDummy.position.set(0, -100, 0);
+        this.dropletDummy.scale.set(0, 0, 0);
+        this.dropletDummy.updateMatrix();
+        this.dropletInstancedMesh.setMatrixAt(i, this.dropletDummy.matrix);
+        anyDropletDirty = true;
         continue;
       }
 
-      const step = dt;
-      drop.velocity.y -= 22 * step;
-      drop.mesh.position.x += drop.velocity.x * step;
-      drop.mesh.position.y += drop.velocity.y * step;
-      drop.mesh.position.z += drop.velocity.z * step;
+      drop.vy -= 22 * dt;
+      drop.x += drop.vx * dt;
+      drop.y += drop.vy * dt;
+      drop.z += drop.vz * dt;
 
-      if (drop.mesh.position.y <= 0.02) {
-        // Flatten into a wet pancake on landing and fade quickly.
-        drop.mesh.position.y = 0.02;
-        drop.velocity.set(0, 0, 0);
+      if (drop.y <= 0.02) {
+        drop.y = 0.02;
+        drop.vx = 0;
+        drop.vy = 0;
+        drop.vz = 0;
         const spread = drop.scale * 1.9;
-        drop.mesh.scale.set(spread, drop.scale * 0.25, spread);
+        this.dropletDummy.position.set(drop.x, drop.y, drop.z);
+        this.dropletDummy.scale.set(spread, drop.scale * 0.25, spread);
+      } else {
+        this.dropletDummy.position.set(drop.x, drop.y, drop.z);
+        this.dropletDummy.scale.setScalar(drop.scale);
       }
+      this.dropletDummy.updateMatrix();
+      this.dropletInstancedMesh.setMatrixAt(i, this.dropletDummy.matrix);
+      anyDropletDirty = true;
+    }
 
-      const fade = 1 - elapsed / drop.duration;
-      (drop.mesh.material as THREE.MeshStandardMaterial).opacity = Math.min(1, fade * 1.4);
+    if (anyDropletDirty) {
+      this.dropletInstancedMesh.instanceMatrix.needsUpdate = true;
     }
 
     // 4. Sub-weapons in flight
@@ -880,16 +930,12 @@ export class VisualWeapon {
       }
     }
     this.visualExplosions.length = 0;
-    for (const drop of this.activeDroplets) {
-      this.group.remove(drop.mesh);
-      (drop.mesh.material as THREE.Material).dispose();
+    if (this.dropletInstancedMesh) {
+      this.group.remove(this.dropletInstancedMesh);
+      (this.dropletInstancedMesh.material as THREE.Material).dispose();
+      this.dropletInstancedMesh.dispose();
     }
-    this.activeDroplets.length = 0;
-    for (const drop of this.dropletPool) {
-      this.group.remove(drop);
-      (drop.material as THREE.Material).dispose();
-    }
-    this.dropletPool.length = 0;
+    this.dropletStates.length = 0;
     this.sharedExplosionGeo.dispose();
     this.sharedRingGeo.dispose();
     this.sharedDropletGeo.dispose();

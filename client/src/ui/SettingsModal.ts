@@ -3,8 +3,9 @@ import { applyI18n, t } from '../i18n.js';
 export type QualityLevel = 'low' | 'medium' | 'high' | 'auto';
 
 export interface SettingsConfig {
-  mouseSensitivity: number; // 0.5 to 3.0, default 1.0
+  mouseSensitivity: number; // 0.2 to 3.0, default 1.0
   fov: number; // 60 to 100, default 75
+  masterVolume: number; // 0 to 1, default 1.0
   sfxVolume: number; // 0 to 1, default 0.8
   bgmVolume: number; // 0 to 1, default 0.6
   quality: QualityLevel; // default 'high'
@@ -13,6 +14,7 @@ export interface SettingsConfig {
 export interface SettingsCallbacks {
   onSensitivityChange: (val: number) => void;
   onFovChange: (val: number) => void;
+  onMasterVolumeChange: (val: number) => void;
   onSfxVolumeChange: (val: number) => void;
   onBgmVolumeChange: (val: number) => void;
   onQualityChange?: (val: QualityLevel) => void;
@@ -35,6 +37,8 @@ export class SettingsModal {
   private sensValEl: HTMLElement;
   private fovSlider: HTMLInputElement;
   private fovValEl: HTMLElement;
+  private masterSlider: HTMLInputElement;
+  private masterValEl: HTMLElement;
   private sfxSlider: HTMLInputElement;
   private sfxValEl: HTMLElement;
   private bgmSlider: HTMLInputElement;
@@ -84,6 +88,14 @@ export class SettingsModal {
 
             <div class="setting-group">
               <div class="setting-label-row">
+                <span data-i18n="settings.master">Master Volume</span>
+                <span id="val-master">${Math.round(this.config.masterVolume * 100)}%</span>
+              </div>
+              <input id="slider-master" type="range" min="0" max="1" step="0.05" value="${this.config.masterVolume}" />
+            </div>
+
+            <div class="setting-group">
+              <div class="setting-label-row">
                 <span data-i18n="settings.sfx">SFX Volume</span>
                 <span id="val-sfx">${Math.round(this.config.sfxVolume * 100)}%</span>
               </div>
@@ -107,6 +119,26 @@ export class SettingsModal {
                 <button class="quality-btn" data-quality="medium" data-i18n="settings.qMed">MED</button>
                 <button class="quality-btn" data-quality="high" data-i18n="settings.qHigh">HIGH</button>
                 <button class="quality-btn" data-quality="auto" data-i18n="settings.qAuto">AUTO</button>
+              </div>
+            </div>
+
+            <hr class="settings-divider" />
+
+            <div class="setting-group keybinds-group">
+              <div class="setting-label-row">
+                <span data-i18n="settings.keybinds">Keybind Controls</span>
+              </div>
+              <div class="keybinds-grid">
+                <div class="keybind-item"><span class="key-badge">W A S D</span><span class="key-desc" data-i18n="settings.kbMove">Move</span></div>
+                <div class="keybind-item"><span class="key-badge">Mouse</span><span class="key-desc" data-i18n="settings.kbAim">Aim / Look</span></div>
+                <div class="keybind-item"><span class="key-badge">L-Click</span><span class="key-desc" data-i18n="settings.kbShoot">Shoot / Swing / Roll</span></div>
+                <div class="keybind-item"><span class="key-badge">R-Click</span><span class="key-desc" data-i18n="settings.kbSub">Sub-Weapon (Bomb)</span></div>
+                <div class="keybind-item"><span class="key-badge">Space</span><span class="key-desc" data-i18n="settings.kbJump">Jump / Wall Climb</span></div>
+                <div class="keybind-item"><span class="key-badge">Shift</span><span class="key-desc" data-i18n="settings.kbSquid">Squid Form / Swim</span></div>
+                <div class="keybind-item"><span class="key-badge">Q / E</span><span class="key-desc" data-i18n="settings.kbSpecial">Special Weapon</span></div>
+                <div class="keybind-item"><span class="key-badge">Esc / O</span><span class="key-desc" data-i18n="settings.kbSettings">Settings</span></div>
+                <div class="keybind-item"><span class="key-badge">Tab</span><span class="key-desc" data-i18n="settings.kbScore">Scoreboard</span></div>
+                <div class="keybind-item"><span class="key-badge">M</span><span class="key-desc" data-i18n="settings.kbRadar">Toggle Radar</span></div>
               </div>
             </div>
 
@@ -148,6 +180,8 @@ export class SettingsModal {
     this.sensValEl = document.getElementById('val-sens') as HTMLElement;
     this.fovSlider = document.getElementById('slider-fov') as HTMLInputElement;
     this.fovValEl = document.getElementById('val-fov') as HTMLElement;
+    this.masterSlider = document.getElementById('slider-master') as HTMLInputElement;
+    this.masterValEl = document.getElementById('val-master') as HTMLElement;
     this.sfxSlider = document.getElementById('slider-sfx') as HTMLInputElement;
     this.sfxValEl = document.getElementById('val-sfx') as HTMLElement;
     this.bgmSlider = document.getElementById('slider-bgm') as HTMLInputElement;
@@ -168,6 +202,7 @@ export class SettingsModal {
     const defaultSettings: SettingsConfig = {
       mouseSensitivity: 1.0,
       fov: 75,
+      masterVolume: 1.0,
       sfxVolume: 0.8,
       bgmVolume: 0.6,
       quality: 'high'
@@ -201,10 +236,20 @@ export class SettingsModal {
     this.openBtn?.addEventListener('click', () => this.show());
     document.getElementById('btn-close-settings')?.addEventListener('click', () => this.hide());
 
-    // Key 'KeyO' opens settings
+    // Key 'KeyO' and 'Escape' toggle or close settings
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyO' && !e.repeat) {
         this.toggle();
+      } else if (e.code === 'Escape' && !e.repeat) {
+        if (this.isOpen()) {
+          this.hide();
+        } else {
+          // If in-game and pressed Esc, open settings
+          const gameCont = document.getElementById('game-container');
+          if (gameCont && !gameCont.classList.contains('hidden')) {
+            this.show();
+          }
+        }
       }
     });
 
@@ -221,6 +266,14 @@ export class SettingsModal {
       this.config.fov = val;
       this.fovValEl.textContent = `${val}°`;
       this.callbacks.onFovChange(val);
+      this.saveSettings();
+    });
+
+    this.masterSlider.addEventListener('input', () => {
+      const val = parseFloat(this.masterSlider.value);
+      this.config.masterVolume = val;
+      this.masterValEl.textContent = `${Math.round(val * 100)}%`;
+      this.callbacks.onMasterVolumeChange(val);
       this.saveSettings();
     });
 

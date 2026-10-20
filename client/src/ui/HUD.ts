@@ -7,6 +7,7 @@ import {
   WEAPON_CONFIGS,
   WeaponType
 } from '@ink/shared';
+import type { SpecialWeaponType } from '@ink/shared';
 import type { GameMode } from '@ink/shared';
 import { locName, t } from '../i18n.js';
 
@@ -54,15 +55,22 @@ export class HUD {
   // New Skills & Weapon HUD elements
   private hudWeaponIconEl: HTMLImageElement | null;
   private hudSubIconEl: HTMLImageElement | null;
+  private hudSpecialIconEl: HTMLImageElement | null;
   private hudWeaponNameEl: HTMLElement | null;
   private hudSubNameEl: HTMLElement | null;
   private hudSubCostEl: HTMLElement | null;
+  private inkSubMarkerEl: HTMLElement | null;
   private specialValueEl: HTMLElement | null;
   private specialBarFillEl: HTMLElement | null;
   private specialReadyBannerEl: HTMLElement | null;
   private chargeRingEl: HTMLElement | null;
   private killFeedEl: HTMLElement | null;
   private damageVignetteEl: HTMLElement | null;
+  private damageCompassEl: HTMLElement | null;
+  private damageRotorEl: HTMLElement | null;
+  private splatCalloutEl: HTMLElement | null;
+  private damageCompassTimer?: number;
+  private splatCalloutTimer?: number;
   private pinkSquidsEl: HTMLElement | null;
   private cyanSquidsEl: HTMLElement | null;
 
@@ -87,6 +95,9 @@ export class HUD {
     this.pinkSquidsEl = document.getElementById('team-squids-pink');
     this.cyanSquidsEl = document.getElementById('team-squids-cyan');
     this.damageVignetteEl = document.getElementById('damage-vignette');
+    this.damageCompassEl = document.getElementById('damage-compass');
+    this.damageRotorEl = this.damageCompassEl?.querySelector('.damage-rotor') ?? null;
+    this.splatCalloutEl = document.getElementById('splat-callout');
     this.killFeedEl = document.getElementById('kill-feed');
     this.timerEl = document.getElementById('match-timer');
     this.phaseEl = document.getElementById('match-phase-label');
@@ -103,9 +114,11 @@ export class HUD {
 
     this.hudWeaponIconEl = document.getElementById('hud-weapon-icon') as HTMLImageElement | null;
     this.hudSubIconEl = document.getElementById('hud-sub-icon') as HTMLImageElement | null;
+    this.hudSpecialIconEl = document.getElementById('hud-special-icon') as HTMLImageElement | null;
     this.hudWeaponNameEl = document.getElementById('hud-weapon-name');
     this.hudSubNameEl = document.getElementById('hud-sub-name');
     this.hudSubCostEl = document.getElementById('hud-sub-cost');
+    this.inkSubMarkerEl = document.getElementById('ink-sub-marker');
     this.specialValueEl = document.getElementById('special-value');
     this.specialBarFillEl = document.getElementById('special-bar-fill');
     this.specialReadyBannerEl = document.getElementById('special-ready-banner');
@@ -224,6 +237,16 @@ export class HUD {
       this.inkBarFillEl.style.width = `${Math.max(0, Math.min(100, ink))}%`;
       const color = team === Team.PINK ? '#ff007f' : '#00ffff';
       this.inkBarFillEl.style.background = color;
+      if (ink <= 20) {
+        this.inkBarFillEl.classList.add('low-ink');
+      } else {
+        this.inkBarFillEl.classList.remove('low-ink');
+      }
+      if (mode === PlayerMode.SUBMERGED && ink < 99) {
+        this.inkBarFillEl.classList.add('recharging');
+      } else {
+        this.inkBarFillEl.classList.remove('recharging');
+      }
     }
 
     if (this.modeTagEl) {
@@ -272,6 +295,44 @@ export class HUD {
     }, 180);
   }
 
+  /**
+   * Points a wedge at the attacker. `'ink'` draws a ring for enemy-ink damage
+   * when no shooter can be identified.
+   */
+  showIncomingDamage(direction: number | 'ink'): void {
+    const el = this.damageCompassEl;
+    const rotor = this.damageRotorEl;
+    if (!el || !rotor) return;
+    const ink = direction === 'ink';
+    el.classList.toggle('ink-burn', ink);
+    rotor.style.transform = ink ? '' : `rotate(${direction}rad)`;
+    el.classList.remove('hidden');
+    el.classList.remove('visible');
+    void el.offsetWidth;
+    el.classList.add('visible');
+    if (this.damageCompassTimer) window.clearTimeout(this.damageCompassTimer);
+    this.damageCompassTimer = window.setTimeout(() => {
+      el.classList.add('hidden');
+      el.classList.remove('visible');
+    }, 700);
+  }
+
+  /** Brief center callout after the local player scores a splat. */
+  showSplatCallout(): void {
+    const el = this.splatCalloutEl;
+    if (!el) return;
+    el.textContent = t('hud.splatCallout');
+    el.classList.remove('hidden');
+    el.classList.remove('pop');
+    void el.offsetWidth;
+    el.classList.add('pop');
+    if (this.splatCalloutTimer) window.clearTimeout(this.splatCalloutTimer);
+    this.splatCalloutTimer = window.setTimeout(() => {
+      el.classList.add('hidden');
+      el.classList.remove('pop');
+    }, 720);
+  }
+
   updateLoadoutAndSkills(
     weaponType: WeaponType,
     specialMeter: number,
@@ -283,22 +344,29 @@ export class HUD {
     const subConfig = SUB_WEAPON_CONFIGS[config.sub];
 
     const weaponThumbMap: Partial<Record<WeaponType, string>> = {
-      shooter: '/assets/weapons/shooter.svg',
-      roller: '/assets/weapons/roller.svg',
-      charger: '/assets/weapons/charger.svg',
-      slosher: '/assets/weapons/slosher.svg',
-      sprayer: '/assets/weapons/sprayer.svg',
-      cannon: '/assets/weapons/cannon.svg',
-      marksman: '/assets/weapons/marksman.svg',
-      scatter: '/assets/weapons/scatter.svg'
+      shooter: '/assets/weapons/splattershot.jpg',
+      roller: '/assets/weapons/splat_roller.jpg',
+      charger: '/assets/weapons/splat_charger.jpg',
+      slosher: '/assets/weapons/slosher.jpg',
+      sprayer: '/assets/weapons/sprayer.jpg',
+      cannon: '/assets/weapons/cannon.jpg',
+      marksman: '/assets/weapons/marksman.jpg',
+      scatter: '/assets/weapons/scatter.jpg'
     };
     const subThumbMap: Record<string, string> = {
       splat_bomb: '/assets/weapons/splat_bomb.jpg',
       curling_bomb: '/assets/weapons/curling_bomb.jpg',
-      burst_bomb: '/assets/weapons/splat_bomb.jpg',
-      ink_mine: '/assets/weapons/splat_bomb.jpg',
-      bounce_bomb: '/assets/weapons/curling_bomb.jpg',
-      ink_puddle: '/assets/weapons/splat_bomb.jpg'
+      burst_bomb: '/assets/weapons/burst_bomb.jpg',
+      ink_mine: '/assets/weapons/ink_mine.jpg',
+      bounce_bomb: '/assets/weapons/bounce_bomb.jpg',
+      ink_puddle: '/assets/weapons/ink_puddle.jpg'
+    };
+    const specialThumbMap: Record<SpecialWeaponType, string> = {
+      inkstrike: '/assets/weapons/inkstrike.jpg',
+      ink_storm: '/assets/weapons/ink_storm.jpg',
+      killer_wail: '/assets/weapons/killer_wail.jpg',
+      ink_nova: '/assets/weapons/ink_nova.jpg',
+      ink_barrier: '/assets/weapons/ink_barrier.jpg'
     };
 
     if (this.hudWeaponIconEl) {
@@ -311,6 +379,12 @@ export class HUD {
       const subSrc = subThumbMap[config.sub] || '/assets/weapons/splat_bomb.jpg';
       if (this.hudSubIconEl.getAttribute('src') !== subSrc) {
         this.hudSubIconEl.src = subSrc;
+      }
+    }
+    if (this.hudSpecialIconEl) {
+      const specialSrc = specialThumbMap[config.special] || specialThumbMap.inkstrike;
+      if (this.hudSpecialIconEl.getAttribute('src') !== specialSrc) {
+        this.hudSpecialIconEl.src = specialSrc;
       }
     }
 
@@ -326,6 +400,14 @@ export class HUD {
         this.hudSubCostEl.style.color = '#ff4444';
       } else {
         this.hudSubCostEl.style.color = '#aaffaa';
+      }
+    }
+    if (this.inkSubMarkerEl) {
+      this.inkSubMarkerEl.style.left = `${Math.min(100, Math.max(0, subConfig.inkCost))}%`;
+      if (currentInk >= subConfig.inkCost) {
+        this.inkSubMarkerEl.classList.add('ready');
+      } else {
+        this.inkSubMarkerEl.classList.remove('ready');
       }
     }
 

@@ -156,6 +156,48 @@ export class WeaponSimulation {
     this.awardSpecialMeter(player, meterGain);
   }
 
+  public paintVerticalSurfaceAt(
+    point: Vec3,
+    normal: Vec3,
+    team: Team,
+    amount: number
+  ): void {
+    const surfaces = this.paintGrid.getSurfacePaintSnapshots();
+    let bestSurfaceId: string | null = null;
+    let bestDistSq = Number.POSITIVE_INFINITY;
+
+    for (const s of surfaces) {
+      const dot = normal.x * s.normal.x + normal.y * s.normal.y + normal.z * s.normal.z;
+      if (dot < 0.2) continue;
+
+      const hx = s.size.x * 0.5 + 0.8;
+      const hy = s.size.y * 0.5 + 0.8;
+      const hz = s.size.z * 0.5 + 0.8;
+
+      if (
+        point.x >= s.position.x - hx &&
+        point.x <= s.position.x + hx &&
+        point.y >= s.position.y - hy &&
+        point.y <= s.position.y + hy &&
+        point.z >= s.position.z - hz &&
+        point.z <= s.position.z + hz
+      ) {
+        const dx = point.x - s.position.x;
+        const dy = point.y - s.position.y;
+        const dz = point.z - s.position.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq < bestDistSq) {
+          bestDistSq = distSq;
+          bestSurfaceId = s.id;
+        }
+      }
+    }
+
+    if (bestSurfaceId) {
+      this.paintGrid.paintSurface(bestSurfaceId, team, amount);
+    }
+  }
+
   processFire(
     shooter: PlayerState,
     allPlayers: PlayerState[],
@@ -395,6 +437,9 @@ export class WeaponSimulation {
       shooter.lastPaintV = paintEvt.v;
       shooter.lastPaintTime = now;
     } else {
+      if (hit.hit && !hit.hitPlayerId) {
+        this.paintVerticalSurfaceAt(hit.point, hit.normal, shooter.team, 0.15);
+      }
       shooter.lastPaintU = undefined;
       shooter.lastPaintV = undefined;
     }
@@ -505,6 +550,8 @@ export class WeaponSimulation {
         );
         result.paintEvents.push(paintEvt);
         this.awardSpecialForPaint(shooter, this.lastCreatedNewlyPainted);
+      } else {
+        this.paintVerticalSurfaceAt(hit.point, hit.normal, shooter.team, 0.08);
       }
     }
 
@@ -629,6 +676,9 @@ export class WeaponSimulation {
           impactPoint = rayHit.point;
           hitSomething = true;
           if (rayHit.hitPlayerId) directHitPlayerId = rayHit.hitPlayerId;
+          else if (!rayHit.isGround) {
+            this.paintVerticalSurfaceAt(rayHit.point, rayHit.normal, shooter.team, 0.35);
+          }
           break;
         }
       }
@@ -911,6 +961,8 @@ export class WeaponSimulation {
           );
           result.paintEvents.push(paintEvt);
           this.awardSpecialForPaint(shooter, this.lastCreatedNewlyPainted);
+        } else if (hit.hit && !hit.hitPlayerId) {
+          this.paintVerticalSurfaceAt(hit.point, hit.normal, shooter.team, 0.2);
         }
       }
 
@@ -1029,6 +1081,10 @@ export class WeaponSimulation {
     result.paintEvents.push(beamPaint);
     this.awardSpecialForPaint(shooter, this.lastCreatedNewlyPainted);
 
+    if (hit.hit && !hit.hitPlayerId && !hit.isGround) {
+      this.paintVerticalSurfaceAt(hit.point, hit.normal, shooter.team, 0.4);
+    }
+
     return result;
   }
 
@@ -1111,6 +1167,8 @@ export class WeaponSimulation {
           hitSomething = true;
           if (rayHit.hitPlayerId) {
             directHitPlayerId = rayHit.hitPlayerId;
+          } else if (!rayHit.isGround) {
+            this.paintVerticalSurfaceAt(rayHit.point, rayHit.normal, shooter.team, 0.3);
           }
           break;
         }
@@ -1460,15 +1518,16 @@ export class WeaponSimulation {
           }
         }
       } else if (sub.type === 'ink_mine' || sub.type === 'ink_puddle') {
-        // Deployables: ballistic drop, then arm on the ground.
+        // Deployables: ballistic drop, then arm on the ground / elevated platform.
         if (!sub.isGrounded) {
           sub.velocity.y += -20.0 * dt;
           sub.position.x += sub.velocity.x * dt;
           sub.position.y += sub.velocity.y * dt;
           sub.position.z += sub.velocity.z * dt;
 
-          if (sub.position.y <= 0) {
-            sub.position.y = 0;
+          const groundY = this.collisionWorld.getGroundHeightAt(sub.position.x, sub.position.z, sub.position.y);
+          if (sub.position.y <= groundY) {
+            sub.position.y = groundY;
             sub.isGrounded = true;
             sub.velocity.x = 0;
             sub.velocity.y = 0;
@@ -1539,7 +1598,7 @@ export class WeaponSimulation {
           }
         }
       } else if (sub.type === 'bounce_bomb') {
-        // Ricochet bomb: bounces off floor and arena walls until its hop budget runs out.
+        // Ricochet bomb: bounces off floor/platforms and arena walls until its hop budget runs out.
         sub.velocity.y += -20.0 * dt;
         const prevX = sub.position.x;
         const prevZ = sub.position.z;
@@ -1547,8 +1606,9 @@ export class WeaponSimulation {
         sub.position.y += sub.velocity.y * dt;
         sub.position.z += sub.velocity.z * dt;
 
-        if (sub.position.y <= 0) {
-          sub.position.y = 0;
+        const groundY = this.collisionWorld.getGroundHeightAt(sub.position.x, sub.position.z, sub.position.y);
+        if (sub.position.y <= groundY) {
+          sub.position.y = groundY;
           sub.velocity.y = -sub.velocity.y * 0.72;
           sub.bounces++;
           if (sub.bounces >= (config.hopCount ?? 3) || now >= sub.fuseEndsAt) {
@@ -1592,8 +1652,9 @@ export class WeaponSimulation {
         sub.position.y += sub.velocity.y * dt;
         sub.position.z += sub.velocity.z * dt;
 
-        if (sub.position.y <= 0) {
-          sub.position.y = 0;
+        const groundY = this.collisionWorld.getGroundHeightAt(sub.position.x, sub.position.z, sub.position.y);
+        if (sub.position.y <= groundY) {
+          sub.position.y = groundY;
           if (sub.type === 'burst_bomb') {
             exploded = true;
           } else {

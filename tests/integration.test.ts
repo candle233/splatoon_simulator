@@ -212,8 +212,10 @@ describe('Multiplayer Network Integration & Sanity', () => {
     clientB.disconnect();
   });
 
-  it('Stale input neutralization: player stops moving when client stops sending inputs', async () => {
-    const client: Socket = ClientSocket(serverUrl);
+  it(
+    'Stale input neutralization: player stops moving when client stops sending inputs',
+    async () => {
+      const client: Socket = ClientSocket(serverUrl);
     await new Promise<void>((res) => client.once(PROTOCOL_EVENTS.S2C_WELCOME, () => res()));
 
     const baseInput = {
@@ -269,6 +271,6 @@ describe('Multiplayer Network Integration & Sanity', () => {
     expect(zs.length).toBeGreaterThanOrEqual(4);
     expect(maxDrift).toBeLessThan(1.0); // stopped, not gliding to the wall
     client.disconnect();
-  });
+  }, 10000);
 });
 

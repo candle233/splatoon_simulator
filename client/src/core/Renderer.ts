@@ -44,9 +44,9 @@ export class GameRenderer {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.2;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0f1118);
@@ -60,29 +60,35 @@ export class GameRenderer {
     );
 
     // Lighting setup
-    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 0.75);
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222233, 1.0);
     this.scene.add(this.hemiLight);
 
-    this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.35);
+    this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.45);
     this.baseDirIntensity = this.dirLight.intensity;
-    this.dirLight.position.set(40, 65, 30);
+    this.dirLight.position.set(45, 80, 35);
     this.dirLight.castShadow = true;
     this.dirLight.shadow.mapSize.width = 2048;
     this.dirLight.shadow.mapSize.height = 2048;
     this.dirLight.shadow.camera.near = 1;
-    this.dirLight.shadow.camera.far = 200;
-    const d = 72;
+    this.dirLight.shadow.camera.far = 280;
+    // Expanded frustum to cover full 185m maps and multi-story structures without clipping
+    const d = 105;
     this.dirLight.shadow.camera.left = -d;
     this.dirLight.shadow.camera.right = d;
     this.dirLight.shadow.camera.top = d;
     this.dirLight.shadow.camera.bottom = -d;
-    this.dirLight.shadow.bias = -0.0005;
-    this.dirLight.shadow.normalBias = 0.02;
+    this.dirLight.shadow.bias = -0.0004;
+    this.dirLight.shadow.normalBias = 0.025;
     this.scene.add(this.dirLight);
 
-    const fillLight = new THREE.DirectionalLight(0x6688cc, 0.45);
-    fillLight.position.set(-30, 40, -40);
+    const fillLight = new THREE.DirectionalLight(0x789acc, 0.70);
+    fillLight.position.set(-30, 45, -40);
     this.scene.add(fillLight);
+
+    // High top-down skylight for vertical edge separation and depth perception
+    const topRimLight = new THREE.DirectionalLight(0xdfebff, 0.35);
+    topRimLight.position.set(0, 110, 0);
+    this.scene.add(topRimLight);
 
     window.addEventListener('resize', this.onResize);
   }
