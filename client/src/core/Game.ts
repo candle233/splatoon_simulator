@@ -640,7 +640,23 @@ export class Game {
       },
       getFrameStats: () => this.frameStats(),
       /** Live renderer counters (draw calls, triangles, programs). */
-      getRenderInfo: () => this.renderer.getRenderInfo()
+      getRenderInfo: () => this.renderer.getRenderInfo(),
+      /** Character detail-effect test hooks (automation + visual verification). */
+      detailFx: () => {
+        const lp = this.localPlayer;
+        if (!lp) return 'no-local-player';
+        return {
+          setHp: (hp: number) => {
+            lp.hp = hp;
+            lp.view.setDamageStains(hp / 100);
+          },
+          landing: () => lp.view.triggerLandingSplash(),
+          deathSplat: () => lp.view.triggerDeathSplat(),
+          specialPose: () => lp.view.triggerSpecialPose(),
+          setGroundInk: (ink: number) => lp.view.setGroundInk(ink),
+          gaze: () => lp.view.updateEyeGaze({ x: 5, y: 1, z: 5 })
+        };
+      }
     };
   }
 
