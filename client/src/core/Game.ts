@@ -985,6 +985,7 @@ export class Game {
           this.soundManager.playSpecialActivate();
           this.cameraController.addShake(0.3, 0.25);
           this.localPlayer.triggerShootRecoil('cannon', 0.35);
+          this.localPlayer.view.triggerSpecialPose();
         }
       }
 
@@ -1015,11 +1016,14 @@ export class Game {
         if (impact > 0.08 && this.localPlayer.mode !== PlayerMode.SUBMERGED) {
           this.cameraController.addLanding(impact);
           this.soundManager.playLand(impact);
+          this.localPlayer.view.triggerLandingSplash();
         }
         this.airborneMinVy = 0;
       } else if (this.localPlayer.grounded) {
         this.airborneMinVy = 0;
       }
+      this.localPlayer.view.setGroundInk(groundInk);
+      this.localPlayer.view.setDamageStains(this.localPlayer.hp / 100);
       this.localPlayer.updateVisuals(now / 1000);
 
       // Submerge / Surface / Swim / Burn Audio Triggers
@@ -1732,10 +1736,15 @@ export class Game {
       this.localPlayer.alive = false;
       this.localPlayer.mode = PlayerMode.DEAD;
       this.localPlayer.view.setMode(PlayerMode.DEAD);
+      this.localPlayer.view.triggerDeathSplat();
       this.respawnEndsAt = data.respawnAt;
       this.soundManager.playSplat();
       this.soundManager.playPlayerDefeat();
       this.cameraController.addShake(0.8, 0.45);
+    } else {
+      // Remote player died: trigger their death splat too
+      const remoteVictim = this.remotePlayers.get(data.victimId);
+      if (remoteVictim) remoteVictim.view.triggerDeathSplat();
     }
 
     if (isLocalKiller) {

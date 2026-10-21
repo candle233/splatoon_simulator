@@ -411,6 +411,8 @@ export class PlayerView {
   private shieldActive = false;
   private shieldHpFrac = 1;
   private dodgeTiltTimer = 0;
+  private dodgeTiltDir: 1 | -1 = 1;
+  private lastGroundInk: Team = Team.NEUTRAL;
 
   // Animation state
   private walkPhase = 0;
@@ -428,6 +430,40 @@ export class PlayerView {
   private nameplateTexture?: THREE.CanvasTexture;
   private playerName = '';
   private cosmeticsApplied = false;
+
+  // --- Character detail: ink stains, footstep ripples, swim trail, eye tracking ---
+  /** Dark ink patch meshes that appear as HP drops (progressive damage tint). */
+  private inkStainMeshes: THREE.Mesh[] = [];
+  private inkStainOpacity: number[] = [];
+  /** Ring meshes spawned at the feet while walking through ink. */
+  private footstepRipples: THREE.Mesh[] = [];
+  private footstepRippleLife: number[] = [];
+  private footstepTimer = 0;
+  /** Translucent small spheres trailing behind a fast swimmer. */
+  private swimTrailParticles: THREE.Mesh[] = [];
+  private swimTrailLife: number[] = [];
+  private swimTrailTimer = 0;
+  /** Enemy-ink tint overlay on boots (opacity lerps toward enemy colour). */
+  private enemyFootTint: THREE.MeshStandardMaterial | null = null;
+  private enemyFootTintLevel = 0;
+  /** Ink splash ring spawned on landing from a fall. */
+  private landingSplashMesh?: THREE.Mesh;
+  private landingSplashLife = 0;
+  /** Special-activation arm pose timer. */
+  private specialPoseTimer = 0;
+  /** Named eye meshes for enemy-direction gaze tracking. */
+  private eyeL?: THREE.Object3D;
+  private eyeR?: THREE.Object3D;
+  private eyeBaseYL = 0;
+  private eyeBaseYR = 0;
+  private eyeBaseZL = 0;
+  private eyeBaseZR = 0;
+  private gazeLerp = 0;
+  /** Death splat decal: flat expanding ring on the ground. */
+  private deathSplatMesh?: THREE.Mesh;
+  private deathSplatLife = 0;
+  /** Team colour of the enemy (for foot tinting). */
+  private enemyTeamColorHex = 0x00ffff;
 
   constructor(team: Team) {
     this.teamColorHex = team === Team.PINK ? 0xff007f : 0x00ffff;
@@ -481,6 +517,7 @@ export class PlayerView {
 
     this.buildSubmergedForm();
     this.buildGhost();
+    this.buildDetailEffects();
   }
 
   // ========================================================================
@@ -1541,8 +1578,6 @@ export class PlayerView {
     }
   }
 
-  private dodgeTiltDir: 1 | -1 = 1;
-
   /**
    * Triggers an arcade-style ink hit flash on the character model upon taking damage.
    */
@@ -1705,7 +1740,10 @@ export class PlayerView {
   updateLocomotion(dt: number, speed: number, isGrounded: boolean, pitch = 0): void {
     this.updateDrips(dt);
 
-    if (this.currentMode !== PlayerMode.HUMANOID) return;
+    if (this.currentMode !== PlayerMode.HUMANOID) {
+      this.updateDetailEffects(dt, speed, isGrounded, Team.NEUTRAL);
+      return;
+    }
 
     this.aimPitch = THREE.MathUtils.lerp(this.aimPitch, pitch, 0.25);
     this.torsoGroup.rotation.x = -this.aimPitch * 0.6;
@@ -1900,6 +1938,14 @@ export class PlayerView {
         this.submergedFlashMesh.visible = false;
       }
     }
+
+    // Character detail effects (footstep ripples, swim trail, foot tint, etc.)
+    this.updateDetailEffects(dt, speed, isGrounded, this.lastGroundInk);
+  }
+
+  /** Ink team at the player's feet, updated by Game.ts each tick for detail effects. */
+  setGroundInk(ink: Team): void {
+    this.lastGroundInk = ink;
   }
 
   private spawnDrip(): void {
@@ -2059,6 +2105,329 @@ export class PlayerView {
   /** Cosmetic indices currently applied (headgear / outfit / tank). */
   getCosmeticSelection(): CosmeticSelection {
     return { ...this.selection };
+  }
+
+  // ========================================================================
+  // 5. Character detail effects (ink stains, footstep ripples, swim trail, gaze)
+  // ========================================================================
+
+  private buildDetailEffects(): void {
+    const enemyHex = this.teamColorHex === 0xff007f ? 0x00ffff : 0xff007f;
+    this.enemyTeamColorHex = enemyHex;
+
+    // 1. Ink stain patches on the humanoid body (progressive damage tint).
+    // Small dark blobs at random body locations; opacity rises as HP drops.
+    const stainGeo = sph(0.09, 8, 6);
+    this.geometries.push(stainGeo);
+    const enemyInk = new THREE.Color(enemyHex);
+    for (let i = 0; i < 6; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: enemyInk,
+        roughness: 0.35,
+        metalness: 0.1,
+        transparent: true,
+        opacity: 0
+      });
+      this.materials.push(mat);
+      const mesh = new THREE.Mesh(stainGeo, mat);
+      // Scatter across the torso and legs
+      const angle = (i / 6) * Math.PI * 2;
+      const r = 0.12 + (i % 3) * 0.06;
+      mesh.position.set(Math.cos(angle) * r, 0.35 + (i % 4) * 0.18, Math.sin(angle) * r * 0.5);
+      mesh.scale.setScalar(0.8 + (i % 3) * 0.35);
+      mesh.visible = false;
+      this.inkStainMeshes.push(mesh);
+      this.inkStainOpacity.push(0);
+      this.humanoidGroup.add(mesh);
+    }
+
+    // 2. Footstep ink ripples (pooled rings spawned at the feet while walking)
+    const rippleGeo = ring(0.08, 0.22, 12);
+    this.geometries.push(rippleGeo);
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: this.teamColorHex,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      this.materials.push(mat);
+      const mesh = new THREE.Mesh(rippleGeo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      this.footstepRipples.push(mesh);
+      this.footstepRippleLife.push(0);
+      this.group.add(mesh);
+    }
+
+    // 3. Swim trail particles (pooled small spheres trailing a fast swimmer)
+    const trailGeo = sph(0.06, 6, 4);
+    this.geometries.push(trailGeo);
+    for (let i = 0; i < 8; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: this.teamColorHex,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      this.materials.push(mat);
+      const mesh = new THREE.Mesh(trailGeo, mat);
+      mesh.visible = false;
+      this.swimTrailParticles.push(mesh);
+      this.swimTrailLife.push(0);
+      this.group.add(mesh);
+    }
+
+    // 4. Enemy-ink boot tint overlay (thin shell around the boots)
+    this.enemyFootTint = new THREE.MeshStandardMaterial({
+      color: enemyHex,
+      roughness: 0.3,
+      metalness: 0.15,
+      transparent: true,
+      opacity: 0
+    });
+    this.materials.push(this.enemyFootTint);
+    for (const leg of [this.leftLeg, this.rightLeg]) {
+      const tintMesh = new THREE.Mesh(cyl(0.11, 0.1, 0.16, 8), this.enemyFootTint);
+      tintMesh.position.y = -0.48;
+      leg.add(tintMesh);
+    }
+
+    // 5. Landing splash ring
+    const splashGeo = ring(0.12, 0.48, 16);
+    this.geometries.push(splashGeo);
+    const splashMat = new THREE.MeshBasicMaterial({
+      color: this.teamColorHex,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    this.materials.push(splashMat);
+    this.landingSplashMesh = new THREE.Mesh(splashGeo, splashMat);
+    this.landingSplashMesh.rotation.x = -Math.PI / 2;
+    this.landingSplashMesh.position.y = 0.05;
+    this.landingSplashMesh.visible = false;
+    this.group.add(this.landingSplashMesh);
+
+    // 6. Death splat decal: flat expanding team-colour ring on the ground
+    const deathSplatGeo = ring(0.15, 0.7, 20);
+    this.geometries.push(deathSplatGeo);
+    const deathSplatMat = new THREE.MeshBasicMaterial({
+      color: enemyHex,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    this.materials.push(deathSplatMat);
+    this.deathSplatMesh = new THREE.Mesh(deathSplatGeo, deathSplatMat);
+    this.deathSplatMesh.rotation.x = -Math.PI / 2;
+    this.deathSplatMesh.position.y = 0.06;
+    this.deathSplatMesh.visible = false;
+    this.group.add(this.deathSplatMesh);
+
+    // 7. Cache eye references for gaze tracking (head-level eye meshes)
+    this.eyeL = this.headGroup.children.find((c) => c.name === 'eyeL');
+    this.eyeR = this.headGroup.children.find((c) => c.name === 'eyeR');
+  }
+
+  /**
+   * Called by Game.ts each tick with nearby enemy position (or null).
+   * Eyes subtly shift to track the nearest visible enemy.
+   */
+  setEyeTarget(enemyPos: Vec3 | null): void {
+    if (!enemyPos || !this.eyeL || !this.eyeR) {
+      this.gazeLerp = THREE.MathUtils.lerp(this.gazeLerp, 0, 0.08);
+    } else {
+      this.gazeLerp = THREE.MathUtils.lerp(this.gazeLerp, 1, 0.08);
+    }
+  }
+
+  /**
+   * Progressive ink stain coverage: called when HP changes.
+   * More stains appear as HP drops ( Splatoon-style damage visual).
+   */
+  setDamageStains(hpFrac: number): void {
+    const visibleCount = Math.floor((1 - Math.max(0, Math.min(1, hpFrac))) * this.inkStainMeshes.length);
+    for (let i = 0; i < this.inkStainMeshes.length; i++) {
+      const mesh = this.inkStainMeshes[i];
+      if (!mesh) continue;
+      const targetOpacity = i < visibleCount ? 0.55 + (i % 3) * 0.1 : 0;
+      const cur = this.inkStainOpacity[i] ?? 0;
+      const next = THREE.MathUtils.lerp(cur, targetOpacity, 0.06);
+      this.inkStainOpacity[i] = next;
+      (mesh.material as THREE.MeshStandardMaterial).opacity = next;
+      mesh.visible = next > 0.02;
+    }
+  }
+
+  /** Triggers a landing ink splash ring at the current ground position. */
+  triggerLandingSplash(): void {
+    if (!this.landingSplashMesh) return;
+    this.landingSplashMesh.position.set(
+      this.group.position.x,
+      0.05,
+      this.group.position.z
+    );
+    this.landingSplashMesh.visible = true;
+    this.landingSplashLife = 1;
+  }
+
+  /** Triggers the special-activation pose (brief arm raise). */
+  triggerSpecialPose(): void {
+    this.specialPoseTimer = 0.45;
+  }
+
+  /** Triggers the enhanced death splat decal on the ground. */
+  triggerDeathSplat(): void {
+    if (!this.deathSplatMesh) return;
+    this.deathSplatMesh.position.set(this.group.position.x, 0.06, this.group.position.z);
+    this.deathSplatMesh.visible = true;
+    this.deathSplatLife = 1;
+  }
+
+  private updateDetailEffects(dt: number, speed: number, isGrounded: boolean, groundInk: Team): void {
+    const now = performance.now() * 0.001;
+    const isOwnInk = groundInk === this.teamColorHex;
+    const isEnemyInk =
+      groundInk !== Team.NEUTRAL && groundInk !== this.teamColorHex;
+
+    // Footstep ink ripples while walking through any ink
+    if (isGrounded && speed > 1.5 && groundInk !== Team.NEUTRAL) {
+      this.footstepTimer -= dt;
+      if (this.footstepTimer <= 0) {
+        this.footstepTimer = 0.32;
+        for (let i = 0; i < this.footstepRipples.length; i++) {
+          const mesh = this.footstepRipples[i];
+          if (!mesh || mesh.visible) continue;
+          const jitterX = (Math.random() - 0.5) * 0.3;
+          const jitterZ = (Math.random() - 0.5) * 0.3;
+          mesh.position.set(
+            this.group.position.x + jitterX,
+            0.04,
+            this.group.position.z + jitterZ
+          );
+          const inkColor = isEnemyInk ? this.enemyTeamColorHex : this.teamColorHex;
+          (mesh.material as THREE.MeshBasicMaterial).color.setHex(inkColor);
+          mesh.visible = true;
+          this.footstepRippleLife[i] = 1;
+          break;
+        }
+      }
+    }
+
+    // Animate footstep ripples (expand + fade)
+    for (let i = 0; i < this.footstepRipples.length; i++) {
+      const mesh = this.footstepRipples[i];
+      if (!mesh || !mesh.visible) continue;
+      const life = (this.footstepRippleLife[i] ?? 0) - dt * 2.2;
+      this.footstepRippleLife[i] = life;
+      if (life <= 0) {
+        mesh.visible = false;
+        continue;
+      }
+      const scale = 1 + (1 - life) * 1.6;
+      mesh.scale.setScalar(scale);
+      (mesh.material as THREE.MeshBasicMaterial).opacity = life * 0.45;
+    }
+
+    // Swim trail particles (squid form, speed > 3)
+    if (this.currentMode === PlayerMode.SUBMERGED && speed > 3) {
+      this.swimTrailTimer -= dt;
+      if (this.swimTrailTimer <= 0) {
+        this.swimTrailTimer = 0.06;
+        for (let i = 0; i < this.swimTrailParticles.length; i++) {
+          const mesh = this.swimTrailParticles[i];
+          if (!mesh || mesh.visible) continue;
+          mesh.position.set(
+            this.group.position.x + (Math.random() - 0.5) * 0.4,
+            0.15 + Math.random() * 0.2,
+            this.group.position.z + (Math.random() - 0.5) * 0.4
+          );
+          mesh.visible = true;
+          this.swimTrailLife[i] = 1;
+          break;
+        }
+      }
+    }
+
+    // Animate swim trail particles (shrink + fade)
+    for (let i = 0; i < this.swimTrailParticles.length; i++) {
+      const mesh = this.swimTrailParticles[i];
+      if (!mesh || !mesh.visible) continue;
+      const life = (this.swimTrailLife[i] ?? 0) - dt * 2.5;
+      this.swimTrailLife[i] = life;
+      if (life <= 0) {
+        mesh.visible = false;
+        continue;
+      }
+      mesh.scale.setScalar(life * 0.8);
+      (mesh.material as THREE.MeshBasicMaterial).opacity = life * 0.5;
+    }
+
+    // Enemy ink boot tinting
+    if (this.enemyFootTint) {
+      const target = isEnemyInk && isGrounded ? 0.35 : 0;
+      this.enemyFootTintLevel = THREE.MathUtils.lerp(this.enemyFootTintLevel, target, 0.05);
+      this.enemyFootTint.opacity = this.enemyFootTintLevel;
+    }
+
+    // Landing splash animation
+    if (this.landingSplashLife > 0) {
+      this.landingSplashLife -= dt * 3;
+      if (this.landingSplashLife <= 0) {
+        if (this.landingSplashMesh) this.landingSplashMesh.visible = false;
+      } else if (this.landingSplashMesh) {
+        const scale = 1 + (1 - this.landingSplashLife) * 2.2;
+        this.landingSplashMesh.scale.setScalar(scale);
+        (this.landingSplashMesh.material as THREE.MeshBasicMaterial).opacity = this.landingSplashLife * 0.5;
+      }
+    }
+
+    // Death splat animation
+    if (this.deathSplatLife > 0) {
+      this.deathSplatLife -= dt * 1.2;
+      if (this.deathSplatLife <= 0) {
+        if (this.deathSplatMesh) this.deathSplatMesh.visible = false;
+      } else if (this.deathSplatMesh) {
+        const scale = 0.4 + (1 - this.deathSplatLife) * 2.8;
+        this.deathSplatMesh.scale.setScalar(scale);
+        (this.deathSplatMesh.material as THREE.MeshBasicMaterial).opacity = this.deathSplatLife * 0.55;
+      }
+    }
+
+    // Special activation pose: arms raise for a moment
+    if (this.specialPoseTimer > 0) {
+      this.specialPoseTimer = Math.max(0, this.specialPoseTimer - dt);
+      const progress = this.specialPoseTimer / 0.45;
+      const raise = Math.sin(progress * Math.PI) * 0.9;
+      const ra = this.rightArm;
+      const la = this.leftArm;
+      if (ra) ra.rotation.x = Math.min(ra.rotation.x, -raise - 0.4);
+      if (la) la.rotation.x = Math.min(la.rotation.x, -raise - 0.3);
+    }
+
+    // Eye gaze tracking: subtle lateral shift toward the gaze target
+    const eyeL = this.eyeL;
+    const eyeR = this.eyeR;
+    if (eyeL && eyeR) {
+      const gaze = this.gazeLerp * 0.06;
+      eyeL.position.x = (this.eyeBaseYL ?? 0) - gaze;
+      eyeR.position.x = (this.eyeBaseYR ?? 0) - gaze;
+    }
+
+    void now;
+  }
+
+  /** Eye-tracking hook called from Game.ts with the nearest enemy world position. */
+  updateEyeGaze(enemyPos: Vec3 | null): void {
+    if (!enemyPos || !this.eyeL || !this.eyeR) {
+      this.gazeLerp = THREE.MathUtils.lerp(this.gazeLerp, 0, 0.08);
+      return;
+    }
+    this.gazeLerp = THREE.MathUtils.lerp(this.gazeLerp, 1, 0.08);
   }
 
   dispose(): void {
