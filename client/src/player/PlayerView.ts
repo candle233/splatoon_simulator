@@ -2116,32 +2116,54 @@ export class PlayerView {
     this.enemyTeamColorHex = enemyHex;
 
     // 1. Ink stain patches on the humanoid body (progressive damage tint).
-    // Small dark blobs at random body locations; opacity rises as HP drops.
-    const stainGeo = sph(0.09, 8, 6);
+    //
+    // The stains must sit ON the torso surface, not inside it: the torso shell
+    // is a cylinder of radius 0.30-0.34, so a stain centred at radius 0.12-0.24
+    // (the original bug) was fully buried inside the body mesh and never drew a
+    // single pixel. Each patch is a flattened sphere whose local Z axis is
+    // rotated to point radially outward, so it reads as a splotch wrapped
+    // around the surface rather than a floating ball.
+    const stainGeo = sph(0.11, 10, 8);
     this.geometries.push(stainGeo);
     const enemyInk = new THREE.Color(enemyHex);
-    for (let i = 0; i < 6; i++) {
+    const stainSpecs = [
+      { angle: Math.PI * 0.5, y: 0.74, r: 0.34, s: 1.35 },
+      { angle: Math.PI * 0.92, y: 0.56, r: 0.35, s: 1.05 },
+      { angle: Math.PI * 1.26, y: 0.4, r: 0.34, s: 0.92 },
+      { angle: Math.PI * 1.68, y: 0.64, r: 0.35, s: 1.18 },
+      { angle: Math.PI * 0.14, y: 0.48, r: 0.35, s: 0.88 },
+      { angle: Math.PI * 2.08, y: 0.78, r: 0.33, s: 0.98 },
+      { angle: Math.PI * 0.62, y: 0.27, r: 0.32, s: 0.82 },
+      { angle: Math.PI * 1.44, y: 0.3, r: 0.33, s: 0.78 }
+    ];
+    for (let i = 0; i < stainSpecs.length; i++) {
+      const spec = stainSpecs[i]!;
       const mat = new THREE.MeshStandardMaterial({
         color: enemyInk,
-        roughness: 0.35,
-        metalness: 0.1,
+        roughness: 0.32,
+        metalness: 0.08,
         transparent: true,
-        opacity: 0
+        opacity: 0,
+        depthWrite: false
       });
       this.materials.push(mat);
       const mesh = new THREE.Mesh(stainGeo, mat);
-      // Scatter across the torso and legs
-      const angle = (i / 6) * Math.PI * 2;
-      const r = 0.12 + (i % 3) * 0.06;
-      mesh.position.set(Math.cos(angle) * r, 0.35 + (i % 4) * 0.18, Math.sin(angle) * r * 0.5);
-      mesh.scale.setScalar(0.8 + (i % 3) * 0.35);
+      mesh.position.set(Math.cos(spec.angle) * spec.r, spec.y, Math.sin(spec.angle) * spec.r);
+      // Point the flattened local Z axis radially outward.
+      mesh.rotation.y = Math.PI / 2 - spec.angle;
+      // Flatten against the body so it reads as a splotch, not a bump.
+      mesh.scale.set(spec.s, spec.s * 0.85, spec.s * 0.34);
       mesh.visible = false;
+      mesh.renderOrder = 2;
       this.inkStainMeshes.push(mesh);
       this.inkStainOpacity.push(0);
       this.humanoidGroup.add(mesh);
     }
 
     // 2. Footstep ink ripples (pooled rings spawned at the feet while walking)
+    //    Ground effects live in WORLD space: a footprint must stay where it was
+    //    laid while the player keeps running. They are re-parented to the scene
+    //    on first spawn (see attachToWorld) and positioned in world coordinates.
     const rippleGeo = ring(0.08, 0.22, 12);
     this.geometries.push(rippleGeo);
     for (let i = 0; i < 4; i++) {
@@ -2179,18 +2201,24 @@ export class PlayerView {
       this.group.add(mesh);
     }
 
-    // 4. Enemy-ink boot tint overlay (thin shell around the boots)
+    // 4. Enemy-ink boot tint overlay. A box shell slightly larger than the boot
+    //    itself (0.16 x 0.12 x 0.25 at y=-0.49): a radius-0.11 cylinder would
+    //    have been swallowed by the 0.25-deep boot box and never shown.
     this.enemyFootTint = new THREE.MeshStandardMaterial({
       color: enemyHex,
       roughness: 0.3,
       metalness: 0.15,
       transparent: true,
-      opacity: 0
+      opacity: 0,
+      depthWrite: false
     });
     this.materials.push(this.enemyFootTint);
+    const bootShellGeo = box(0.172, 0.132, 0.262);
+    this.geometries.push(bootShellGeo);
     for (const leg of [this.leftLeg, this.rightLeg]) {
-      const tintMesh = new THREE.Mesh(cyl(0.11, 0.1, 0.16, 8), this.enemyFootTint);
-      tintMesh.position.y = -0.48;
+      const tintMesh = new THREE.Mesh(bootShellGeo, this.enemyFootTint);
+      tintMesh.position.set(0, -0.49, -0.05);
+      tintMesh.renderOrder = 2;
       leg.add(tintMesh);
     }
 
@@ -2234,6 +2262,28 @@ export class PlayerView {
   }
 
   /**
+   * Re-parents a ground-effect mesh to the scene root so it keeps its world
+   * position while the player runs on. Without this the mesh inherits
+   * `this.group`'s transform and a world-space position would be applied on
+   * top of the group offset — the effect then appeared at double the player
+   * coordinates, far away from the character.
+   */
+  private attachToWorld(mesh: THREE.Object3D): void {
+    const scene = this.group.parent;
+    if (scene && mesh.parent !== scene) {
+      scene.add(mesh);
+    }
+  }
+
+  /** Every ground-effect mesh currently detached from the character group. */
+  private detachGroundEffects(): void {
+    for (const mesh of this.footstepRipples) mesh.removeFromParent();
+    for (const mesh of this.swimTrailParticles) mesh.removeFromParent();
+    this.landingSplashMesh?.removeFromParent();
+    this.deathSplatMesh?.removeFromParent();
+  }
+
+  /**
    * Called by Game.ts each tick with nearby enemy position (or null).
    * Eyes subtly shift to track the nearest visible enemy.
    */
@@ -2266,6 +2316,8 @@ export class PlayerView {
   /** Triggers a landing ink splash ring at the current ground position. */
   triggerLandingSplash(): void {
     if (!this.landingSplashMesh) return;
+    this.attachToWorld(this.landingSplashMesh);
+    // World coordinates: the mesh now lives in the scene, not under this.group.
     this.landingSplashMesh.position.set(
       this.group.position.x,
       0.05,
@@ -2283,14 +2335,13 @@ export class PlayerView {
   /** Triggers the enhanced death splat decal on the ground. */
   triggerDeathSplat(): void {
     if (!this.deathSplatMesh) return;
+    this.attachToWorld(this.deathSplatMesh);
     this.deathSplatMesh.position.set(this.group.position.x, 0.06, this.group.position.z);
     this.deathSplatMesh.visible = true;
     this.deathSplatLife = 1;
   }
 
   private updateDetailEffects(dt: number, speed: number, isGrounded: boolean, groundInk: Team): void {
-    const now = performance.now() * 0.001;
-    const isOwnInk = groundInk === this.teamColorHex;
     const isEnemyInk =
       groundInk !== Team.NEUTRAL && groundInk !== this.teamColorHex;
 
@@ -2302,6 +2353,7 @@ export class PlayerView {
         for (let i = 0; i < this.footstepRipples.length; i++) {
           const mesh = this.footstepRipples[i];
           if (!mesh || mesh.visible) continue;
+          this.attachToWorld(mesh);
           const jitterX = (Math.random() - 0.5) * 0.3;
           const jitterZ = (Math.random() - 0.5) * 0.3;
           mesh.position.set(
@@ -2341,6 +2393,7 @@ export class PlayerView {
         for (let i = 0; i < this.swimTrailParticles.length; i++) {
           const mesh = this.swimTrailParticles[i];
           if (!mesh || mesh.visible) continue;
+          this.attachToWorld(mesh);
           mesh.position.set(
             this.group.position.x + (Math.random() - 0.5) * 0.4,
             0.15 + Math.random() * 0.2,
@@ -2417,8 +2470,6 @@ export class PlayerView {
       eyeL.position.x = (this.eyeBaseYL ?? 0) - gaze;
       eyeR.position.x = (this.eyeBaseYR ?? 0) - gaze;
     }
-
-    void now;
   }
 
   /** Eye-tracking hook called from Game.ts with the nearest enemy world position. */
@@ -2433,6 +2484,10 @@ export class PlayerView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+
+    // Ground effects were re-parented to the scene; drop them explicitly so
+    // they do not outlive the character when a remote player leaves.
+    this.detachGroundEffects();
 
     this.releaseMerged();
     for (const geo of this.geometries) {
