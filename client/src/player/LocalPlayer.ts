@@ -21,7 +21,6 @@ import {
 } from '@ink/shared';
 import { ClientCollisionWorld } from '../world/CollisionWorld.js';
 import { PlayerView } from './PlayerView.js';
-import { PINK_COLOR, CYAN_COLOR } from './CharacterModels.js';
 import * as THREE from 'three';
 
 /**
