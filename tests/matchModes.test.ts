@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MatchPhase, Team } from '@ink/shared';
+import {
+  MATCH_DURATION,
+  MatchPhase,
+  OVERTIME_MAX_SEC,
+  OVERTIME_TRIGGER_PT,
+  Team
+} from '@ink/shared';
 import { PaintGrid } from '../server/src/PaintGrid.js';
 import { Match } from '../server/src/Match.js';
 
@@ -84,5 +90,110 @@ describe('match modes scoring (模式计分)', () => {
     expect(update.phaseChanged).toBe(true);
     expect(match.phase).toBe(MatchPhase.WAITING);
     expect(match.getZonePoints().pink).toBe(0);
+  });
+});
+
+describe('turf war overtime (涂地战延长赛)', () => {
+  /** Fresh turf_war match; regulation expires at `endAt` (started at t=1000). */
+  function makeTurfMatch(): { grid: PaintGrid; match: Match; endAt: number } {
+    const grid = new PaintGrid(64);
+    const match = new Match(grid);
+    match.setConfig('turf_war');
+    match.startCountdown(0);
+    match.startPlaying(1000);
+    return { grid, match, endAt: 1000 + MATCH_DURATION * 1000 };
+  }
+
+  function coverageGap(grid: PaintGrid): number {
+    const score = grid.getScore();
+    return Math.abs(score.pinkPercentage - score.cyanPercentage);
+  }
+
+  it('regulation expiry with a tight race extends into overtime exactly once', () => {
+    const { grid, match, endAt } = makeTurfMatch();
+    // Mirror-symmetric blobs (same radius/seed at u=0.25 / u=0.75) keep the
+    // race statistically dead even — deterministic, no statistical slack.
+    grid.applyPaintEvent({ id: 1, team: Team.PINK, u: 0.25, v: 0.5, radius: 0.2, seed: 7 });
+    grid.applyPaintEvent({ id: 2, team: Team.CYAN, u: 0.75, v: 0.5, radius: 0.2, seed: 7 });
+    expect(coverageGap(grid)).toBeLessThanOrEqual(OVERTIME_TRIGGER_PT);
+
+    const update = match.update(2, endAt);
+    expect(update.phaseChanged).toBe(false);
+    expect(update.gameOverPayload).toBeUndefined();
+    expect(match.phase).toBe(MatchPhase.PLAYING);
+    expect(match.matchEndAt).toBe(endAt + OVERTIME_MAX_SEC * 1000);
+    expect(match.getSnapshot(endAt).overtime).toBe(true);
+  });
+
+  it('a clear coverage lead at expiry ends the match without overtime', () => {
+    const { grid, match, endAt } = makeTurfMatch();
+    grid.applyPaintEvent({ id: 1, team: Team.PINK, u: 0.5, v: 0.5, radius: 0.3, seed: 7 });
+    expect(coverageGap(grid)).toBeGreaterThanOrEqual(5);
+
+    const update = match.update(2, endAt);
+    expect(update.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.GAME_OVER);
+    expect(update.gameOverPayload?.winner).toBe(Team.PINK);
+    expect(update.gameOverPayload?.pinkCoverage).toBeGreaterThan(update.gameOverPayload?.cyanCoverage ?? 0);
+    expect(match.getSnapshot(endAt).overtime).toBe(false);
+  });
+
+  it('overtime settles immediately once the coverage gap breaks open', () => {
+    const { grid, match, endAt } = makeTurfMatch();
+    grid.applyPaintEvent({ id: 1, team: Team.PINK, u: 0.25, v: 0.5, radius: 0.2, seed: 7 });
+    grid.applyPaintEvent({ id: 2, team: Team.CYAN, u: 0.75, v: 0.5, radius: 0.2, seed: 7 });
+    expect(match.update(2, endAt).phaseChanged).toBe(false); // overtime running
+
+    // Pink pulls clearly ahead during the extension.
+    grid.applyPaintEvent({ id: 3, team: Team.PINK, u: 0.1, v: 0.1, radius: 0.15, seed: 9 });
+    expect(coverageGap(grid)).toBeGreaterThan(OVERTIME_TRIGGER_PT);
+
+    const update = match.update(2, endAt + 1000);
+    expect(update.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.GAME_OVER);
+    expect(update.gameOverPayload?.winner).toBe(Team.PINK);
+  });
+
+  it('overtime exhausts without a second extension', () => {
+    const { grid, match, endAt } = makeTurfMatch();
+    grid.applyPaintEvent({ id: 1, team: Team.PINK, u: 0.25, v: 0.5, radius: 0.2, seed: 7 });
+    grid.applyPaintEvent({ id: 2, team: Team.CYAN, u: 0.75, v: 0.5, radius: 0.2, seed: 7 });
+    match.update(2, endAt); // enters overtime
+    const extendedEnd = endAt + OVERTIME_MAX_SEC * 1000;
+
+    const update = match.update(2, extendedEnd);
+    expect(update.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.GAME_OVER);
+    expect(update.gameOverPayload).toBeDefined();
+    // The clock was extended once, and never again.
+    expect(match.matchEndAt).toBe(extendedEnd);
+  });
+
+  it('only turf_war can extend: splat_zones still ends at regulation expiry', () => {
+    const grid = new PaintGrid(64);
+    const match = new Match(grid);
+    match.setConfig('splat_zones');
+    match.startCountdown(0);
+    match.startPlaying(1000);
+    const endAt = 1000 + MATCH_DURATION * 1000;
+
+    const update = match.update(2, endAt);
+    expect(update.phaseChanged).toBe(true);
+    expect(match.phase).toBe(MatchPhase.GAME_OVER);
+    expect(match.matchEndAt).toBe(endAt); // untouched
+    expect(match.getSnapshot(endAt).overtime).toBe(false);
+  });
+
+  it('starting the next match clears the overtime flag', () => {
+    const { grid, match, endAt } = makeTurfMatch();
+    grid.applyPaintEvent({ id: 1, team: Team.PINK, u: 0.25, v: 0.5, radius: 0.2, seed: 7 });
+    grid.applyPaintEvent({ id: 2, team: Team.CYAN, u: 0.75, v: 0.5, radius: 0.2, seed: 7 });
+    match.update(2, endAt);
+    expect(match.getSnapshot(endAt).overtime).toBe(true);
+
+    match.startCountdown(5000);
+    expect(match.getSnapshot(5000).overtime).toBe(false);
+    match.startPlaying(6000);
+    expect(match.getSnapshot(6000).overtime).toBe(false);
   });
 });

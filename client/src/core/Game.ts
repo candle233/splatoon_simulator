@@ -57,7 +57,8 @@ import { PaintEngine } from '../world/PaintEngine.js';
 import { Clock } from './Clock.js';
 import { InputManager } from './InputManager.js';
 import { GameRenderer } from './Renderer.js';
-import { SoundManager } from './SoundManager.js';
+import { SoundManager, panGainFor } from './SoundManager.js';
+import type { SfxStereoPos } from './SoundManager.js';
 import { locName, t } from '../i18n.js';
 
 /** Small deterministic hash so cosmetics stay stable per player id. */
@@ -112,6 +113,10 @@ export class Game {
   private matchEndAt = 0;
   private pinkScore = 0;
   private cyanScore = 0;
+  /** Turf War overtime flag from the latest snapshot (missing = false). */
+  private matchOvertime = false;
+  /** Last time (ms) remote feet were sampled for ground ink (~10 Hz budget). */
+  private lastRemoteInkSampleAt = 0;
   private totalPaintEventsReceived = 0;
   private expectedTotalPaintEvents = 0;
 
@@ -121,7 +126,12 @@ export class Game {
   private weaponSelectEndsAt = 0;
   private lastLocalShotTime = 0;
   private lastDebugUpdateTime = 0;
-  private lastRemoteShotSoundAt = 0;
+  /**
+   * Last time (ms) each "bearing sector × weapon class" remote-shot sound key
+   * fired. Sector keys are bounded (8 bearings × weapon roster), so the map
+   * can never grow unbounded even in 8-player chaos.
+   */
+  private remoteShotSoundAt = new Map<string, number>();
   private wasChargeFull = false;
   private lastSpecialMeter = 0;
   private lastInkReloadSoundTime = 0;
@@ -740,6 +750,7 @@ export class Game {
         const tapDir = this.inputManager.consumeDodgeDirection();
         const rightness = dirX * cosYaw - dirZ * sinYaw;
         this.localPlayer.view.setDodging(true, tapDir !== 0 ? tapDir : rightness >= 0 ? 1 : -1);
+        this.soundManager.playDualieDodge();
       }
 
       const isMoving = (input.moveX !== 0 || input.moveZ !== 0) && this.localPlayer.grounded;
@@ -823,6 +834,17 @@ export class Game {
             this.cameraController.addShake(0.12, 0.12);
             this.cameraController.addRecoil(0.025);
             this.localPlayer.triggerShootRecoil('slosher', 0.24);
+          } else if (weaponType === 'brella') {
+            this.soundManager.playBrellaShot();
+            this.cameraController.addShake(0.1, 0.1);
+            this.cameraController.addRecoil(0.02);
+            this.localPlayer.triggerShootRecoil('brella', 0.2);
+          } else if (weaponType === 'dualies') {
+            const dualieSide: -1 | 1 = (this.inputSeq & 1) === 0 ? -1 : 1;
+            this.soundManager.playDualiesShot(dualieSide);
+            this.cameraController.addShake(0.05, 0.06);
+            this.cameraController.addRecoil(0.012);
+            this.localPlayer.triggerShootRecoil('dualies', 0.1);
           } else {
             this.soundManager.playShoot();
             this.cameraController.addShake(0.08, 0.08);
@@ -1142,6 +1164,9 @@ export class Game {
         remote.update(state, now / 1000);
       }
     }
+    // Ground ink under every remote's feet drives footstep ripples / wading
+    // effects through the same PlayerView pipeline as the local player.
+    this.sampleRemoteGroundInk(now);
 
     // 3. Visual Weapons & Particles Update
     this.weaponVisual.update(dt);
@@ -1172,7 +1197,14 @@ export class Game {
       }
     }
 
-    this.hud.updateMatch(this.matchPhase, remainingMatchSec, this.pinkScore, this.cyanScore, this.matchMode);
+    this.hud.updateMatch(
+      this.matchPhase,
+      remainingMatchSec,
+      this.pinkScore,
+      this.cyanScore,
+      this.matchMode,
+      this.matchOvertime
+    );
 
     if (this.matchPhase === MatchPhase.GAME_OVER && this.gameOverEndsAt > 0) {
       const nextMatchSec = Math.max(0, (this.gameOverEndsAt - Date.now()) / 1000);
@@ -1250,6 +1282,9 @@ export class Game {
           remote.view.setTransform(bot.position, bot.yaw, bot.pitch);
           remote.view.updateLocomotion(dt, bot.alive ? 5.0 : 0, true, bot.pitch);
           remote.view.updateVisuals(false, now / 1000, bot.ink);
+          // Damage stains for practice bots: same per-frame feed as the local
+          // player, so bot-room opponents read as wounded just like remotes.
+          remote.view.setDamageStains(bot.hp / 100);
         }
         if (bot.alive && bot.mode === PlayerMode.SUBMERGED) {
           this.particleSystem.spawnSwimWake(bot.position, bot.team, bot.velocity);
@@ -1359,6 +1394,10 @@ export class Game {
       spawn,
       this.collisionWorld
     );
+    this.localPlayer.onShieldCue = (kind) => {
+      if (kind === 'deploy') this.soundManager.playBrellaShield();
+      else this.soundManager.playBrellaBreak();
+    };
     // Restore the persisted weapon choice (fixes weapon reset on refresh)
     this.setLocalWeapon(this.lobbyScreen.selectedWeapon);
     this.localPlayer.view.applyCosmeticVariant(hashId(payload.playerId));
@@ -1457,6 +1496,23 @@ export class Game {
     this.totalPaintEventsReceived += events.length;
   }
 
+  /**
+   * Camera-relative stereo placement + bearing sector (0..7, threatAngle
+   * convention: 0 = straight ahead, positive = right) for a world-space sound.
+   * Returns null beyond SFX_MAX_DISTANCE — the source is fully muted.
+   */
+  private soundPanAt(x: number, z: number): { pos: SfxStereoPos; sector: number } | null {
+    const ray = this.cameraController.getAimRay();
+    const camYaw = Math.atan2(-ray.direction.x, -ray.direction.z);
+    const panned = panGainFor(camYaw, { x: ray.origin.x, z: ray.origin.z }, { x, z });
+    if (panned.muted) return null;
+    const sector =
+      Math.floor(
+        (threatAngle(camYaw, ray.origin.x, ray.origin.z, x, z) + Math.PI) / (Math.PI / 4)
+      ) % 8;
+    return { pos: { pan: panned.pan, gain: panned.gain }, sector };
+  }
+
   private handleShotEvent(shot: ShotEventPayload): void {
     // If local player already spawned predicted tracer, skip to avoid double rendering
     if (this.localPlayer && shot.shooterId === this.localPlayer.id) {
@@ -1473,36 +1529,39 @@ export class Game {
       remote.view.triggerRecoil();
     }
 
-    // Distant firefights stay visible but quiet: only play weapon sounds for
-    // nearby shots, at most one every 130ms, so 8-player chaos doesn't become
-    // a wall of weapon SFX.
+    // Distant firefights stay audible but spatialized: stereo pan + distance
+    // attenuation replaces the old hard 30u mute, and throttling is per
+    // bearing-sector × weapon class (bounded key set) so 8-player chaos doesn't
+    // become a wall of weapon SFX.
     const lp = this.localPlayer;
+    let pos: SfxStereoPos | undefined;
     if (lp) {
-      const dx = shot.origin.x - lp.position.x;
-      const dy = shot.origin.y - lp.position.y;
-      const dz = shot.origin.z - lp.position.z;
-      if (dx * dx + dy * dy + dz * dz > 30 * 30) return;
+      const panned = this.soundPanAt(shot.origin.x, shot.origin.z);
+      if (!panned) return; // beyond SFX_MAX_DISTANCE
       const now = performance.now();
-      if (now - this.lastRemoteShotSoundAt < 130) return;
-      this.lastRemoteShotSoundAt = now;
+      const key = `shot:${panned.sector}:${shot.weaponType ?? 'shooter'}`;
+      const last = this.remoteShotSoundAt.get(key) ?? Number.NEGATIVE_INFINITY;
+      if (now - last < 130) return;
+      this.remoteShotSoundAt.set(key, now);
+      pos = panned.pos;
     }
 
     if (shot.weaponType && isChargeWeapon(shot.weaponType)) {
-      this.soundManager.playChargerShot(shot.chargeLevel || 1.0);
+      this.soundManager.playChargerShot(shot.chargeLevel || 1.0, pos);
     } else if (shot.weaponType === 'roller') {
-      this.soundManager.playRollerFlick();
+      this.soundManager.playRollerFlick(pos);
     } else if (shot.weaponType === 'cannon') {
-      this.soundManager.playCannonShot();
+      this.soundManager.playCannonShot(pos);
     } else if (shot.weaponType === 'slosher') {
-      this.soundManager.playBucket();
+      this.soundManager.playBucket(pos);
     } else if (shot.weaponType === 'scatter') {
-      this.soundManager.playScatterShot();
+      this.soundManager.playScatterShot(pos);
     } else if (shot.weaponType === 'marksman') {
-      this.soundManager.playMarksmanShot();
+      this.soundManager.playMarksmanShot(pos);
     } else if (shot.weaponType === 'sprayer') {
-      this.soundManager.playSprayerShot();
+      this.soundManager.playSprayerShot(pos);
     } else {
-      this.soundManager.playShoot();
+      this.soundManager.playShoot(pos);
     }
   }
 
@@ -1529,7 +1588,12 @@ export class Game {
       this.soundManager.playSubThrow();
     } else if (payload.action === 'explode') {
       this.weaponVisual.explodeSubWeapon(payload.id, payload.position, payload.radius || 4.0, payload.team);
-      this.soundManager.playExplosion();
+      // Explosion is spatialized (and fully muted beyond SFX_MAX_DISTANCE);
+      // its own global 90 ms throttle stays inside playExplosion.
+      const panned = this.soundPanAt(payload.position.x, payload.position.z);
+      if (panned) {
+        this.soundManager.playExplosion(panned.pos);
+      }
       this.particleSystem.spawnSplash(payload.position, payload.team, 16, 8.5);
       this.cameraController.addShake(0.45, 0.25);
       this.noteThreat(payload.position.x, payload.position.z, payload.team);
@@ -1539,7 +1603,10 @@ export class Game {
   private handleSpecialEvent(payload: SpecialEventPayload): void {
     if (payload.action === 'activate') {
       this.weaponVisual.spawnSpecial(payload);
-      this.soundManager.playSpecialActivate();
+      const panned = this.soundPanAt(payload.position.x, payload.position.z);
+      if (panned) {
+        this.soundManager.playSpecialActivate(panned.pos);
+      }
       this.particleSystem.spawnSplash(payload.position, payload.team, 20, 9.5);
       this.cameraController.addShake(0.6, 0.4);
       this.noteThreat(payload.position.x, payload.position.z, payload.team);
@@ -1805,6 +1872,25 @@ export class Game {
     }
   }
 
+  /**
+   * Samples ground ink under every remote / practice-bot remote at ~10 Hz
+   * (PaintGrid.getInkAt is an O(1) counter read, same call the local player
+   * uses every frame). Feeds remote.setGroundInk so footstep ripples, swim
+   * trails and boot tints mirror the local pipeline. Dead players are skipped.
+   */
+  private sampleRemoteGroundInk(now: number): void {
+    if (now - this.lastRemoteInkSampleAt < 100) return;
+    this.lastRemoteInkSampleAt = now;
+    for (const remote of this.remotePlayers.values()) {
+      if (!remote.alive) continue;
+      remote.setGroundInk(this.paintEngine.getInkAt(remote.position.x, remote.position.z));
+    }
+    for (const remote of this.botRemotePlayers.values()) {
+      if (!remote.alive) continue;
+      remote.setGroundInk(this.paintEngine.getInkAt(remote.position.x, remote.position.z));
+    }
+  }
+
   private handleMatchState(state: MatchStateSnapshot): void {
     const prevPhase = this.matchPhase;
     this.matchPhase = state.phase;
@@ -1813,6 +1899,7 @@ export class Game {
     this.matchEndAt = state.matchEndAt;
     this.pinkScore = state.pinkScore;
     this.cyanScore = state.cyanScore;
+    this.matchOvertime = state.overtime === true;
 
     // The objective volume only exists in zone-scoring modes, and it is tinted
     // by whoever currently holds the zone so the contest is readable at a

@@ -4,7 +4,51 @@
  * Mix architecture: every SFX routes into sfxGain, BGM into bgmGain, and both
  * feed a shared DynamicsCompressor before the destination so stacked voices
  * never clip into harsh distortion. Frequent combat sounds are throttled.
+ * World-space SFX can carry an optional stereo placement: sfxOut() then
+ * inserts a StereoPanner → Gain branch in front of the sfx bus.
  */
+import { threatAngle } from '../combat/ThreatAngle.js';
+
+/** Stereo placement of a world-space SFX relative to the listener. */
+export interface SfxStereoPos {
+  /** -1 = hard left, 0 = centre, +1 = hard right (camera-relative). */
+  pan: number;
+  /** Distance attenuation multiplier [0..1]. */
+  gain: number;
+}
+
+/** panGainFor result: stereo placement plus a distance mute flag. */
+export interface SfxPan extends SfxStereoPos {
+  /** True when the source is so far away it should not sound at all. */
+  muted: boolean;
+}
+
+/** World-space sources beyond this distance are fully muted. */
+export const SFX_MAX_DISTANCE = 35;
+
+/**
+ * Stereo pan + distance attenuation for a world-space sound source.
+ *
+ * Direction convention is pinned to threatAngle (ThreatAngle.ts): camera yaw 0
+ * faces -Z, +X is screen-right, 0 rad = straight ahead, positive = right. pan
+ * is sin(angle) so directly ahead/behind both land near 0 (front/back is
+ * deliberately not distinguished — that is what the gain curve is for), and
+ * gain falls off as 1 / (1 + dist / 12).
+ */
+export function panGainFor(
+  camYaw: number,
+  camPos: { x: number; z: number },
+  sourcePos: { x: number; z: number }
+): SfxPan {
+  const angle = threatAngle(camYaw, camPos.x, camPos.z, sourcePos.x, sourcePos.z);
+  const dist = Math.hypot(sourcePos.x - camPos.x, sourcePos.z - camPos.z);
+  return {
+    pan: Math.sin(angle),
+    gain: 1 / (1 + dist / 12),
+    muted: dist > SFX_MAX_DISTANCE
+  };
+}
+
 export class SoundManager {
   private ctx: AudioContext | null = null;
   private enabled = true;
@@ -67,8 +111,24 @@ export class SoundManager {
     return this.ctx;
   }
 
-  private sfxOut(ctx: AudioContext): AudioNode {
-    return this.sfxGain ?? this.compressor ?? this.masterGain ?? ctx.destination;
+  /**
+   * SFX mix entry point. Without `pos` (or on browsers without
+   * createStereoPanner) this is exactly the legacy sfx bus; with `pos` a
+   * StereoPanner → Gain chain is inserted in front of it so the caller's
+   * existing `x.connect(this.sfxOut(ctx))` line gains spatial audio for free.
+   */
+  private sfxOut(ctx: AudioContext, pos?: SfxStereoPos): AudioNode {
+    const bus = this.sfxGain ?? this.compressor ?? this.masterGain ?? ctx.destination;
+    if (!pos || typeof ctx.createStereoPanner !== 'function') {
+      return bus;
+    }
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pos.pan));
+    const atten = ctx.createGain();
+    atten.gain.value = Math.max(0, Math.min(1, pos.gain));
+    panner.connect(atten);
+    atten.connect(bus);
+    return panner;
   }
 
   private bgmOut(ctx: AudioContext): AudioNode {
@@ -109,7 +169,7 @@ export class SoundManager {
     }
   }
 
-  playShoot(): void {
+  playShoot(pos?: SfxStereoPos): void {
     if (this.throttled('shoot', 70)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -132,7 +192,7 @@ export class SoundManager {
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.08);
@@ -486,7 +546,7 @@ export class SoundManager {
     }
   }
 
-  playChargerShot(chargeLevel = 1.0): void {
+  playChargerShot(chargeLevel = 1.0, pos?: SfxStereoPos): void {
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
 
@@ -509,7 +569,7 @@ export class SoundManager {
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.25);
@@ -518,7 +578,7 @@ export class SoundManager {
     }
   }
 
-  playRollerFlick(): void {
+  playRollerFlick(pos?: SfxStereoPos): void {
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
 
@@ -535,7 +595,7 @@ export class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
       osc.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.18);
@@ -544,7 +604,7 @@ export class SoundManager {
     }
   }
 
-  playBucket(): void {
+  playBucket(pos?: SfxStereoPos): void {
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
 
@@ -562,7 +622,7 @@ export class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
 
       osc.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.2);
@@ -571,7 +631,7 @@ export class SoundManager {
     }
   }
 
-  playSprayerShot(): void {
+  playSprayerShot(pos?: SfxStereoPos): void {
     if (this.throttled('sprayer', 35)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -595,7 +655,7 @@ export class SoundManager {
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.05);
@@ -604,7 +664,7 @@ export class SoundManager {
     }
   }
 
-  playCannonShot(): void {
+  playCannonShot(pos?: SfxStereoPos): void {
     if (this.throttled('cannon', 120)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -622,7 +682,7 @@ export class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
 
       osc.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.35);
@@ -642,14 +702,14 @@ export class SoundManager {
       nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
       noise.connect(nFilter);
       nFilter.connect(nGain);
-      nGain.connect(this.sfxOut(ctx));
+      nGain.connect(this.sfxOut(ctx, pos));
       noise.start(now);
     } catch {
       // Ignore
     }
   }
 
-  playMarksmanShot(): void {
+  playMarksmanShot(pos?: SfxStereoPos): void {
     if (this.throttled('marksman', 75)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -673,7 +733,7 @@ export class SoundManager {
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       osc.start(now);
       osc.stop(now + 0.12);
@@ -682,7 +742,7 @@ export class SoundManager {
     }
   }
 
-  playScatterShot(): void {
+  playScatterShot(pos?: SfxStereoPos): void {
     if (this.throttled('scatter', 90)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -697,7 +757,7 @@ export class SoundManager {
       gain.gain.setValueAtTime(0.15, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
       osc.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
       osc.start(now);
       osc.stop(now + 0.16);
 
@@ -715,8 +775,181 @@ export class SoundManager {
       nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
       noise.connect(filter);
       filter.connect(nGain);
+      nGain.connect(this.sfxOut(ctx, pos));
+      noise.start(now);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /** Brella: hollow umbrella "bwoop" shot — wooden body resonance, quick drop. */
+  playBrellaShot(pos?: SfxStereoPos): void {
+    const ctx = this.initContext();
+    if (!ctx || !this.enabled) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(140, now + 0.14);
+
+      gain.gain.setValueAtTime(0.11, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+
+      osc.connect(gain);
+      gain.connect(this.sfxOut(ctx, pos));
+
+      osc.start(now);
+      osc.stop(now + 0.14);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /** Brella shield deploy: airy upward whoosh with a shimmer tail. */
+  playBrellaShield(): void {
+    const ctx = this.initContext();
+    if (!ctx || !this.enabled) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(240, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.22);
+
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+
+      osc.connect(gain);
+      gain.connect(this.sfxOut(ctx));
+
+      osc.start(now);
+      osc.stop(now + 0.26);
+
+      // Shimmer tail: short high triangle an octave above.
+      const shimmer = ctx.createOscillator();
+      const sGain = ctx.createGain();
+      shimmer.type = 'triangle';
+      shimmer.frequency.setValueAtTime(1760, now + 0.1);
+      sGain.gain.setValueAtTime(0.0001, now);
+      sGain.gain.setValueAtTime(0.035, now + 0.1);
+      sGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      shimmer.connect(sGain);
+      sGain.connect(this.sfxOut(ctx));
+      shimmer.start(now + 0.1);
+      shimmer.stop(now + 0.3);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /** Brella shield break: dull thud plus a splintered noise crack. */
+  playBrellaBreak(): void {
+    const ctx = this.initContext();
+    if (!ctx || !this.enabled) return;
+
+    try {
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(55, now + 0.18);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc.connect(gain);
+      gain.connect(this.sfxOut(ctx));
+      osc.start(now);
+      osc.stop(now + 0.18);
+
+      const bufSize = Math.floor(ctx.sampleRate * 0.12);
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(900, now);
+      const nGain = ctx.createGain();
+      nGain.gain.setValueAtTime(0.08, now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      noise.connect(filter);
+      filter.connect(nGain);
       nGain.connect(this.sfxOut(ctx));
       noise.start(now);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /**
+   * Dualies: alternating compact pistol crack. `side` (-1/1) picks which
+   * barrel fires so left/right shots pan and pitch differently.
+   */
+  playDualiesShot(side: -1 | 1 = 1, pos?: SfxStereoPos): void {
+    if (this.throttled('dualies', 55)) return;
+    const ctx = this.initContext();
+    if (!ctx || !this.enabled) return;
+
+    try {
+      const now = ctx.currentTime;
+      const base = side === 1 ? 640 : 560; // slight L/R pitch split
+      const osc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(base, now);
+      osc.frequency.exponentialRampToValueAtTime(180, now + 0.07);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1800, now);
+      filter.Q.setValueAtTime(1.1, now);
+
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxOut(ctx, pos));
+
+      osc.start(now);
+      osc.stop(now + 0.07);
+    } catch {
+      // Ignore
+    }
+  }
+
+  /** Dualies dodge roll: rubbery descending whoosh. */
+  playDualieDodge(): void {
+    const ctx = this.initContext();
+    if (!ctx || !this.enabled) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(130, now + 0.24);
+
+      gain.gain.setValueAtTime(0.07, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+
+      osc.connect(gain);
+      gain.connect(this.sfxOut(ctx));
+
+      osc.start(now);
+      osc.stop(now + 0.26);
     } catch {
       // Ignore
     }
@@ -937,7 +1170,7 @@ export class SoundManager {
     }
   }
 
-  playExplosion(): void {
+  playExplosion(pos?: SfxStereoPos): void {
     if (this.throttled('explosion', 90)) return;
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
@@ -965,7 +1198,7 @@ export class SoundManager {
 
       noise.connect(filter);
       filter.connect(gain);
-      gain.connect(this.sfxOut(ctx));
+      gain.connect(this.sfxOut(ctx, pos));
 
       noise.start(now);
     } catch {
@@ -973,7 +1206,7 @@ export class SoundManager {
     }
   }
 
-  playSpecialActivate(): void {
+  playSpecialActivate(pos?: SfxStereoPos): void {
     const ctx = this.initContext();
     if (!ctx || !this.enabled) return;
 
@@ -991,7 +1224,7 @@ export class SoundManager {
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
 
         osc.connect(gain);
-        gain.connect(this.sfxOut(ctx));
+        gain.connect(this.sfxOut(ctx, pos));
 
         osc.start(now + idx * 0.06);
         osc.stop(now + 0.6);

@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import { Server, Socket } from 'socket.io';
 import {
+  BOT_DIFFICULTY_PRESETS,
   EMOTE_COOLDOWN_MS,
   FIXED_DT,
   GameOverPayload,
@@ -31,12 +32,14 @@ import {
   isValidGameMode,
   isValidMapId,
   isValidWeaponType,
+  resolveBotDifficulty,
   sanitizeSkills
 } from '@ink/shared';
-import type { EmotePayload, GameMode, MapId } from '@ink/shared';
+import type { BotDifficulty, EmotePayload, GameMode, MapId } from '@ink/shared';
 
 import { CollisionWorld } from './Collision.js';
 import { BotAI } from './BotAI.js';
+import type { BotMatchContext } from './BotAI.js';
 import { Match } from './Match.js';
 import { MovementSimulation } from './MovementSimulation.js';
 import { PaintGrid } from './PaintGrid.js';
@@ -339,20 +342,27 @@ export class GameServer {
     });
 
     // Host-only bot management
-    socket.on(PROTOCOL_EVENTS.C2S_LOBBY_ADD_BOT, (data?: { team?: number }) => {
-      if (playerId !== this.hostPlayerId) return;
-      if (this.match.phase !== MatchPhase.WAITING) return;
-      if (this.botOrder.length >= MAX_BOTS) return;
-      if (this.players.size >= MAX_PLAYERS) return;
+    socket.on(
+      PROTOCOL_EVENTS.C2S_LOBBY_ADD_BOT,
+      (data?: { team?: number; difficulty?: string }) => {
+        if (playerId !== this.hostPlayerId) return;
+        if (this.match.phase !== MatchPhase.WAITING) return;
+        if (this.botOrder.length >= MAX_BOTS) return;
+        if (this.players.size >= MAX_PLAYERS) return;
 
-      const requestedTeam = data && data.team === Team.PINK ? Team.PINK : data && data.team === Team.CYAN ? Team.CYAN : undefined;
-      const bot = this.addBot(requestedTeam);
-      if (bot) {
-        console.log(`[BotMgmt] add by ${playerId} -> ${bot.id} (${bot.name}); total=${this.players.size}`);
-        this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_JOINED, bot.toSnapshot());
-        this.broadcastLobbyState();
+        const requestedTeam =
+          data && data.team === Team.PINK ? Team.PINK : data && data.team === Team.CYAN ? Team.CYAN : undefined;
+        // Untrusted wire value: anything but 'easy' | 'normal' | 'hard' quietly
+        // resolves to the normal tier instead of throwing.
+        const difficulty = resolveBotDifficulty(data?.difficulty);
+        const bot = this.addBot(requestedTeam, undefined, difficulty);
+        if (bot) {
+          console.log(`[BotMgmt] add by ${playerId} -> ${bot.id} (${bot.name}); total=${this.players.size}`);
+          this.io.emit(PROTOCOL_EVENTS.S2C_PLAYER_JOINED, bot.toSnapshot());
+          this.broadcastLobbyState();
+        }
       }
-    });
+    );
 
     socket.on(PROTOCOL_EVENTS.C2S_LOBBY_REMOVE_BOT, (data?: { botId?: string }) => {
       if (playerId !== this.hostPlayerId) return;
@@ -474,7 +484,7 @@ export class GameServer {
   // Bot management
   // ---------------------------------------------------------------------
 
-  addBot(requestedTeam?: Team, weaponType?: WeaponType): PlayerState | null {
+  addBot(requestedTeam?: Team, weaponType?: WeaponType, difficulty?: BotDifficulty): PlayerState | null {
     if (this.players.size >= MAX_PLAYERS || this.botOrder.length >= MAX_BOTS) {
       return null;
     }
@@ -502,6 +512,10 @@ export class GameServer {
       weaponType && BOT_WEAPONS.includes(weaponType)
         ? weaponType
         : (BOT_WEAPONS[Math.floor(Math.random() * BOT_WEAPONS.length)] ?? 'shooter');
+    // Difficulty tier -> gear skills (server-effective ids only) + brain preset.
+    const tier = resolveBotDifficulty(difficulty ?? undefined);
+    bot.skills = sanitizeSkills(BOT_DIFFICULTY_PRESETS[tier].skills);
+    this.botAI.setDifficulty(bot.id, tier);
     this.addPlayer(bot);
     this.botOrder.push(bot.id);
     return bot;
@@ -554,6 +568,20 @@ export class GameServer {
 
   private broadcastLobbyState(): void {
     this.io.emit(PROTOCOL_EVENTS.S2C_LOBBY_STATE, this.getLobbyState());
+  }
+
+  /**
+   * Per-tick match facts handed to the bot brains (mode, objective rect, live
+   * scores) so objective modes can steer waypoint picking.
+   */
+  private buildBotMatchContext(now: number): BotMatchContext {
+    const snapshot = this.match.getSnapshot(now);
+    return {
+      mode: this.match.mode,
+      zoneRect: this.activeMap().zone,
+      pinkScore: snapshot.pinkScore,
+      cyanScore: snapshot.cyanScore
+    };
   }
 
   private handlePlayerDisconnect(playerId: string): void {
@@ -733,18 +761,23 @@ export class GameServer {
 
     // 3. Simulate players during WAITING (lobby free roam) and PLAYING
     if (this.match.phase === MatchPhase.PLAYING || this.match.phase === MatchPhase.WAITING) {
+      // Mode/score facts for bot brains — built once per tick, only if bots exist.
+      let botContext: BotMatchContext | undefined;
       for (const player of allPlayersList) {
         if (!player.alive) continue;
 
         if (player.isBot) {
           if (this.match.phase !== MatchPhase.PLAYING) continue;
+          botContext ??= this.buildBotMatchContext(now);
           const botInput = this.botAI.think(
             player,
             allPlayersList,
             this.collisionWorld,
             this.paintGrid,
             this.mapSize,
-            now
+            now,
+            250,
+            botContext
           );
           this.processPlayerTick(player, botInput, dt, now);
           continue;

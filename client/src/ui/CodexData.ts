@@ -128,6 +128,38 @@ const CHARACTER_TAB: CodexTab = {
       ]
     },
     {
+      img: '/assets/characters/coral_chanter.jpg',
+      badgeKey: 'codex.badgeCoral',
+      badgeClass: 'coral',
+      title: { zh: '珊瑚礁歌姬', ja: 'サンゴの歌い手', en: 'Coral Chanter' },
+      desc: {
+        zh: '来自珊瑚礁的章鱼歌姬，青绿渐变珊瑚橙的演出服随歌声流光，挥动泡泡桶抛出绵密墨泡，封锁要道并掩护队友推进。',
+        ja: 'サンゴ礁の歌姫オクトリング。青から珊瑚色へ染まる衣装で歌いながらバケットを振り、インクの泡で通路を封じて味方を援護する。',
+        en: 'Coral-reef octoling songstress in a teal-to-coral shimmering outfit; her bucket-lofted bubbles fence off lanes and shield the team.'
+      },
+      tags: [
+        { text: { zh: '形态: 章鱼人形', ja: '形態: タコヒト', en: 'Form: Octoling' } },
+        { text: { zh: '主武器: 泡泡桶', ja: 'メイン: スロッシャー', en: 'Main: Slosher' } },
+        { text: { zh: '封锁力: ★★★★★', ja: '封鎖力: ★★★★★', en: 'Denial: ★★★★★' } }
+      ]
+    },
+    {
+      img: '/assets/characters/volt_skimmer.jpg',
+      badgeKey: 'codex.badgeVolt',
+      badgeClass: 'volt',
+      title: { zh: '雷紫疾冲手', ja: 'ボルト・スキマー', en: 'Volt Skimmer' },
+      desc: {
+        zh: '身披电紫与柠黄撞色战衣的高速游袭手，充能水枪远程压制要点，再潜入墨水疾速贴近，跃出瞬间完成致命一击。',
+        ja: 'バイオレット×レモンイエローの高速遊撃手。チャージャーで遠距離を制圧しつつ、インクに潜って一気に詰め、一撃を放つ。',
+        en: 'High-speed skimmer in violet-and-lemon racing gear: pins lanes with a charged shot, then dives through ink to strike in a flash.'
+      },
+      tags: [
+        { text: { zh: '形态: 人形', ja: '形態: ヒト', en: 'Form: Humanoid' } },
+        { text: { zh: '主武器: 充能水枪', ja: 'メイン: チャージャー', en: 'Main: Charger' } },
+        { text: { zh: '突袭速度: ★★★★★', ja: '突撃速度: ★★★★★', en: 'Rush: ★★★★★' } }
+      ]
+    },
+    {
       img: '/assets/characters/squid_morph.jpg',
       badgeKey: 'codex.badgeTransform',
       badgeClass: 'purple',

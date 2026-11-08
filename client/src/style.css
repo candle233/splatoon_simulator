@@ -557,6 +557,23 @@ html, body {
   letter-spacing: 1px;
 }
 
+/* Turf War overtime: highlight the clock while the extension is running. */
+#match-timer.overtime {
+  color: #ffd60a;
+  text-shadow: 0 0 12px rgba(255, 214, 10, 0.8);
+  animation: overtime-pulse 1s ease-in-out infinite;
+}
+
+@keyframes overtime-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
 #match-phase-label {
   font-size: 10px;
   font-weight: 700;
@@ -2338,6 +2355,8 @@ kbd {
 .codex-badge.special { background: #ff0055; color: #fff; }
 .codex-badge.gear { background: #06d6a0; color: #000; }
 .codex-badge.scene { background: #118ab2; color: #fff; }
+.codex-badge.coral { background: #ff7f50; color: #000; }
+.codex-badge.volt { background: #5d3fd3; color: #fff; }
 
 .codex-info {
   padding: 16px 20px;

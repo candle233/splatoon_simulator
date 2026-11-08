@@ -39,6 +39,10 @@ export class Minimap {
   private zoneOwner: Team | null = null;
   private climbables: ClimbableSurface[] = [];
   private pings: MinimapPing[] = [];
+  /** Offscreen caches so static cartography is blitted, not redrawn, each tick. */
+  private baseLayer: HTMLCanvasElement | null = null;
+  private overlayLayer: HTMLCanvasElement | null = null;
+  private staticObstacles: BoxObstacle[] | null = null;
 
   constructor(paintEngine: PaintEngine) {
     this.paintEngine = paintEngine;
@@ -116,6 +120,7 @@ export class Minimap {
     if (size > 0) {
       this.mapSize = size;
       this.spawnX = spawnXForSize(size);
+      this.staticObstacles = null;
     }
   }
 
@@ -154,53 +159,49 @@ export class Minimap {
     this.pings.length = 0;
   }
 
-  update(
-    localPlayer: MinimapPlayerData,
-    remotePlayers: MinimapPlayerData[],
-    obstacles: BoxObstacle[]
-  ): void {
-    if (!this.visible) return;
+  /**
+   * Rebuilds the two offscreen static layers when the map data changes (new
+   * obstacles array reference after a map switch, or setSize). Base layer:
+   * background + tactical grid, drawn under the live ink. Overlay layer:
+   * elevation contours + climbable routes, drawn above it — same stacking as
+   * the original per-frame redraws, minus the redundant redraw cost.
+   */
+  private ensureStaticLayers(obstacles: BoxObstacle[], w: number, h: number): void {
+    if (this.baseLayer && this.overlayLayer && this.staticObstacles === obstacles) return;
+    this.staticObstacles = obstacles;
 
-    const now = performance.now();
-    if (now - this.lastDrawTime < this.drawInterval) return;
-    this.lastDrawTime = now;
-
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    const ctx = this.ctx;
-
-    // 1. Clear background & draw subtle tactical grid
-    ctx.fillStyle = '#0f1118';
-    ctx.fillRect(0, 0, w, h);
-
-    // Subtle tactical coordinate crosshairs & concentric range rings
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(w / 2, 0);
-    ctx.lineTo(w / 2, h);
-    ctx.moveTo(0, h / 2);
-    ctx.lineTo(w, h / 2);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(w / 2, h / 2, w * 0.25, 0, Math.PI * 2);
-    ctx.arc(w / 2, h / 2, w * 0.42, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // 2. Draw scaled live turf coverage from PaintEngine canvas
-    try {
-      ctx.globalAlpha = 0.85;
-      ctx.drawImage(this.paintEngine.canvas, 0, 0, w, h);
-      ctx.globalAlpha = 1.0;
-    } catch {
-      // Ignore if canvas not ready
+    if (!this.baseLayer || !this.overlayLayer || this.baseLayer.width !== w || this.baseLayer.height !== h) {
+      this.baseLayer = document.createElement('canvas');
+      this.baseLayer.width = w;
+      this.baseLayer.height = h;
+      this.overlayLayer = document.createElement('canvas');
+      this.overlayLayer.width = w;
+      this.overlayLayer.height = h;
     }
+    const base = this.baseLayer.getContext('2d');
+    const over = this.overlayLayer.getContext('2d');
+    if (!base || !over) return;
 
     const toPx = (wx: number): number => ((wx + this.mapSize / 2) / this.mapSize) * w;
     const toPy = (wz: number): number => ((wz + this.mapSize / 2) / this.mapSize) * h;
 
-    // 3. Draw 4-Tier Vertical Elevation Contours
+    // Base: background & subtle tactical coordinate crosshairs + range rings
+    base.fillStyle = '#0f1118';
+    base.fillRect(0, 0, w, h);
+    base.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    base.lineWidth = 1;
+    base.beginPath();
+    base.moveTo(w / 2, 0);
+    base.lineTo(w / 2, h);
+    base.moveTo(0, h / 2);
+    base.lineTo(w, h / 2);
+    base.stroke();
+    base.beginPath();
+    base.arc(w / 2, h / 2, w * 0.25, 0, Math.PI * 2);
+    base.arc(w / 2, h / 2, w * 0.42, 0, Math.PI * 2);
+    base.stroke();
+
+    // Overlay: 4-Tier Vertical Elevation Contours
     // Tier 0: <= 1.5m (Ground platforms/curbs)
     // Tier 1: 1.5m ~ 4.5m (Catwalks / low overpasses)
     // Tier 2: 4.5m ~ 8.0m (Mid elevated bridges)
@@ -218,59 +219,59 @@ export class Minimap {
 
       if (topY <= 1.5) {
         // Tier 0: Ground level
-        ctx.fillStyle = 'rgba(26, 30, 42, 0.78)';
-        ctx.fillRect(rx, ry, ow, oh);
-        ctx.strokeStyle = 'rgba(70, 80, 105, 0.65)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(rx, ry, ow, oh);
+        over.fillStyle = 'rgba(26, 30, 42, 0.78)';
+        over.fillRect(rx, ry, ow, oh);
+        over.strokeStyle = 'rgba(70, 80, 105, 0.65)';
+        over.lineWidth = 1;
+        over.strokeRect(rx, ry, ow, oh);
       } else if (topY <= 4.5) {
         // Tier 1: Low catwalks / walkways
-        ctx.fillStyle = 'rgba(38, 52, 80, 0.85)';
-        ctx.fillRect(rx, ry, ow, oh);
-        ctx.strokeStyle = 'rgba(95, 135, 195, 0.85)';
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(rx, ry, ow, oh);
+        over.fillStyle = 'rgba(38, 52, 80, 0.85)';
+        over.fillRect(rx, ry, ow, oh);
+        over.strokeStyle = 'rgba(95, 135, 195, 0.85)';
+        over.lineWidth = 1.2;
+        over.strokeRect(rx, ry, ow, oh);
       } else if (topY <= 8.0) {
         // Tier 2: Mid-tier elevated decks & bridges
-        ctx.fillStyle = 'rgba(52, 76, 118, 0.90)';
-        ctx.fillRect(rx, ry, ow, oh);
-        ctx.strokeStyle = 'rgba(135, 185, 255, 0.95)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(rx, ry, ow, oh);
+        over.fillStyle = 'rgba(52, 76, 118, 0.90)';
+        over.fillRect(rx, ry, ow, oh);
+        over.strokeStyle = 'rgba(135, 185, 255, 0.95)';
+        over.lineWidth = 1.5;
+        over.strokeRect(rx, ry, ow, oh);
 
         // Inner contour accent line
         if (ow > 6 && oh > 6) {
-          ctx.strokeStyle = 'rgba(180, 215, 255, 0.35)';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(rx + 2, ry + 2, ow - 4, oh - 4);
+          over.strokeStyle = 'rgba(180, 215, 255, 0.35)';
+          over.lineWidth = 0.8;
+          over.strokeRect(rx + 2, ry + 2, ow - 4, oh - 4);
         }
       } else {
         // Tier 3: Apex high ground (> 8.0m)
-        ctx.fillStyle = 'rgba(75, 110, 168, 0.95)';
-        ctx.fillRect(rx, ry, ow, oh);
-        ctx.strokeStyle = '#d6eeff';
-        ctx.lineWidth = 2.0;
-        ctx.strokeRect(rx, ry, ow, oh);
+        over.fillStyle = 'rgba(75, 110, 168, 0.95)';
+        over.fillRect(rx, ry, ow, oh);
+        over.strokeStyle = '#d6eeff';
+        over.lineWidth = 2.0;
+        over.strokeRect(rx, ry, ow, oh);
 
         // Diagonal corner tick mark for apex platforms
         if (ow >= 8 && oh >= 8) {
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(rx, ry + 4);
-          ctx.lineTo(rx + 4, ry);
-          ctx.moveTo(rx + ow - 4, ry);
-          ctx.lineTo(rx + ow, ry + 4);
-          ctx.stroke();
+          over.strokeStyle = '#ffffff';
+          over.lineWidth = 1;
+          over.beginPath();
+          over.moveTo(rx, ry + 4);
+          over.lineTo(rx + 4, ry);
+          over.moveTo(rx + ow - 4, ry);
+          over.lineTo(rx + ow, ry + 4);
+          over.stroke();
         }
       }
     }
 
-    // 4. Draw Climbable Wall Routes (vertical mobility routes)
+    // Overlay: Climbable Wall Routes (vertical mobility routes)
     if (this.climbables.length > 0) {
-      ctx.strokeStyle = 'rgba(0, 255, 180, 0.85)';
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([2, 2]);
+      over.strokeStyle = 'rgba(0, 255, 180, 0.85)';
+      over.lineWidth = 1.8;
+      over.setLineDash([2, 2]);
       for (const cs of this.climbables) {
         if (cs.id.startsWith('climb_wall')) continue;
         let cx1 = 0;
@@ -296,15 +297,50 @@ export class Minimap {
           cx2 = toPx(x2);
           cz2 = toPy(faceZ);
         }
-        ctx.beginPath();
-        ctx.moveTo(cx1, cz1);
-        ctx.lineTo(cx2, cz2);
-        ctx.stroke();
+        over.beginPath();
+        over.moveTo(cx1, cz1);
+        over.lineTo(cx2, cz2);
+        over.stroke();
       }
-      ctx.setLineDash([]);
+      over.setLineDash([]);
+    }
+  }
+
+  update(
+    localPlayer: MinimapPlayerData,
+    remotePlayers: MinimapPlayerData[],
+    obstacles: BoxObstacle[]
+  ): void {
+    if (!this.visible) return;
+
+    const now = performance.now();
+    if (now - this.lastDrawTime < this.drawInterval) return;
+    this.lastDrawTime = now;
+
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const ctx = this.ctx;
+
+    // 1. Blit the cached static base layer (background + tactical grid)
+    this.ensureStaticLayers(obstacles, w, h);
+    if (this.baseLayer) ctx.drawImage(this.baseLayer, 0, 0);
+
+    // 2. Draw scaled live turf coverage from PaintEngine canvas
+    try {
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(this.paintEngine.canvas, 0, 0, w, h);
+      ctx.globalAlpha = 1.0;
+    } catch {
+      // Ignore if canvas not ready
     }
 
-    // 5. Draw Capture Point / Splat Zones Status
+    const toPx = (wx: number): number => ((wx + this.mapSize / 2) / this.mapSize) * w;
+    const toPy = (wz: number): number => ((wz + this.mapSize / 2) / this.mapSize) * h;
+
+    // 3. Blit the cached static overlay (elevation contours + climbable routes)
+    if (this.overlayLayer) ctx.drawImage(this.overlayLayer, 0, 0);
+
+    // 4. Draw Capture Point / Splat Zones Status
     if (this.zone) {
       const zx = toPx(this.zone.x - this.zone.w / 2);
       const zy = toPy(this.zone.z - this.zone.d / 2);
@@ -346,7 +382,7 @@ export class Minimap {
       ctx.fillText('ZONE', zcx, zcy);
     }
 
-    // 6. Draw Team Spawns
+    // 5. Draw Team Spawns
     const spawnRadius = Math.max(4, (7 * ARENA_SIZE) / this.mapSize);
     const pinkPx = toPx(-this.spawnX);
     const pinkPy = toPy(0);
@@ -368,7 +404,7 @@ export class Minimap {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // 6.5 Draw tactical quick-chat pings (pulse 3x, fade after 3s)
+    // 5.5 Draw tactical quick-chat pings (pulse 3x, fade after 3s)
     if (this.pings.length > 0) {
       let write = 0;
       for (const ping of this.pings) {
@@ -410,7 +446,7 @@ export class Minimap {
       this.pings.length = write;
     }
 
-    // 7. Draw Remote Players (Teammate Beacons vs Enemy Indicators)
+    // 6. Draw Remote Players (Teammate Beacons vs Enemy Indicators)
     for (const rp of remotePlayers) {
       if (!rp.alive) continue;
       const ru = (rp.position.x + this.mapSize / 2) / this.mapSize;
@@ -496,7 +532,7 @@ export class Minimap {
       }
     }
 
-    // 8. Draw Local Player (Tactical Sonar Arrow)
+    // 7. Draw Local Player (Tactical Sonar Arrow)
     if (localPlayer.alive) {
       const lu = (localPlayer.position.x + this.mapSize / 2) / this.mapSize;
       const lv = (localPlayer.position.z + this.mapSize / 2) / this.mapSize;
@@ -553,7 +589,7 @@ export class Minimap {
       ctx.restore();
     }
 
-    // 9. Radar Outer Bezel & Elevation Contour Tag
+    // 8. Radar Outer Bezel & Elevation Contour Tag
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, w - 2, h - 2);

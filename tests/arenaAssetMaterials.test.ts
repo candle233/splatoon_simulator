@@ -73,7 +73,7 @@ describe('AssetTextures - Asset & Texture Manager', () => {
     expect(cyanEmblem).toBeInstanceOf(THREE.Texture);
 
     // Panoramas
-    for (const mapId of ['downtown', 'cargo_docks', 'sky_rink', 'aurora_outpost'] as const) {
+    for (const mapId of ['downtown', 'cargo_docks', 'sky_rink', 'aurora_outpost', 'tide_garden'] as const) {
       const pano = getMapPanoramaTexture(mapId);
       expect(pano).toBeInstanceOf(THREE.Texture);
     }
@@ -115,7 +115,7 @@ describe('AssetTextures - Asset & Texture Manager', () => {
 
 describe('MapArt - 3D Sky Dome with Bespoke Panorama Assets', () => {
   it('builds sky textures for all maps with equirectangular wrap configuration', () => {
-    for (const mapId of ['downtown', 'cargo_docks', 'sky_rink', 'aurora_outpost'] as const) {
+    for (const mapId of ['downtown', 'cargo_docks', 'sky_rink', 'aurora_outpost', 'tide_garden'] as const) {
       const def = getMapDef(mapId);
       const skyTex = getSkyTexture(def);
       expect(skyTex).toBeInstanceOf(THREE.CanvasTexture);
@@ -126,7 +126,7 @@ describe('MapArt - 3D Sky Dome with Bespoke Panorama Assets', () => {
 });
 
 describe('Arena 3D In-Game Integration of Bespoke Visual Assets', () => {
-  function createTestArena(mapId: 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost' = 'downtown'): Arena {
+  function createTestArena(mapId: 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost' | 'tide_garden' = 'downtown'): Arena {
     const def = getMapDef(mapId);
     const paintEngine = new PaintEngine(def.size);
     return new Arena(paintEngine, def);
@@ -261,6 +261,17 @@ describe('Arena 3D In-Game Integration of Bespoke Visual Assets', () => {
       arena.rebuild(getMapDef('cargo_docks'));
       arena.rebuild(getMapDef('sky_rink'));
       arena.rebuild(getMapDef('aurora_outpost'));
+      arena.rebuild(getMapDef('tide_garden'));
     }).not.toThrow();
+  });
+
+  it('builds the tide_garden arena with pool terraces, coral pillars and decoration without throwing', () => {
+    const arena = createTestArena('tide_garden');
+    let meshCount = 0;
+    arena.group.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) meshCount++;
+    });
+    // Pool tiers + mirrored coral pillars + stairs + billboards/landmarks dressing
+    expect(meshCount).toBeGreaterThanOrEqual(30);
   });
 });

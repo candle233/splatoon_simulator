@@ -125,6 +125,20 @@ const MAP_METAS: Record<MapId, MapMeta> = {
     recommendedZh: '推荐: 蓄力狙击 · 重型迫击 · 突击步枪',
     recommendedJa: '推奨: チャージャー · モーター · アサルト',
     recommended: 'Rec: Charger · Cannon · Shooter'
+  },
+  tide_garden: {
+    scale: '155m × 155m',
+    verticalityScore: '★★★★☆',
+    peakHeight: '8.4m',
+    landmarks: 'Tide Pool Terrace · Coral Columns · Reef Keep',
+    landmarksZh: '潮汐池台 · 珊瑚石柱 · 礁岩堡垒',
+    landmarksJa: 'タイドプール · サンゴの柱 · リーフキープ',
+    tiers: 'Shore Flats (0m) · Pool Rim (3.6m) · Tide Crown (8.4m)',
+    tiersZh: '潮岸平地 (0m) · 高潮池缘 (3.6m) · 潮汐冠顶 (8.4m)',
+    tiersJa: '潮岸エリア (0m) · プール縁 (3.6m) · タイクラウン (8.4m)',
+    recommendedZh: '推荐: 泼桶 · 涂地滚筒 · 超连射速射',
+    recommendedJa: '推奨: スロッシャー · ローラー · スプレー',
+    recommended: 'Rec: Slosher · Roller · Sprayer'
   }
 };
 

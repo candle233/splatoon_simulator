@@ -171,4 +171,10 @@ describe('i18n coverage (zh / ja / en)', () => {
     expect(initBody.slice(0, 200)).toMatch(/applyI18n\(\)/);
     expect(initBody.slice(0, 200)).toMatch(/syncDocumentLang\(\)/);
   });
+
+  it('defines hud.overtime (Turf War overtime) in all three languages', () => {
+    expect(dict('zh')['hud.overtime']).toBe('延长赛');
+    expect(dict('ja')['hud.overtime']).toBe('オーバータイム');
+    expect(dict('en')['hud.overtime']).toBe('OVER TIME');
+  });
 });

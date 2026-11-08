@@ -1,4 +1,5 @@
 import {
+  BOT_DIFFICULTY_PRESETS,
   MAX_INK,
   PlayerInput,
   PlayerMode,
@@ -10,6 +11,7 @@ import {
   WEAPON_CONFIGS,
   clamp
 } from '@ink/shared';
+import type { BotDifficulty, GameMode, ZoneRect } from '@ink/shared';
 import { CollisionWorld } from './Collision.js';
 import { PaintGrid } from './PaintGrid.js';
 import { PlayerState } from './PlayerState.js';
@@ -17,6 +19,49 @@ import { PlayerState } from './PlayerState.js';
 type BotStateName = 'PATROL' | 'COMBAT' | 'REFILL';
 
 const EMPTY_PLAYERS: PlayerState[] = [];
+
+/**
+ * Per-tick match facts a bot brain needs to play the objective. `think` treats
+ * it as optional: without it (or in `turf_war`) bots fall back to generic
+ * roaming. Scores are compared from `bot.team`'s perspective.
+ */
+export interface BotMatchContext {
+  mode: GameMode;
+  /** Central objective rectangle (splat_zones / final_push). */
+  zoneRect?: ZoneRect;
+  pinkScore: number;
+  cyanScore: number;
+}
+
+/** Retries for mode-aware waypoint sampling before falling back to roam logic. */
+const MODE_WAYPOINT_RETRIES = 4;
+/** Band width (u) a leading team patrols around the objective. */
+const MODE_BAND_EXPANSION = 6;
+/** Clearance (u) kept outside the inner zone when clamping band samples. */
+const MODE_BAND_CLEARANCE = 0.5;
+/** Jitter amplitude (u, total span) around the nearest enemy in TDM hunting. */
+const TDM_HUNT_JITTER = 8;
+
+interface BotMemory {
+  state: BotStateName;
+  waypoint: Vec3;
+  subWaypoint?: Vec3 | null;
+  rampStage?: 'approach' | 'traverse' | null;
+  activeRampId?: string | null;
+  nextDecisionAt: number;
+  strafeDir: 1 | -1;
+  nextStrafeFlipAt: number;
+  chargeStartAt: number;
+  nextSubAt: number;
+  seq: number;
+  stuckCheckAt: number;
+  stuckX: number;
+  stuckZ: number;
+  jumpCooldownUntil: number;
+  /** Difficulty tier applied to aim error / cadence / detection / fire. */
+  difficulty: BotDifficulty;
+  cachedInput?: PlayerInput;
+}
 
 export function getRampFoot(ramp: RampObstacle, out?: Vec3): Vec3 {
   const baseY = ramp.position.y - ramp.rise / 2;
@@ -66,25 +111,6 @@ export function getRampCrest(ramp: RampObstacle, out?: Vec3): Vec3 {
   }
 }
 
-interface BotMemory {
-  state: BotStateName;
-  waypoint: Vec3;
-  subWaypoint?: Vec3 | null;
-  rampStage?: 'approach' | 'traverse' | null;
-  activeRampId?: string | null;
-  nextDecisionAt: number;
-  strafeDir: 1 | -1;
-  nextStrafeFlipAt: number;
-  chargeStartAt: number;
-  nextSubAt: number;
-  seq: number;
-  stuckCheckAt: number;
-  stuckX: number;
-  stuckZ: number;
-  jumpCooldownUntil: number;
-  cachedInput?: PlayerInput;
-}
-
 const BOT_FIRST_NAMES = [
   'Nova',
   'Reef',
@@ -114,12 +140,19 @@ export function makeBotName(counter: number): string {
 export class BotAI {
   private memories = new Map<string, BotMemory>();
   private counter = 0;
+  /** Injectable randomness: all brain randomness flows through this so tests
+   * can replay two brains bit-for-bit with the same seed. */
+  private readonly rng: () => number;
   private scratchRay: Ray = {
     origin: { x: 0, y: 0, z: 0 },
     direction: { x: 0, y: 0, z: 0 }
   };
   private scratchFoot: Vec3 = { x: 0, y: 0, z: 0 };
   private scratchCrest: Vec3 = { x: 0, y: 0, z: 0 };
+
+  constructor(rng: () => number = Math.random) {
+    this.rng = rng;
+  }
 
   /** Allocates a name + id pair for a new bot. */
   nextIdentity(): { id: string; name: string } {
@@ -135,6 +168,11 @@ export class BotAI {
     this.memories.clear();
   }
 
+  /** Assigns a difficulty tier to one bot's brain (persisted on its memory). */
+  setDifficulty(botId: string, difficulty: BotDifficulty): void {
+    this.getMemory(botId).difficulty = difficulty;
+  }
+
   getMemory(botId: string): BotMemory {
     let mem = this.memories.get(botId);
     if (!mem) {
@@ -143,7 +181,7 @@ export class BotAI {
         waypoint: { x: 0, y: 0, z: 0 },
         subWaypoint: null,
         nextDecisionAt: 0,
-        strafeDir: Math.random() < 0.5 ? 1 : -1,
+        strafeDir: this.rng() < 0.5 ? 1 : -1,
         nextStrafeFlipAt: 0,
         chargeStartAt: 0,
         nextSubAt: 0,
@@ -152,6 +190,7 @@ export class BotAI {
         stuckX: 0,
         stuckZ: 0,
         jumpCooldownUntil: 0,
+        difficulty: 'normal',
         cachedInput: {
           seq: 0,
           moveX: 0,
@@ -171,7 +210,10 @@ export class BotAI {
 
   /**
    * Produces the input a bot "presses" this tick.
-   * `thinkIntervalMs` bounds how often expensive target re-evaluation happens.
+   * `thinkIntervalMs` bounds how often expensive target re-evaluation happens;
+   * passing <= 0 forces a re-decision every call (deterministic harnesses).
+   * `context` optionally carries the match mode + scores so objective modes
+   * can steer waypoint picking; omitting it keeps classic roaming behaviour.
    */
   think(
     bot: PlayerState,
@@ -180,7 +222,8 @@ export class BotAI {
     paintGrid: PaintGrid,
     mapSize: number,
     now: number,
-    thinkIntervalMs = 250
+    thinkIntervalMs = 250,
+    context?: BotMatchContext
   ): PlayerInput {
     const mem = this.getMemory(bot.id);
     mem.seq++;
@@ -205,17 +248,21 @@ export class BotAI {
 
     const half = mapSize / 2;
     const weaponConfig = WEAPON_CONFIGS[bot.weaponType] || WEAPON_CONFIGS.shooter;
+    const preset = BOT_DIFFICULTY_PRESETS[mem.difficulty];
 
     // --- periodic re-decision ---
     if (now >= mem.nextDecisionAt) {
-      mem.nextDecisionAt = now + thinkIntervalMs + Math.random() * 150;
+      // Difficulty presets own the cadence; an explicit <= 0 interval means
+      // "decide every tick" (deterministic tests / harnesses).
+      const intervalMs = thinkIntervalMs <= 0 ? 0 : preset.thinkIntervalMs;
+      mem.nextDecisionAt = now + intervalMs + this.rng() * 150;
 
       // Stuck detection: no progress over ~1.6s -> new waypoint / hop
       if (now - mem.stuckCheckAt > 1600) {
         const moved = Math.hypot(bot.position.x - mem.stuckX, bot.position.z - mem.stuckZ);
         if (moved < 0.8 && mem.state === 'PATROL') {
           mem.subWaypoint = null;
-          mem.waypoint = this.pickWaypoint(bot, half, collisionWorld);
+          mem.waypoint = this.pickWaypoint(bot, half, collisionWorld, context, allPlayers);
           if (now > mem.jumpCooldownUntil) {
             input.jump = true;
             mem.jumpCooldownUntil = now + 1200;
@@ -244,7 +291,7 @@ export class BotAI {
     }
 
     // --- target acquisition ---
-    const enemy = this.findVisibleEnemy(bot, allPlayers, collisionWorld, now);
+    const enemy = this.findVisibleEnemy(bot, allPlayers, collisionWorld, now, preset.detectRange);
 
     if (enemy) {
       mem.state = 'COMBAT';
@@ -252,34 +299,47 @@ export class BotAI {
     }
 
     mem.state = 'PATROL';
-    return this.patrolInput(bot, mem, input, weaponConfig, collisionWorld, half, now);
+    return this.patrolInput(bot, mem, input, weaponConfig, collisionWorld, half, now, context, allPlayers);
   }
 
-  private pickWaypoint(bot: PlayerState, half: number, collisionWorld?: CollisionWorld): Vec3 {
+  private pickWaypoint(
+    bot: PlayerState,
+    half: number,
+    collisionWorld?: CollisionWorld,
+    context?: BotMatchContext,
+    allPlayers?: PlayerState[]
+  ): Vec3 {
+    // Objective awareness: zone modes contest / ring the objective, TDM hunts.
+    // Both pre-step failures (no rect, blocked probes) fall through to roaming.
+    if (context) {
+      const modePoint = this.pickModeAwareWaypoint(bot, half, collisionWorld, context, allPlayers);
+      if (modePoint) return modePoint;
+    }
+
     const ramps = collisionWorld?.getRamps() ?? [];
-    const roll = Math.random();
+    const roll = this.rng();
 
     // 40% chance: target an elevated ramp crest or platform top
     if (ramps.length > 0 && roll < 0.4) {
-      const ramp = ramps[Math.floor(Math.random() * ramps.length)];
+      const ramp = ramps[Math.floor(this.rng() * ramps.length)];
       if (ramp) return getRampCrest(ramp);
     }
 
     // 30% chance: target a ramp foot / approach
     if (ramps.length > 0 && roll < 0.7) {
-      const ramp = ramps[Math.floor(Math.random() * ramps.length)];
+      const ramp = ramps[Math.floor(this.rng() * ramps.length)];
       if (ramp) return getRampFoot(ramp);
     }
 
     // 30% chance: midfield turf
     const bias = 0.7;
     const x = clamp(
-      bot.position.x + (Math.random() - 0.5) * half * 1.2 - bot.position.x * (1 - bias) * 0.5,
+      bot.position.x + (this.rng() - 0.5) * half * 1.2 - bot.position.x * (1 - bias) * 0.5,
       -half * 0.85,
       half * 0.85
     );
     const z = clamp(
-      bot.position.z + (Math.random() - 0.5) * half * 1.2 - bot.position.z * (1 - bias) * 0.5,
+      bot.position.z + (this.rng() - 0.5) * half * 1.2 - bot.position.z * (1 - bias) * 0.5,
       -half * 0.85,
       half * 0.85
     );
@@ -287,14 +347,147 @@ export class BotAI {
     return { x, y, z };
   }
 
+  /**
+   * Objective-driven waypoint override. Returns null whenever the mode has no
+   * steering rule here (turf_war / missing zoneRect / no hunt target) or every
+   * sample was rejected by the obstacle probe — callers then roam normally.
+   */
+  private pickModeAwareWaypoint(
+    bot: PlayerState,
+    half: number,
+    collisionWorld: CollisionWorld | undefined,
+    context: BotMatchContext,
+    allPlayers?: PlayerState[]
+  ): Vec3 | null {
+    if (context.mode === 'splat_zones' || context.mode === 'final_push') {
+      const rect = context.zoneRect;
+      if (!rect || rect.w <= 0 || rect.d <= 0) return null;
+
+      const myScore = bot.team === Team.PINK ? context.pinkScore : context.cyanScore;
+      const enemyScore = bot.team === Team.PINK ? context.cyanScore : context.pinkScore;
+      const innerHalfW = rect.w * 0.4; // zone shrunk 10% per side
+      const innerHalfD = rect.d * 0.4;
+
+      if (myScore <= enemyScore) {
+        // Behind (or even): contest the objective — sample strictly inside the
+        // shrunk zone. Membership is guaranteed by construction, so no
+        // statistical slack is needed.
+        for (let attempt = 0; attempt < MODE_WAYPOINT_RETRIES; attempt++) {
+          const x = rect.x - innerHalfW + this.rng() * innerHalfW * 2;
+          const z = rect.z - innerHalfD + this.rng() * innerHalfD * 2;
+          const candidate = this.probeWaypointCandidate(bot, x, z, collisionWorld);
+          if (candidate) return candidate;
+        }
+        return null;
+      }
+
+      // Ahead: hold the ring band around the objective (outer rect expanded by
+      // MODE_BAND_EXPANSION, never inside the shrunk zone). Samples that land
+      // inside are pushed out deterministically through the nearest inner edge.
+      const outerHalfW = rect.w / 2 + MODE_BAND_EXPANSION;
+      const outerHalfD = rect.d / 2 + MODE_BAND_EXPANSION;
+      for (let attempt = 0; attempt < MODE_WAYPOINT_RETRIES; attempt++) {
+        let x = rect.x - outerHalfW + this.rng() * outerHalfW * 2;
+        let z = rect.z - outerHalfD + this.rng() * outerHalfD * 2;
+        const dx = x - rect.x;
+        const dz = z - rect.z;
+        if (Math.abs(dx) < innerHalfW && Math.abs(dz) < innerHalfD) {
+          const escapeX = innerHalfW - Math.abs(dx);
+          const escapeZ = innerHalfD - Math.abs(dz);
+          if (escapeX <= escapeZ) {
+            x = rect.x + (dx >= 0 ? 1 : -1) * (innerHalfW + MODE_BAND_CLEARANCE);
+          } else {
+            z = rect.z + (dz >= 0 ? 1 : -1) * (innerHalfD + MODE_BAND_CLEARANCE);
+          }
+        }
+        const candidate = this.probeWaypointCandidate(bot, x, z, collisionWorld);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+
+    if (context.mode === 'team_deathmatch') {
+      // Hunt: bias the waypoint toward the nearest living enemy with jitter.
+      let nearest: PlayerState | null = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const other of allPlayers ?? EMPTY_PLAYERS) {
+        if (other.id === bot.id || !other.alive || other.team === bot.team) continue;
+        const dist = Math.hypot(other.position.x - bot.position.x, other.position.z - bot.position.z);
+        if (dist < bestDist) {
+          bestDist = dist;
+          nearest = other;
+        }
+      }
+      if (!nearest) return null;
+
+      for (let attempt = 0; attempt < MODE_WAYPOINT_RETRIES; attempt++) {
+        const x = clamp(
+          nearest.position.x + (this.rng() - 0.5) * TDM_HUNT_JITTER * 2,
+          -half * 0.85,
+          half * 0.85
+        );
+        const z = clamp(
+          nearest.position.z + (this.rng() - 0.5) * TDM_HUNT_JITTER * 2,
+          -half * 0.85,
+          half * 0.85
+        );
+        const candidate = this.probeWaypointCandidate(bot, x, z, collisionWorld);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+
+    return null; // turf_war & friends: classic roaming
+  }
+
+  /**
+   * Ground-snaps a candidate waypoint and rejects it when a horizontal probe
+   * ray (same pattern as the patrol avoidance probe) hits an obstacle on the
+   * way there. Returns null when the candidate would sit inside geometry.
+   */
+  private probeWaypointCandidate(
+    bot: PlayerState,
+    x: number,
+    z: number,
+    collisionWorld: CollisionWorld | undefined
+  ): Vec3 | null {
+    const y = collisionWorld ? collisionWorld.getGroundHeightAt(x, z, bot.position.y + 1.5) : 0;
+    if (!collisionWorld) return { x, y, z };
+
+    const dx = x - bot.position.x;
+    const dz = z - bot.position.z;
+    const len = Math.hypot(dx, dz);
+    if (len > 0.5) {
+      this.scratchRay.origin.x = bot.position.x;
+      this.scratchRay.origin.y = bot.position.y + 0.8;
+      this.scratchRay.origin.z = bot.position.z;
+      this.scratchRay.direction.x = dx / len;
+      this.scratchRay.direction.y = 0;
+      this.scratchRay.direction.z = dz / len;
+
+      const probe = collisionWorld.castRay(
+        this.scratchRay,
+        Math.min(len, 10),
+        EMPTY_PLAYERS,
+        bot.team,
+        bot.id
+      );
+      if (probe.hit && probe.hitObstacleId && !probe.isGround) {
+        return null; // blocked — caller retries with a fresh sample
+      }
+    }
+    return { x, y, z };
+  }
+
   private findVisibleEnemy(
     bot: PlayerState,
     allPlayers: PlayerState[],
     collisionWorld: CollisionWorld,
-    now: number
+    now: number,
+    detectRange: number
   ): PlayerState | null {
     let best: PlayerState | null = null;
-    let bestDist = 36; // max engagement range
+    let bestDist = detectRange; // max engagement range (difficulty preset)
 
     for (const other of allPlayers) {
       if (other.id === bot.id || !other.alive || other.team === bot.team) continue;
@@ -351,13 +544,14 @@ export class BotAI {
     weaponConfig: (typeof WEAPON_CONFIGS)[keyof typeof WEAPON_CONFIGS],
     now: number
   ): PlayerInput {
+    const preset = BOT_DIFFICULTY_PRESETS[mem.difficulty];
     const dx = enemy.position.x - bot.position.x;
     const dz = enemy.position.z - bot.position.z;
     const dist = Math.hypot(dx, dz) || 1;
 
     // Aim at the enemy chest with a touch of error
     const eyeY = bot.position.y + 1.4;
-    const aimY = enemy.position.y + 0.9 + (Math.random() - 0.5) * 0.6;
+    const aimY = enemy.position.y + 0.9 + (this.rng() - 0.5) * preset.aimErrorY;
     const dy = aimY - eyeY;
     const aimLen = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     input.yaw = Math.atan2(-dx, -dz);
@@ -372,7 +566,7 @@ export class BotAI {
       // Dualies strafe more aggressively: faster flips keep them slippery.
       mem.strafeDir = mem.strafeDir === 1 ? -1 : 1;
       mem.nextStrafeFlipAt =
-        now + (bot.weaponType === 'dualies' ? 500 + Math.random() * 700 : 900 + Math.random() * 1400);
+        now + (bot.weaponType === 'dualies' ? 500 + this.rng() * 700 : 900 + this.rng() * 1400);
     }
 
     let forward = 0;
@@ -405,23 +599,25 @@ export class BotAI {
       input.moveX = mem.strafeDir;
     }
 
-    // Fire control
+    // Fire control. Lower tiers sometimes hold fire for a beat (fireChance),
+    // which also keeps their rng stream deterministic per tier.
+    const canFire = preset.fireChance >= 1 || this.rng() < preset.fireChance;
     if (bot.weaponType === 'charger') {
       if (mem.chargeStartAt === 0) {
         mem.chargeStartAt = now;
       }
       const charged = now - mem.chargeStartAt >= (weaponConfig.chargeTime ?? 1.0) * 1000;
-      if (charged) {
+      if (charged && canFire) {
         input.fire = true;
-        input.chargeLevel = 0.9 + Math.random() * 0.1;
-        mem.chargeStartAt = now + 300 + Math.random() * 400;
+        input.chargeLevel = 0.9 + this.rng() * 0.1;
+        mem.chargeStartAt = now + 300 + this.rng() * 400;
       }
     } else if (bot.weaponType === 'brella') {
       // Keep firing: each shot re-opens the canopy shield (autoOpen), so the
       // shield cycles for free as long as the bot is engaging.
-      input.fire = true;
+      input.fire = canFire;
     } else {
-      input.fire = true;
+      input.fire = canFire;
     }
 
     // Sub weapon toss with high ground advantage
@@ -432,7 +628,7 @@ export class BotAI {
       bot.ink >= subCost
     ) {
       input.subWeapon = true;
-      mem.nextSubAt = now + (isHighGround ? 4500 : 7000) + Math.random() * 3000;
+      mem.nextSubAt = now + (isHighGround ? 4500 : 7000) + this.rng() * 3000;
     }
 
     // Special when charged and enemy in range
@@ -450,7 +646,9 @@ export class BotAI {
     weaponConfig: (typeof WEAPON_CONFIGS)[keyof typeof WEAPON_CONFIGS],
     collisionWorld: CollisionWorld,
     half: number,
-    now: number
+    now: number,
+    context?: BotMatchContext,
+    allPlayers?: PlayerState[]
   ): PlayerInput {
     // If the destination elevation differs significantly and we do not have an active ramp route,
     // route through the best ramp.
@@ -515,7 +713,7 @@ export class BotAI {
           mem.activeRampId = null;
         }
       } else {
-        mem.waypoint = this.pickWaypoint(bot, half, collisionWorld);
+        mem.waypoint = this.pickWaypoint(bot, half, collisionWorld, context, allPlayers);
       }
     }
 
@@ -587,7 +785,7 @@ export class BotAI {
     }
 
     // Occasionally hop to unstick from low geometry
-    if (Math.random() < 0.01 && now > mem.jumpCooldownUntil) {
+    if (this.rng() < 0.01 && now > mem.jumpCooldownUntil) {
       input.jump = true;
       mem.jumpCooldownUntil = now + 1500;
     }

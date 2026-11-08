@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MAP_DEFS,
@@ -37,9 +40,9 @@ const MAP_LIST: MapDef[] = Object.values(MAP_DEFS);
 const solid = (def: MapDef): BoxObstacle[] => def.obstacles.filter((o) => !o.id.startsWith('wall_'));
 
 describe('map definitions: well-formedness (大场景/多地图)', () => {
-  it('exposes four maps with unique ids, sizes and full trilingual metadata', () => {
+  it('exposes five maps with unique ids, sizes and full trilingual metadata', () => {
     const ids = Object.keys(MAP_DEFS);
-    expect(ids.length).toBeGreaterThanOrEqual(4);
+    expect(ids.length).toBeGreaterThanOrEqual(5);
     for (const id of ids) {
       expect(isValidMapId(id)).toBe(true);
       const def = MAP_DEFS[id as keyof typeof MAP_DEFS];
@@ -189,6 +192,57 @@ describe('map definitions: well-formedness (大场景/多地图)', () => {
   });
 });
 
+describe('tide_garden layout invariants', () => {
+  const def = MAP_DEFS.tide_garden;
+
+  it('is registered as a valid map id', () => {
+    expect(isValidMapId('tide_garden')).toBe(true);
+    expect(def.id).toBe('tide_garden');
+  });
+
+  it('uses a 155-unit size unique across the whole library', () => {
+    expect(def.size).toBe(155);
+    const sizes = MAP_LIST.map((d) => d.size);
+    expect(new Set(sizes).size).toBe(sizes.length);
+  });
+
+  it('carries non-empty trilingual name and description fields', () => {
+    for (const field of ['name', 'nameZh', 'nameJa', 'description', 'descriptionZh', 'descriptionJa'] as const) {
+      expect(def[field].length, `tide_garden.${field}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives every obstacle a unique id', () => {
+    const ids = def.obstacles.map((o) => o.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('keeps the spawn rows inside the arena bounds with a central zone rect', () => {
+    for (const team of [Team.PINK, Team.CYAN]) {
+      for (let slot = 0; slot < 4; slot++) {
+        const spawn = getSpawnPosition(team, slot, def.spawnX);
+        expect(Math.abs(spawn.x), `slot ${slot} x inside walls`).toBeLessThan(def.size / 2 - 2);
+        expect(Math.abs(spawn.z), `slot ${slot} z inside walls`).toBeLessThan(def.size / 2 - 2);
+      }
+    }
+    // The zone rect sits centred inside the map, flanked symmetrically by the
+    // two spawn rows at |x| = spawnX.
+    expect(Math.abs(def.zone.x) + def.zone.w / 2).toBeLessThan(def.size / 2);
+    expect(Math.abs(def.zone.z) + def.zone.d / 2).toBeLessThan(def.size / 2);
+    expect(Math.abs(def.zone.x)).toBeLessThan(def.zone.w / 2);
+    expect(Math.abs(def.zone.z)).toBeLessThan(def.zone.d / 2);
+    expect(def.spawnX).toBeGreaterThan(Math.abs(def.zone.x) + def.zone.w / 2);
+  });
+
+  it('offers climbable walls and paintable surfaces', () => {
+    expect(def.climbableSurfaces.length).toBeGreaterThan(0);
+    expect(def.climbableSurfaces.some((c) => c.id.startsWith('climb_wall_'))).toBe(true);
+    expect(def.climbableSurfaces.some((c) => c.id.includes('coral_col'))).toBe(true);
+    expect(def.paintSurfaces.length).toBeGreaterThan(0);
+    expect(def.paintSurfaces.some((p) => p.id.startsWith('paint_wall_'))).toBe(true);
+  });
+});
+
 describe('map spawns and zone', () => {
   it('keeps spawn rows clear of obstacles on every map', () => {
     for (const def of MAP_LIST) {
@@ -301,5 +355,19 @@ describe('paint extent tracks the active map', () => {
     expect(grid.getInkAt(probe.x, probe.z)).toBe(Team.PINK);
     // A point on the far side of the arena must be untouched.
     expect(grid.getInkAt(-half + 10, half - 14)).toBe(Team.NEUTRAL);
+  });
+});
+
+describe('map thumbnail artwork', () => {
+  // LobbyScreen.buildMapGrid() renders `/assets/maps/${mapId}.jpg` as each
+  // card's backdrop; a copy-pasted duplicate makes one arena show another's
+  // art (regression: tide_garden shipped byte-identical to aurora_outpost).
+  it('has a distinct image file for every map id', () => {
+    const hashes = MAP_LIST.map((def) => {
+      const disk = join(__dirname, '..', 'client', 'public', 'assets', 'maps', `${def.id}.jpg`);
+      return createHash('sha256').update(readFileSync(disk)).digest('hex');
+    });
+    expect(new Set(hashes).size, `duplicate map art: ${MAP_LIST.map((d) => d.id).join(', ')}`)
+      .toBe(hashes.length);
   });
 });

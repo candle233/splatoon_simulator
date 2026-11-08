@@ -1,4 +1,4 @@
-import { PlayerMode, Team, WeaponType } from '@ink/shared';
+import { clamp, PlayerMode, Team, WeaponType } from '@ink/shared';
 import { InterpolatedPlayerState } from '../network/SnapshotBuffer.js';
 import { PlayerView } from './PlayerView.js';
 import * as THREE from 'three';
@@ -51,6 +51,9 @@ export class RemotePlayer {
     this.team = team;
     this.view = new PlayerView(team);
     this.view.setWeaponType(weaponType);
+    // Full-HP preset: the stain pool starts (and stays) at zero opacity until
+    // interpolated hp actually drops.
+    this.view.setDamageStains(1);
     // characterModel is null when using PlayerView; kept for future standalone paths.
     this.characterModel = null;
   }
@@ -78,6 +81,15 @@ export class RemotePlayer {
     }
 
     this.view.setMode(state.alive ? state.mode : PlayerMode.DEAD);
+    // Progressive damage stains, fed every frame exactly like the local player
+    // (Game.ts local pipeline). setDamageStains advances one lerp(0.06) step
+    // per call, so caching on hp changes would leave stains stuck near their
+    // first step and never converge. InterpolatedPlayerState.hp defaults to 0
+    // while the buffer has no sample yet: hp <= 0 on an *alive* player means
+    // "no data", not "wounded" — skip it instead of staining a healthy remote.
+    if (!(state.alive && state.hp <= 0)) {
+      this.view.setDamageStains(clamp(state.hp / 100, 0, 1));
+    }
     this.view.updateLocomotion(dt, speed, state.position.y <= 0.2, state.pitch);
     this.view.updateVisuals(state.invulnerable, time, state.ink ?? 100);
     // Brella shield canopy / Dualies dodge tilt, mirrored from the snapshot.
@@ -87,6 +99,15 @@ export class RemotePlayer {
 
   setName(name: string): void {
     this.view.setName(name);
+  }
+
+  /**
+   * Ink team under this player's feet. Game.ts samples the local PaintGrid
+   * copy at ~10 Hz and feeds it here so footstep ripples / wading effects run
+   * through the same PlayerView pipeline as the local player.
+   */
+  setGroundInk(team: Team): void {
+    this.view.setGroundInk(team);
   }
 
   triggerRecoil(): void {

@@ -265,6 +265,27 @@ const RULES: Record<MapId, Rule[]> = {
     [/^(berm|spire_base)/, 'snow', 0xffffff],
     [/^spire/, 'ice', 0xbfe0ff],
     [/^base_/, 'panel', 0xd8eaff]
+  ],
+  tide_garden: [
+    [/^pool_rim/, 'tile', 0x9fe8dc],
+    [/^pool_shelf/, 'tile', 0x8adcd0],
+    [/^pool_deck/, 'panel', 0xbef2e4],
+    [/^pool_isle/, 'panel', 0xa8f0dc],
+    [/^tide_crown/, 'metal', 0xd8fff0],
+    [/^geyser_pylon/, 'metal', 0xc0f8e8],
+    [/^tide_needle/, 'metal', 0xffffff],
+    [/^coral_col/, 'facade', [0xff9a70, 0xffb088, 0xff8a5a]],
+    [/^coral_cap/, 'facade', [0xffc0a0, 0xffd8c0, 0xffb090]],
+    [/^(keep_st|anemone_st)/, 'metal', 0xffc8a0],
+    [/^anemone/, 'tile', [0xffb090, 0xffc8a8, 0xf8a0b8]],
+    [/^keep_spire/, 'metal', 0xffffff],
+    [/^keep_/, 'brick', 0xd8b8a0],
+    [/^lily_lantern/, 'metal', 0xffe8a0],
+    [/^lily_/, 'panel', 0x9ae8c8],
+    [/^(shell|kiosk)/, 'panel', 0x8ad8c8],
+    [/^base_pillar_cap/, 'metal', 0xfff0c0],
+    [/^base_pillar/, 'panel', 0x8ad8c8],
+    [/^(tidal_berm|kelp_row|lane_kelp)/, 'hazard', 0xffffff]
   ]
 };
 
@@ -273,7 +294,8 @@ const PERIMETER: Record<MapId, [Fam, number]> = {
   downtown: ['brick', 0xd8c4d8],
   cargo_docks: ['container', 0xe4e8ee],
   sky_rink: ['panel', 0xb4bcff],
-  aurora_outpost: ['panel', 0xbcdcf0]
+  aurora_outpost: ['panel', 0xbcdcf0],
+  tide_garden: ['tile', 0x86d8cc]
 };
 
 /** Which obstacles get a glowing trim band around their upper edge. */
@@ -281,7 +303,8 @@ const NEON: Record<MapId, RegExp> = {
   downtown: /^(arcade.*|office.*|hotel.*|center_.*|skywalk.*|corner_.*)(_w|_s|_ws)?$/,
   cargo_docks: /^(warehouse.*|wh_.*|gantry_.*|crane_.*|cont_b_.*|pier_tower.*)(_w|_s|_ws)?$/,
   sky_rink: /^(rink_.*|vip_.*|bank_.*|pyr_.*|launch_plat)(_w|_s|_ws)?$/,
-  aurora_outpost: /^(center_radome|radome_.*|lab_.*|hangar.*|tank.*|polar_skybridge|tube_ab)(_w|_s|_ws)?$/
+  aurora_outpost: /^(center_radome|radome_.*|lab_.*|hangar.*|tank.*|polar_skybridge|tube_ab)(_w|_s|_ws)?$/,
+  tide_garden: /^(pool_.*|coral_.*|keep_.*|lily_perch.*|tide_crown|geyser_pylon)(_w|_s|_ws)?$/
 };
 
 const CORNICE_FAMS: ReadonlySet<Fam> = new Set<Fam>(['facade', 'brick', 'panel', 'concrete', 'tile']);
@@ -320,6 +343,11 @@ const SIGNS: Record<MapId, SignDef[]> = {
     { re: withSuffix('lab_b'), text: 'LAB B', color: 0x8a7dff },
     { re: withSuffix('center_radome'), text: 'OUTPOST', color: 0x9ae8ff, sub: 'POLAR STN' },
     { re: withSuffix('tank'), text: 'FUEL', color: 0xffd35a }
+  ],
+  tide_garden: [
+    { re: withSuffix('coral_keep'), text: 'REEF KEEP', color: 0xff7f50, sub: 'TIDE WATCH' },
+    { re: withSuffix('shore_kiosk'), text: 'TIDE MART', color: 0x7fffd4 },
+    { re: withSuffix('pool_rim'), text: 'TIDE GARDEN', color: 0x9ae8ff, sub: 'HIGH TIDE' }
   ]
 };
 
@@ -328,7 +356,8 @@ const RAMP_STYLE: Record<MapId, [Fam, number]> = {
   downtown: ['metal', 0xd0d8f0],
   cargo_docks: ['metal', 0xffb868],
   sky_rink: ['tile', 0xffffff],
-  aurora_outpost: ['ice', 0xd8f0ff]
+  aurora_outpost: ['ice', 0xd8f0ff],
+  tide_garden: ['tile', 0x9ff0e0]
 };
 
 function hashStr(s: string): number {
@@ -1327,6 +1356,37 @@ export class Arena {
       }
       this.addInstanced(this.unitBox, this.famMaterial('metal', 0xffa629), legs);
       this.addInstanced(this.unitBox, this.famMaterial('metal', 0xff9020), beams);
+    } else if (id === 'tide_garden') {
+      // Coral heads and kelp spires ringing the garden beyond the sea walls.
+      const moundGeo = this.track(new THREE.ConeGeometry(1, 1, 7));
+      const mounds: Xform[] = [];
+      const moundCols: THREE.Color[] = [];
+      const moundPalette = [0xff8a5a, 0xffb088, 0x7fffd4, 0x5ad8c0, 0xf8a0b8];
+      const count = 22;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rng() * 0.25;
+        const dist = half + 24 + rng() * 34;
+        const r = 8 + rng() * 12;
+        const h = 6 + rng() * 14;
+        mounds.push({ x: Math.cos(a) * dist, y: h / 2 - 0.3, z: Math.sin(a) * dist, sx: r, sy: h, sz: r, ry: rng() * 3 });
+        moundCols.push(new THREE.Color(moundPalette[Math.floor(rng() * moundPalette.length)] ?? 0xffffff));
+      }
+      this.addInstanced(moundGeo, this.famMaterial('facade'), mounds, false, false, 0, moundCols);
+
+      // Glowing kelp spires with luminous tips
+      const spires: Xform[] = [];
+      const tips: Xform[] = [];
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 + 0.35;
+        const dist = half + 30 + rng() * 26;
+        const x = Math.cos(a) * dist;
+        const z = Math.sin(a) * dist;
+        const h = 16 + rng() * 12;
+        spires.push({ x, y: h / 2, z, sx: 1.6, sy: h, sz: 1.6 });
+        tips.push({ x, y: h + 0.9, z, sx: 1.1, sy: 1.1, sz: 1.1 });
+      }
+      this.addInstanced(this.unitBox, this.famMaterial('panel', 0x3fae94), spires, false, false, 0);
+      this.addInstanced(this.unitBox, this.glowMat(theme.accentB, 1.8, 0.5, 1.3), tips);
     } else {
       // Aurora outpost: snow hills ringed with radio masts.
       const hillGeo = this.track(new THREE.ConeGeometry(1, 1, 7));
@@ -1469,6 +1529,24 @@ export class Arena {
       this.group.add(pivotA, pivotB, coreMesh);
       this.spin(hoopA, 0.5);
       this.spin(hoopB, -0.7);
+    } else if (id === 'tide_garden') {
+      // Twin tide rings and a luminous pearl swirling above the geyser pylon.
+      const ringGeoA = this.track(new THREE.TorusGeometry(6.2, 0.15, 8, 64));
+      const ringGeoB = this.track(new THREE.TorusGeometry(4.6, 0.12, 8, 56));
+      const ringA = new THREE.Mesh(ringGeoA, this.glowMat(theme.accentB, 1.8, 0.3, 1.1));
+      const ringB = new THREE.Mesh(ringGeoB, this.glowMat(theme.accentA, 1.6, 0.3, 1.3, 1));
+      ringA.rotation.x = Math.PI / 2;
+      ringB.rotation.x = Math.PI / 2.6;
+      ringA.position.set(0, 12.6, 0);
+      ringB.position.set(0, 12.6, 0);
+      const pearl = new THREE.Mesh(
+        this.track(new THREE.SphereGeometry(1.0, 16, 12)),
+        this.glowMat(0xeafffa, 2.2, 0.5, 1.6)
+      );
+      pearl.position.set(0, 12.6, 0);
+      this.group.add(ringA, ringB, pearl);
+      this.spin(ringA, 0.4);
+      this.spin(ringB, -0.55);
     } else {
       // Radome mast: rotating dish and a pulsing red beacon.
       const dishGeo = this.track(new THREE.SphereGeometry(3.4, 24, 10, 0, Math.PI * 2, 0, 0.85));
@@ -2438,6 +2516,15 @@ export class Arena {
       // 2. VIP Stadium Penthouse facades (x = 52, z = 50 and -52, -50)
       placeScreen(46.8, 6.5, 50, 5.8, 3.2, -Math.PI / 2, 2, theme.accentB);
       placeScreen(-46.8, 6.5, -50, 5.8, 3.2, Math.PI / 2, 3, theme.accentA);
+    } else if (mapId === 'tide_garden') {
+      // 1. Central pool rim screens greeting the four tidal lanes
+      placeScreen(-12.3, 1.9, 0, 5.6, 3.1, -Math.PI / 2, 0, theme.accentA);
+      placeScreen(12.3, 1.9, 0, 5.6, 3.1, Math.PI / 2, 1, theme.accentB);
+      placeScreen(0, 1.9, 12.3, 5.6, 3.1, 0, 2, theme.accentA);
+      placeScreen(0, 1.9, -12.3, 5.6, 3.1, Math.PI, 3, theme.accentB);
+      // 2. Reef Keep facades (x = 60, z = 60 and -60, -60) facing the lanes
+      placeScreen(55.8, 1.9, 60, 5.4, 3.0, -Math.PI / 2, 4, theme.accentB);
+      placeScreen(-55.8, 1.9, -60, 5.4, 3.0, Math.PI / 2, 5, theme.accentA);
     } else {
       // Aurora outpost polar command radome & research hangars
       // 1. Central Radome screens facing team approach axes

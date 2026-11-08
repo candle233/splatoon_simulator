@@ -68,6 +68,9 @@ export class LocalPlayer {
   // Dualies dodge roll prediction state (mirrors the server's PlayerState).
   dodgeUntil = 0;
   dodgeDir: Vec3 = { x: 0, y: 0, z: 0 };
+  /** Shield deploy/break cue wired by Game.ts to the SoundManager. */
+  onShieldCue?: (kind: 'deploy' | 'break') => void;
+  private _lastShieldActive = false;
   /**
    * Gear skills as reported by the server snapshot. Client-side prediction must
    * use the same run_speed / swim_speed multipliers or every prediction frame
@@ -395,6 +398,15 @@ export class LocalPlayer {
       this.dodgeDir = { x: 0, y: 0, z: 0 };
     }
     this.view.setShieldActive(Boolean(snapshot.shieldActive), (snapshot.shieldHp ?? 100) / 100);
+    // Shield deploy / break cues ride the same snapshot edge: play the whoosh
+    // when the shield opens and the crack when it drops while still damaged.
+    if (this.onShieldCue) {
+      if (snapshot.shieldActive && !this._lastShieldActive) this.onShieldCue('deploy');
+      if (!snapshot.shieldActive && this._lastShieldActive && (snapshot.shieldHp ?? 0) <= 0) {
+        this.onShieldCue('break');
+      }
+      this._lastShieldActive = Boolean(snapshot.shieldActive);
+    }
     // The server omits `skills` when the loadout is empty, so clear rather than
     // keep a stale loadout after the player unequips everything.
     this.skills = snapshot.skills ?? [];

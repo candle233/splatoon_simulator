@@ -94,7 +94,7 @@ export const SHOT_INTERVAL = FIRE_INTERVAL;
 export const CONTINUOUS_PAINT_MAX_DIST_UV = 0.18; // ~18m max continuous segment
 
 // Weapon & Skill Configurations
-import type { EmoteType, GameMode, WeaponType, SubWeaponType, SpecialWeaponType } from './types.js';
+import type { EmoteType, GameMode, SkillId, WeaponType, SubWeaponType, SpecialWeaponType } from './types.js';
 
 export interface WeaponStats {
   id: WeaponType;
@@ -605,6 +605,15 @@ export const HYBRID_KILL_POINTS = 5;
 /** Seconds between coverage samples in `final_push`. */
 export const FINAL_PUSH_SAMPLE_SEC = 15;
 
+/**
+ * Turf War overtime: when regulation expires while the coverage race is still
+ * within OVERTIME_TRIGGER_PT percentage points, the match is extended once by
+ * OVERTIME_MAX_SEC seconds; it ends early the moment the gap exceeds the
+ * trigger, and by score at the extended time otherwise.
+ */
+export const OVERTIME_TRIGGER_PT = 3;
+export const OVERTIME_MAX_SEC = 60;
+
 export const MODE_CONFIGS: Record<GameMode, GameModeStats> = {
   turf_war: {
     id: 'turf_war',
@@ -696,4 +705,73 @@ const EMOTE_TYPES: readonly string[] = ['booyah', 'ouch', 'ping_enemy', 'ping_ar
 /** Type guard over the quick-chat roster; keeps hostile payloads out of the relay. */
 export function isValidEmoteType(id: unknown): id is EmoteType {
   return typeof id === 'string' && EMOTE_TYPES.includes(id);
+}
+
+// ---------------------------------------------------------------------------
+// Bot difficulty tiers
+// ---------------------------------------------------------------------------
+
+export type BotDifficulty = 'easy' | 'normal' | 'hard';
+
+export interface BotDifficultyPreset {
+  /** Vertical aim error amplitude (world units) fed into the bot's combat aim. */
+  aimErrorY: number;
+  /** Base delay (ms) between expensive bot re-decisions (target / waypoint). */
+  thinkIntervalMs: number;
+  /** Max horizontal distance (u) at which a bot spots an enemy. */
+  detectRange: number;
+  /** Chance [0..1] a combat-ready bot actually pulls the trigger this tick. */
+  fireChance: number;
+  /**
+   * Gear skills granted to bots of this tier. Only ids the server simulates
+   * are listed — `run_speed` / `swim_speed` have no server-side effect
+   * (MovementSimulation carries no skillMultiplier), so equipping them would be
+   * a placebo tier.
+   */
+  skills: SkillId[];
+}
+
+/**
+ * Difficulty presets for server bots. `normal` mirrors the pre-preset
+ * behaviour: aim error amplitude 0.6 (BotAI combat aim), 250 ms decision base
+ * and a 36 u engagement range. easy trades reflexes for survivability gear,
+ * hard is the output-oriented ladder tier. All tiers stay clear of placebo
+ * skills (run_speed / swim_speed).
+ */
+export const BOT_DIFFICULTY_PRESETS: Record<BotDifficulty, BotDifficultyPreset> = {
+  easy: {
+    aimErrorY: 0.9,
+    thinkIntervalMs: 380,
+    detectRange: 24,
+    fireChance: 0.75,
+    skills: ['ink_saver', 'ink_recovery', 'quick_respawn']
+  },
+  normal: {
+    aimErrorY: 0.6,
+    thinkIntervalMs: 250,
+    detectRange: 36,
+    fireChance: 1,
+    skills: ['defense', 'special_charge', 'sub_saver']
+  },
+  hard: {
+    aimErrorY: 0.3,
+    thinkIntervalMs: 160,
+    detectRange: 44,
+    fireChance: 1,
+    skills: ['main_power', 'paint_boost', 'special_power']
+  }
+};
+
+/** Type guard over the difficulty ladder. */
+export function isValidBotDifficulty(id: unknown): id is BotDifficulty {
+  return typeof id === 'string' && Object.prototype.hasOwnProperty.call(BOT_DIFFICULTY_PRESETS, id);
+}
+
+/**
+ * Resolves any wire value (e.g. the optional `difficulty` field of
+ * `c2s:lobby_add_bot`) to a valid tier; unknown / missing values fall back to
+ * `normal` instead of throwing.
+ */
+export function resolveBotDifficulty(id: unknown): BotDifficulty {
+  return isValidBotDifficulty(id) ? id : 'normal';
 }

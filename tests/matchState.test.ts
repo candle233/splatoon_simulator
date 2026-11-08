@@ -69,6 +69,18 @@ describe('Match State Machine', () => {
     const startTime = 100000;
     match.update(1, startTime);
     match.update(1, startTime + 3100);
+
+    // A decisive pink lead (> OVERTIME_TRIGGER_PT) keeps turf_war from
+    // extending into overtime at regulation expiry, so the match ends here.
+    paintGrid.applyPaintEvent({
+      id: 1,
+      team: Team.PINK,
+      u: 0.5,
+      v: 0.5,
+      radius: 0.2,
+      seed: 42
+    });
+
     match.update(1, startTime + 3100 + 180100); // enters GAME_OVER
 
     // 8.1 seconds later -> transitions to WEAPON_SELECT (reset not yet triggered)

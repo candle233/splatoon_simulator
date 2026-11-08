@@ -699,10 +699,7 @@ export interface WorldMaterial extends THREE.MeshStandardMaterial {
 const PINK = new THREE.Color(0xff007f);
 const CYAN = new THREE.Color(0x00ffff);
 
-let nextWorldMatId = 1;
-
 export function createWorldMaterial(o: WorldMaterialOptions): WorldMaterial {
-  const matId = nextWorldMatId++;
   const mat = new THREE.MeshStandardMaterial({
     color: o.color ?? 0xffffff,
     roughness: o.roughness ?? 0.85,
@@ -863,8 +860,11 @@ export function createWorldMaterial(o: WorldMaterialOptions): WorldMaterial {
       );
   };
 
+  // Key only on the shader-source feature flags: every material sharing a flag
+  // combo has identical (unparameterized) shader text, so one compiled program
+  // serves them all. Uniform values (textures, scales, colors) stay per-material.
   mat.customProgramCacheKey = (): string =>
-    `world:${matId}:${hasMacro ? 1 : 0}${hasInk ? 1 : 0}${hasGlow ? 1 : 0}${o.groundShade === false ? 0 : 1}`;
+    `world:${hasMacro ? 1 : 0}${hasInk ? 1 : 0}${hasGlow ? 1 : 0}${o.groundShade === false ? 0 : 1}`;
   return mat;
 }
 
@@ -874,7 +874,26 @@ export function createWorldMaterial(o: WorldMaterialOptions): WorldMaterial {
 const FLOOR_RES = 2048;
 const floorCache = new Map<MapId, THREE.CanvasTexture>();
 
+/**
+ * A 2048² floor texture (plus mipmaps) costs ~18 MB of VRAM and the sky dome
+ * another ~9 MB, so only the active map's copies are kept: switching maps
+ * disposes the previous map's GPU texture and repainting on a revisit is a
+ * one-time ~tens-of-milliseconds cost during the swap, never mid-match.
+ */
+function evictOtherMaps<T extends { dispose(): void }>(
+  cache: Map<MapId, T>,
+  keep: MapId
+): void {
+  for (const [id, tex] of cache) {
+    if (id !== keep) {
+      tex.dispose();
+      cache.delete(id);
+    }
+  }
+}
+
 export function getFloorTexture(def: MapDef): THREE.CanvasTexture {
+  evictOtherMaps(floorCache, def.id);
   let t = floorCache.get(def.id);
   if (!t) {
     t = paintFloor(def);
@@ -1165,6 +1184,54 @@ function paintFloor(def: MapDef): THREE.CanvasTexture {
     teamPad(-def.spawnX, 0xff007f, 1);
     teamPad(def.spawnX, 0x00ffff, -1);
     zoneBox();
+  } else if (def.id === 'tide_garden') {
+    // tide_garden: flooded garden — wet teal terraces, sandy tidal paths,
+    // concentric pool rings and coral-pink foam dots.
+    ctx.fillStyle = '#0e6e6e';
+    ctx.fillRect(0, 0, S, S);
+    // wet sheen blotches
+    for (let i = 0; i < 60; i++) {
+      const x = (rng() - 0.5) * size;
+      const z = (rng() - 0.5) * size;
+      glow(x, z, 5 + rng() * 12, rng() > 0.5 ? 0x7fffd4 : 0x2fa098, 0.22);
+    }
+    // concentric high-tide rings around the central pool
+    for (let i = 8; i >= 1; i--) {
+      ctx.fillStyle = i % 2 ? '#0a5a5c' : '#12787a';
+      circle(0, 0, 8 + i * 3.4, true);
+    }
+    ctx.strokeStyle = 'rgba(127,255,212,0.4)';
+    ctx.lineWidth = 0.3 * k;
+    for (let i = 1; i <= 4; i++) circle(0, 0, 10 + i * 6.8, false);
+    // sandy tidal paths along both axes linking the spawns
+    ctx.strokeStyle = '#c8b88a';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 6 * k;
+    line(-def.spawnX, 0, def.spawnX, 0);
+    line(0, -half + 12, 0, half - 12);
+    ctx.lineCap = 'butt';
+    // building footprints tinted wet-teal
+    lots(2.0, '#0b6161');
+    // coral-pink foam dot grid (tide scatter)
+    ctx.fillStyle = 'rgba(255,127,80,0.35)';
+    for (let i = 0; i < 90; i++) {
+      const x = (rng() - 0.5) * (size - 20);
+      const z = (rng() - 0.5) * (size - 20);
+      circle(x, z, 0.32 + rng() * 0.3, true);
+    }
+    // receding tide wave lines
+    ctx.strokeStyle = 'rgba(190,242,228,0.25)';
+    ctx.lineWidth = 0.4 * k;
+    for (let i = 0; i < 10; i++) {
+      const z0 = (rng() - 0.5) * (size - 30);
+      for (let x = -half + 10; x < half - 10; x += 2.4) {
+        line(x, z0 + Math.sin(x * 0.35 + i) * 1.6, x + 2.2, z0 + Math.sin((x + 2.2) * 0.35 + i) * 1.6);
+      }
+    }
+    curb('#0a4a52', '#ff7f50');
+    teamPad(-def.spawnX, 0xff007f, 1);
+    teamPad(def.spawnX, 0x00ffff, -1);
+    zoneBox();
   } else {
     // aurora_outpost: snowfield
     ctx.fillStyle = '#d4e0ea';
@@ -1264,6 +1331,7 @@ function paintFloor(def: MapDef): THREE.CanvasTexture {
 const skyCache = new Map<MapId, THREE.CanvasTexture>();
 
 export function getSkyTexture(def: MapDef): THREE.CanvasTexture {
+  evictOtherMaps(skyCache, def.id);
   let t = skyCache.get(def.id);
   if (t) return t;
   const W = 2048;
@@ -1300,7 +1368,7 @@ export function getSkyTexture(def: MapDef): THREE.CanvasTexture {
   // sun / moon glow
   const sunX = W * 0.28;
   const sunY = def.id === 'cargo_docks' ? hy - 70 : hy - 230;
-  const sunCol = def.id === 'cargo_docks' ? 0xffb060 : def.id === 'aurora_outpost' ? 0xdfeaff : 0xffc8e8;
+  const sunCol = def.id === 'cargo_docks' ? 0xffb060 : def.id === 'aurora_outpost' ? 0xdfeaff : def.id === 'tide_garden' ? 0xaef4e2 : 0xffc8e8;
   for (const [r, a] of [[320, 0.25], [160, 0.35], [70, 0.7]] as const) {
     const sg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, r);
     sg.addColorStop(0, rgba(sunCol, a));
@@ -1402,6 +1470,37 @@ export function getSkyTexture(def: MapDef): THREE.CanvasTexture {
       ctx.fillStyle = ['#c0392b', '#2e86c1', '#d4a017', '#27ae60'][i % 4]!;
       ctx.fillRect(W * 0.585 + i * 14, hy - 46, 12, 12);
     }
+  } else if (def.id === 'tide_garden') {
+    // tide_garden: layered tidal swells rolling to the horizon + coral atoll
+    // silhouettes under the mint sun
+    for (const [col, amp, base, freq] of [
+      ['#1e7a80', 55, hy - 4, 0.005],
+      ['#16636a', 75, hy, 0.0034],
+      ['#0d4a54', 50, hy + 3, 0.0062]
+    ] as const) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(0, hy + 6);
+      for (let x = 0; x <= W; x += 8) {
+        const y = base - amp * (0.5 + 0.5 * Math.sin(x * freq + amp) * Math.cos(x * freq * 2.3 + 1.7)) - 10;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, hy + 6);
+      ctx.fill();
+    }
+    // foam crests along the swell tops
+    ctx.fillStyle = 'rgba(190,242,228,0.4)';
+    for (let i = 0; i < 46; i++) ctx.fillRect(rng() * W, hy - 60 - rng() * 60, 5 + rng() * 12, 2);
+    // distant coral atoll bumps
+    ctx.fillStyle = '#0a3a44';
+    for (let i = 0; i < 14; i++) {
+      const x = rng() * W;
+      const w = 30 + rng() * 70;
+      const h = 12 + rng() * 22;
+      ctx.beginPath();
+      ctx.ellipse(x, hy + 2, w / 2, h, 0, Math.PI, 0);
+      ctx.fill();
+    }
   } else {
     // aurora_outpost: layered snowy mountains + aurora ribbons
     for (const [col, amp, base, freq] of [
@@ -1451,4 +1550,9 @@ export function getSkyTexture(def: MapDef): THREE.CanvasTexture {
   t.wrapT = THREE.ClampToEdgeWrapping;
   skyCache.set(def.id, t);
   return t;
+}
+
+/** Test/diagnostic hook: how many per-map textures are currently resident. */
+export function getMapTextureCacheStats(): { floor: number; sky: number } {
+  return { floor: floorCache.size, sky: skyCache.size };
 }

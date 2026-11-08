@@ -8,6 +8,8 @@ import {
   MatchPhase,
   MatchStateSnapshot,
   MODE_CONFIGS,
+  OVERTIME_MAX_SEC,
+  OVERTIME_TRIGGER_PT,
   Team,
   WEAPON_SELECT_DURATION
 } from '@ink/shared';
@@ -47,6 +49,8 @@ export class Match {
   private pushPink = 0;
   private pushCyan = 0;
   private lastPushSampleAt = 0;
+  /** True while a Turf War overtime extension is running (one per match). */
+  private overtime = false;
 
   constructor(paintGrid: PaintGrid, onReset?: () => void) {
     this.paintGrid = paintGrid;
@@ -77,6 +81,7 @@ export class Match {
     this.pushPink = 0;
     this.pushCyan = 0;
     this.lastPushSampleAt = 0;
+    this.overtime = false;
   }
 
   setTeamKills(pinkKills: number, cyanKills: number): void {
@@ -206,9 +211,23 @@ export class Match {
             break;
           }
         }
-        if (now >= this.matchEndAt) {
+
+        // Turf War overtime: while extended, the match settles the moment the
+        // coverage gap clearly breaks open (checked before the time-out branch).
+        if (this.overtime && this.mode === 'turf_war' && this.coverageGap() > OVERTIME_TRIGGER_PT) {
           gameOverPayload = this.endMatch(now);
           phaseChanged = true;
+          break;
+        }
+
+        if (now >= this.matchEndAt) {
+          // One-time extension: tight turf race at regulation expiry keeps playing.
+          if (this.maybeStartOvertime(now)) {
+            break;
+          }
+          gameOverPayload = this.endMatch(now);
+          phaseChanged = true;
+          break;
         }
         break;
       }
@@ -249,6 +268,27 @@ export class Match {
     this.matchStartAt = now;
     this.matchEndAt = now + MATCH_DURATION * 1000;
     this.phaseEndsAt = this.matchEndAt;
+    this.overtime = false;
+  }
+
+  /**
+   * Turf War only: at regulation expiry, a coverage race still within
+   * OVERTIME_TRIGGER_PT points is extended ONCE by OVERTIME_MAX_SEC seconds.
+   * Returns false (and ends the match normally) for every other mode, for a
+   * gap already beyond the trigger, and when overtime already ran.
+   */
+  private maybeStartOvertime(now: number): boolean {
+    if (this.overtime || this.mode !== 'turf_war') return false;
+    if (this.coverageGap() > OVERTIME_TRIGGER_PT) return false;
+    this.overtime = true;
+    this.matchEndAt = now + OVERTIME_MAX_SEC * 1000;
+    return true;
+  }
+
+  /** Absolute turf coverage gap in percentage points (PaintGrid keeps O(1) counters). */
+  private coverageGap(): number {
+    const score = this.paintGrid.getScore();
+    return Math.abs(score.pinkPercentage - score.cyanPercentage);
   }
 
   endMatch(now: number = Date.now()): GameOverPayload {
@@ -344,7 +384,8 @@ export class Match {
       serverTime: now,
       pinkScore,
       cyanScore,
-      mode: this.mode
+      mode: this.mode,
+      overtime: this.overtime
     };
   }
 }

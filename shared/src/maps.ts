@@ -755,6 +755,85 @@ const AURORA_OUTPOST_RAMPS: RampObstacle[] = [
   ])
 ];
 
+// ---------------------------------------------------------------------------
+// Tide Garden — 155 x 155
+// A flooded terraced garden: a stacked high-tide pool at the centre fed by four
+// tidal ramps, coral climbing columns, lily terraces, an anemone hill and a
+// reef keep in each corner, with berms and kelp rows as lane cover.
+// ---------------------------------------------------------------------------
+const TIDE_GARDEN_OBSTACLES: BoxObstacle[] = [
+  ...perimeterWalls(155),
+  // Central high-tide pool: stacked terraces rising to the geyser pylon (10.8m)
+  block('pool_rim', 0, 0, 24, 24, 3.6),
+  block('pool_shelf', 0, 0, 18, 18, 4.8, 3.6),
+  block('pool_deck', 0, 0, 12, 12, 6.0, 4.8),
+  block('pool_isle', 0, 0, 8, 8, 7.2, 6.0),
+  block('tide_crown', 0, 0, 5, 5, 8.4, 7.2),
+  block('geyser_pylon', 0, 0, 3, 3, 9.6, 8.4),
+  block('tide_needle', 0, 0, 1.6, 1.6, 10.8, 9.6),
+  ...mirrorLayout([
+    // Coral climbing columns with caps
+    block('coral_col', 30, 30, 4, 4, 4.8),
+    block('coral_cap', 30, 30, 2.6, 2.6, 6.0, 4.8),
+    // Lane shell cover near the tidal ramp
+    block('shell', 26, 10, 6, 6, 2.4),
+    block('shell_step', 26, 4.5, 6, 3, R),
+    // Kelp rows and tidal berms as lane cover
+    block('kelp_row', 14, 26, 3, 8, 2.4),
+    block('lane_kelp', 0, 26, 14, 3, 2.4),
+    block('tidal_berm', 0, 34, 22, 3, 2.4),
+    // Lily terrace with perch and lantern
+    block('lily_terrace', 20, 44, 12, 10, 2.4),
+    block('lily_step', 20, 37.5, 3, 3, R),
+    block('lily_perch', 20, 44, 6, 6, 3.6, 2.4),
+    block('lily_lantern', 20, 44, 3.6, 3.6, 4.8, 3.6),
+    // Anemone hill with stair flight
+    block('anemone_hill', 42, 42, 8, 8, 2.4),
+    block('anemone_tip', 42, 42, 5, 5, 3.6, 2.4),
+    block('anemone_crown', 42, 42, 3, 3, 4.8, 3.6),
+    ...stairs('anemone_st', 29, 42, 'east', 3, 3, 4),
+    // Shore kiosk guarding the base approach
+    block('shore_kiosk', 52, 16, 8, 10, 2.4),
+    block('kiosk_step', 52, 9.5, 8, 3, R),
+    // Base lantern pillar
+    block('base_pillar', 66, 22, 4, 4, 3.6),
+    block('base_pillar_cap', 66, 22, 2.6, 2.6, 4.8, 3.6),
+    // Corner reef keep with its own stair flight and spire
+    block('coral_keep', 60, 60, 8, 8, 3.6),
+    block('keep_top', 60, 60, 6, 6, 4.8, 3.6),
+    block('keep_crown', 60, 60, 4, 4, 6.0, 4.8),
+    block('keep_spire', 60, 60, 2.4, 2.4, 7.2, 6.0),
+    ...stairs('keep_st', 60, 47, 'south', 3, 3, 5)
+  ])
+];
+
+const TIDE_GARDEN_CLIMBABLES: ClimbableSurface[] = [
+  ...perimeterClimbables(155),
+  ...climbablePillar('pool_rim_climb', 0, 0, 24, 24, 3.6, 0),
+  ...climbablePillar('pool_shelf_climb', 0, 0, 18, 18, 4.8, 3.6),
+  ...climbablePillar('pool_deck_climb', 0, 0, 12, 12, 6.0, 4.8),
+  ...climbablePillar('pool_isle_climb', 0, 0, 8, 8, 7.2, 6.0),
+  ...climbablePillar('tide_crown_climb', 0, 0, 5, 5, 8.4, 7.2),
+  ...climbablePillar('geyser_climb', 0, 0, 3, 3, 9.6, 8.4),
+  ...climbablePillar('tide_needle_climb', 0, 0, 1.6, 1.6, 10.8, 9.6),
+  ...mirrorClimbables([
+    ...climbablePillar('coral_col_climb', 30, 30, 4, 4, 4.8, 0),
+    ...climbablePillar('coral_cap_climb', 30, 30, 2.6, 2.6, 6.0, 4.8),
+    ...climbablePillar('base_pillar_climb', 66, 22, 4, 4, 3.6, 0),
+    ...climbablePillar('base_cap_climb', 66, 22, 2.6, 2.6, 4.8, 3.6),
+    ...climbablePillar('keep_climb', 60, 60, 8, 8, 3.6, 0),
+    ...climbablePillar('keep_top_climb', 60, 60, 6, 6, 4.8, 3.6),
+    ...climbablePillar('lily_perch_climb', 20, 44, 6, 6, 3.6, 2.4)
+  ])
+];
+
+const TIDE_GARDEN_RAMPS: RampObstacle[] = [
+  ...mirrorRamps([
+    ramp('ramp_pool_x', 24, 0, 'west', 12, 3.6),
+    ramp('ramp_pool_z', 0, 24, 'north', 12, 3.6)
+  ])
+];
+
 export const MAP_DEFS: Record<MapId, MapDef> = {
   downtown: {
     id: 'downtown',
@@ -894,6 +973,40 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
       sunIntensity: 1.8,
       hemiSky: 0xb8e0ff,
       hemiGround: 0x4a6a80
+    }
+  },
+  tide_garden: {
+    id: 'tide_garden',
+    name: 'Tide Garden',
+    nameZh: '潮汐庭园',
+    nameJa: 'タイドガーデン',
+    description: 'A flooded terraced garden around a high-tide pool. Coral columns and reef keeps guard the tidal lanes.',
+    descriptionZh: '高潮池四周层层退台的滨海庭园。珊瑚石柱与礁岩堡垒扼守潮汐通道。',
+    descriptionJa: '高潮のプールを段状に囲む潮の庭園。サンゴの柱と礁の砦が潮路を守る。',
+    size: 155,
+    obstacles: TIDE_GARDEN_OBSTACLES,
+    ramps: TIDE_GARDEN_RAMPS,
+    climbableSurfaces: TIDE_GARDEN_CLIMBABLES,
+    paintSurfaces: paintSurfacesFor(155, { half: 12, top: 3.6 }, [
+      paintWall('paint_lily_n', 20, 1.2, 49.1, 12, 2.4, 0.1, 0, 0, 1),
+      paintWall('paint_lily_s', 20, 1.2, 38.9, 12, 2.4, 0.1, 0, 0, -1)
+    ]),
+    spawnX: spawnXForSize(155),
+    zone: { x: 0, z: 0, w: 54, d: 40 },
+    theme: {
+      sky: 0x0b3d52,
+      fogColor: 0x2e8b8b,
+      fogDensity: 0.0042,
+      groundBase: 0x0e6e6e,
+      groundAlt: 0x0a5a5c,
+      wallColor: 0x12747c,
+      obstacleColor: 0x2fa098,
+      accentA: 0xff7f50,
+      accentB: 0x7fffd4,
+      sunColor: 0xbfffee,
+      sunIntensity: 1.8,
+      hemiSky: 0x9fe8dc,
+      hemiGround: 0x0a3a44
     }
   }
 };

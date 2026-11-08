@@ -68,7 +68,7 @@ export type GameMode =
   | 'ranked_hybrid'
   /** Coverage is sampled on a timer; only the last sample decides the winner. */
   | 'final_push';
-export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost';
+export type MapId = 'downtown' | 'cargo_docks' | 'sky_rink' | 'aurora_outpost' | 'tide_garden';
 
 /**
  * Quick-chat / emote types. `booyah` and `ouch` are the two voice-channel-free
@@ -276,6 +276,12 @@ export interface MatchStateSnapshot {
   pinkScore: number;
   cyanScore: number;
   mode?: GameMode;
+  /**
+   * True while a Turf War overtime extension is running (matchEndAt already
+   * pushed past regulation). Optional so older clients keep parsing the
+   * snapshot unchanged; treat missing as false.
+   */
+  overtime?: boolean;
 }
 
 export interface GameOverPayload {

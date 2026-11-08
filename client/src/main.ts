@@ -15,8 +15,15 @@ window.addEventListener('DOMContentLoaded', () => {
   // menus never show the English defaults the HTML ships with.
   initI18n();
 
-  // Warm up in-game artworks and sponsor posters immediately
-  preloadAssetTextures();
+  // Warm up in-game artworks and sponsor posters once the lobby is interactive:
+  // every texture has an instant procedural fallback, so deferring the ~8 MB of
+  // downloads costs nothing visually and keeps first paint fast on slow links.
+  const idleWarmup = (): void => preloadAssetTextures();
+  if ('requestIdleCallback' in window) {
+    (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback(idleWarmup, { timeout: 4000 });
+  } else {
+    setTimeout(idleWarmup, 2000);
+  }
 
   try {
     const game = new Game();

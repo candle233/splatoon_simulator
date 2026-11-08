@@ -27,7 +27,8 @@ export const ASSET_PATHS = {
     downtown: '/assets/backgrounds/arena_downtown.jpg',
     cargo_docks: '/assets/backgrounds/arena_cargo_docks.jpg',
     sky_rink: '/assets/backgrounds/arena_sky_rink.jpg',
-    aurora_outpost: '/assets/backgrounds/arena_aurora_outpost.jpg'
+    aurora_outpost: '/assets/backgrounds/arena_aurora_outpost.jpg',
+    tide_garden: '/assets/backgrounds/arena_tide_garden.jpg'
   } as Record<MapId, string>,
 
   // Giant Billboard & Electronic Video Wall Artworks (16:9 widescreen & character spotlights)
@@ -357,6 +358,32 @@ function createFallbackCanvas(url: string): HTMLCanvasElement {
 const textureCache = new Map<string, THREE.Texture>();
 let sharedLoader: THREE.TextureLoader | null = null;
 
+/**
+ * Upper bound for the longest edge of any uploaded color texture. A 2048² RGBA
+ * texture costs 16 MB of VRAM plus mipmaps; billboards, posters and emblems are
+ * never large enough on screen to need that, so oversized sources are drawn
+ * into a capped offscreen canvas before upload. Skips the copy entirely when
+ * the source already fits.
+ */
+const MAX_TEXTURE_EDGE = 1600;
+
+/** Downscales `img` into a canvas capped at `maxEdge` on its longest side. */
+export function capImageSize(img: HTMLImageElement, maxEdge: number): HTMLImageElement | HTMLCanvasElement {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h || (w <= maxEdge && h <= maxEdge)) return img;
+  const scale = maxEdge / Math.max(w, h);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * scale));
+  c.height = Math.max(1, Math.round(h * scale));
+  const ctx = c.getContext('2d');
+  if (!ctx) return img;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+
 function getSharedLoader(): THREE.TextureLoader | null {
   if (typeof document === 'undefined' || typeof (document as any).createElementNS !== 'function') return null;
   if (!sharedLoader) {
@@ -410,7 +437,9 @@ export function getAssetTexture(url: string, opts: { repeat?: boolean; anisotrop
     url,
     (loadedTex) => {
       if (loadedTex.image) {
-        texture.image = loadedTex.image;
+        // Cap oversized sources so GPU memory stays proportional to on-screen
+        // use, regardless of how large the shipped file is.
+        texture.image = capImageSize(loadedTex.image as HTMLImageElement, MAX_TEXTURE_EDGE);
         texture.needsUpdate = true;
       }
     },

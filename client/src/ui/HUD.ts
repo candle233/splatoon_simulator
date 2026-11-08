@@ -81,7 +81,14 @@ export class HUD {
    * had when the match ended. Replaying them on 'ink:langchange' keeps the HUD
    * consistent with the menus.
    */
-  private lastMatchArgs: [MatchPhase, number, number, number, GameMode | undefined] | null = null;
+  private lastMatchArgs: [
+    MatchPhase,
+    number,
+    number,
+    number,
+    GameMode | undefined,
+    boolean | undefined
+  ] | null = null;
   private lastStatusArgs: [number, number, PlayerMode, Team] | null = null;
   private lastLoadoutArgs: [WeaponType, number, number, number] | null = null;
   private lastDebugArgs:
@@ -172,12 +179,30 @@ export class HUD {
     this.renderRespawnMessage(this.lastRespawnSec);
   }
 
-  updateMatch(phase: MatchPhase, remainingSec: number, pinkScore: number, cyanScore: number, mode?: GameMode): void {
-    this.lastMatchArgs = [phase, remainingSec, pinkScore, cyanScore, mode];
+  /**
+   * `overtime` comes from the snapshot's optional flag (undefined = false, so
+   * older servers without the field simply never highlight the timer).
+   */
+  updateMatch(
+    phase: MatchPhase,
+    remainingSec: number,
+    pinkScore: number,
+    cyanScore: number,
+    mode?: GameMode,
+    overtime?: boolean
+  ): void {
+    this.lastMatchArgs = [phase, remainingSec, pinkScore, cyanScore, mode, overtime];
     if (this.timerEl) {
       const mins = Math.floor(Math.max(0, remainingSec) / 60);
       const secs = Math.floor(Math.max(0, remainingSec) % 60);
-      this.timerEl.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      const timeText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      if (overtime) {
+        this.timerEl.textContent = `${timeText} · ${t('hud.overtime')}`;
+        this.timerEl.classList.add('overtime');
+      } else {
+        this.timerEl.textContent = timeText;
+        this.timerEl.classList.remove('overtime');
+      }
     }
 
     if (this.phaseEl) {
